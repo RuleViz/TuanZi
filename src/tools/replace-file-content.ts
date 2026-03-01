@@ -45,12 +45,18 @@ export class ReplaceFileContentTool implements Tool {
 
     const matchCount = countOccurrences(currentContent, targetContent);
     if (matchCount !== 1) {
+      if (matchCount === 0) {
+        const hint = findClosestSnippet(currentContent, targetContent);
+        return {
+          ok: false,
+          error: hint
+            ? `Replace failed: targetContent not found. Possible nearby block at line ${hint.line}: ${hint.snippet}`
+            : "Replace failed: targetContent not found. Please provide a more accurate snippet from the target file."
+        };
+      }
       return {
         ok: false,
-        error:
-          matchCount === 0
-            ? "targetContent was not found. Please provide a more accurate snippet."
-            : `targetContent is not unique (${matchCount} matches). Please provide more surrounding context.`
+        error: `targetContent is not unique (${matchCount} matches). Please provide more surrounding context.`
       };
     }
 
@@ -74,16 +80,12 @@ export class ReplaceFileContentTool implements Tool {
       }
     }
 
-    const backupPath = await context.backupManager.backupFile(targetFile);
+    await context.backupManager.backupFile(targetFile);
     await atomicWriteTextFile(targetFile, nextContent);
 
     return {
       ok: true,
-      data: {
-        targetFile,
-        matchCount,
-        backupPath
-      }
+      data: "Replace successful."
     };
   }
 }
@@ -104,4 +106,73 @@ function countOccurrences(text: string, needle: string): number {
     index = found + needle.length;
   }
   return count;
+}
+
+function findClosestSnippet(
+  fileContent: string,
+  targetContent: string
+): { line: number; snippet: string } | null {
+  const compactTarget = targetContent.replace(/\s+/g, " ").trim();
+  if (!compactTarget) {
+    return null;
+  }
+
+  const prefix = compactTarget.slice(0, 20);
+  const prefixIndex = prefix ? fileContent.indexOf(prefix) : -1;
+  if (prefixIndex >= 0) {
+    return {
+      line: indexToLine(fileContent, prefixIndex),
+      snippet: normalizeSnippet(fileContent.slice(prefixIndex, prefixIndex + 200))
+    };
+  }
+
+  const lines = fileContent.split(/\r?\n/);
+  const targetTokens = tokenize(compactTarget);
+  let bestLine = -1;
+  let bestScore = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const score = overlapScore(targetTokens, tokenize(lines[index]));
+    if (score > bestScore) {
+      bestScore = score;
+      bestLine = index;
+    }
+  }
+
+  if (bestLine < 0 || bestScore === 0) {
+    return null;
+  }
+  const snippetBlock = lines.slice(bestLine, Math.min(lines.length, bestLine + 5)).join("\n");
+  return {
+    line: bestLine + 1,
+    snippet: normalizeSnippet(snippetBlock)
+  };
+}
+
+function indexToLine(text: string, index: number): number {
+  return text.slice(0, index).split(/\r?\n/).length;
+}
+
+function normalizeSnippet(text: string): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, 220);
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^a-z0-9_]+/i)
+    .filter((token) => token.length >= 2);
+}
+
+function overlapScore(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) {
+    return 0;
+  }
+  const rightSet = new Set(right);
+  let score = 0;
+  for (const token of left) {
+    if (rightSet.has(token)) {
+      score += 1;
+    }
+  }
+  return score;
 }

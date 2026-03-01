@@ -1,8 +1,6 @@
-import { CoderAgent } from "./agents/coder-agent";
+import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
-import { PlannerAgent } from "./agents/planner-agent";
-import { SearcherAgent } from "./agents/searcher-agent";
 import type { RuntimeConfig } from "./config";
 import { ConsoleApprovalGate } from "./core/approval-gate";
 import { LocalBackupManager } from "./core/backup-manager";
@@ -47,19 +45,6 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
         })
       : null;
 
-  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel);
-  const searcher = new SearcherAgent(client, runtimeConfig.model.searchModel, toolRuntime.registry, toolRuntime.toolContext);
-  const coder = new CoderAgent(client, runtimeConfig.model.coderModel, toolRuntime.registry, toolRuntime.toolContext);
-  const directModel =
-    runtimeConfig.model.coderModel ?? runtimeConfig.model.searchModel ?? runtimeConfig.model.plannerModel ?? null;
-
-  return new PlanToDoOrchestrator(
-    planner,
-    searcher,
-    coder,
-    client,
-    directModel,
-    runtimeConfig.agentSettings.routing,
-    toolRuntime.toolContext
-  );
+  const coder = new TuanZiAgent(client, runtimeConfig.model.coderModel, toolRuntime.registry, toolRuntime.toolContext);
+  return new PlanToDoOrchestrator(coder, toolRuntime.toolContext);
 }

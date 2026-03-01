@@ -62,7 +62,7 @@ export class FetchUrlTool implements Tool {
 
     const response = await fetch(parsed, {
       headers: {
-        "user-agent": "MyCoderAgent/0.1 (MVP)"
+        "user-agent": "TuanZi/0.1"
       }
     }).catch((error) => {
       throw new Error(`Network request failed: ${error instanceof Error ? error.message : String(error)}`);

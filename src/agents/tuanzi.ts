@@ -2,8 +2,6 @@ import type { ToolRegistry } from "../core/tool-registry";
 import { parseJsonObject } from "../core/json-utils";
 import type {
   CoderResult,
-  ExecutionPlan,
-  SearchReference,
   ToolCallRecord,
   ToolExecutionContext,
   ToolExecutionResult
@@ -12,17 +10,7 @@ import type { ChatCompletionClient } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
 import { ReactToolAgent } from "./react-tool-agent";
 
-const READ_ONLY_CODER_TOOLS = [
-  "list_dir",
-  "find_by_name",
-  "grep_search",
-  "view_file",
-  "search_web",
-  "fetch_url",
-  "read_url_content"
-];
-
-const WRITE_ENABLED_CODER_TOOLS = [
+const ALL_CODER_TOOLS = [
   "list_dir",
   "find_by_name",
   "grep_search",
@@ -36,7 +24,7 @@ const WRITE_ENABLED_CODER_TOOLS = [
   "run_command"
 ];
 
-export class CoderAgent {
+export class TuanZiAgent {
   constructor(
     private readonly client: ChatCompletionClient | null,
     private readonly model: string | null,
@@ -44,29 +32,21 @@ export class CoderAgent {
     private readonly toolContext: ToolExecutionContext
   ) { }
 
-  async execute(task: string, plan: ExecutionPlan, references: SearchReference[], conversationContext = ""): Promise<{
+  async execute(task: string, conversationContext = ""): Promise<{
     result: CoderResult;
     toolCalls: ToolCallRecord[];
   }> {
     if (!this.client || !this.model) {
       return {
-        result: fallbackCoderResult(references),
+        result: fallbackCoderResult(),
         toolCalls: []
       };
     }
 
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
-    const allowWrite = taskNeedsWriteOrCommand(task);
-    const allowedTools = allowWrite ? WRITE_ENABLED_CODER_TOOLS : READ_ONLY_CODER_TOOLS;
     const userPromptSections = [
       "Task:",
-      task,
-      "",
-      "Execution Plan JSON:",
-      JSON.stringify(plan, null, 2),
-      "",
-      "Mounted references:",
-      JSON.stringify(references, null, 2)
+      task
     ];
     if (conversationContext) {
       userPromptSections.push(
@@ -77,16 +57,14 @@ export class CoderAgent {
     }
     userPromptSections.push(
       "",
-      allowWrite
-        ? "Use tools when needed to implement requested changes, verify if code changed, then return strict JSON summary."
-        : "This is read-only or explanatory request. Avoid write/command tools. Use read/search tools only if needed, then return strict JSON summary."
+      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and return a strict JSON summary."
     );
     const userPrompt = userPromptSections.join("\n");
 
     const output = await agent.run({
       systemPrompt: coderSystemPrompt(this.toolContext.workspaceRoot),
       userPrompt,
-      allowedTools,
+      allowedTools: ALL_CODER_TOOLS,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,
       temperature: 0.15
     });
@@ -100,8 +78,11 @@ export class CoderAgent {
     }));
 
     if (!parsed) {
+      const fallbackSummary = output.finalText.trim()
+        ? normalizeUserFacingSummary(output.finalText)
+        : "TuanZi completed tool execution but returned an empty final message.";
       return {
-        result: buildCoderResultFromToolCalls(toolCalls, "Coder 完成了工具调用，但最终摘要不是 JSON。"),
+        result: buildCoderResultFromToolCalls(toolCalls, fallbackSummary),
         toolCalls
       };
     }
@@ -124,8 +105,8 @@ export class CoderAgent {
       result: {
         summary:
           typeof parsed.summary === "string" && parsed.summary.trim()
-            ? parsed.summary
-            : "Coder completed with parsed JSON summary.",
+            ? normalizeUserFacingSummary(parsed.summary)
+            : "TuanZi completed with parsed JSON summary.",
         changedFiles,
         executedCommands,
         followUp
@@ -194,41 +175,48 @@ function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: 
   return commands;
 }
 
-function fallbackCoderResult(references: SearchReference[]): CoderResult {
+function fallbackCoderResult(): CoderResult {
   return {
     summary:
-      "未配置模型（MYCODER_API_KEY 或模型名缺失），Coder 进入降级模式。MVP 工具已可用，可通过 tools run 或补充模型配置后运行 agent。",
+      "未配置模型（MYCODER_API_KEY / QWEN_API_KEY 或模型名缺失），团子进入降级模式。工具仍可使用，可通过 tools run 或补充模型配置后运行 agent。",
     changedFiles: [],
     executedCommands: [],
     followUp: [
-      "设置 MYCODER_API_KEY 与模型变量后重试 agent run。",
-      `当前挂载的候选文件数: ${references.length}`
+      "设置 MYCODER_API_KEY 或 QWEN_API_KEY 与模型变量后重试 agent run。"
     ]
   };
 }
 
 function buildCoderResultFromToolCalls(toolCalls: ToolCallRecord[], summary: string): CoderResult {
   return {
-    summary,
+    summary: normalizeUserFacingSummary(summary),
     changedFiles: collectChangedFiles(toolCalls),
     executedCommands: collectExecutedCommands(toolCalls),
     followUp: []
   };
 }
 
-function taskNeedsWriteOrCommand(task: string): boolean {
-  const text = task.toLowerCase();
-  const readOnlyHints = [
-    /不要修改|不修改|无需修改|仅阅读|只读|只需要解释|只做说明|不要执行命令|不需要运行命令/,
-    /\b(read[\s-]?only|do not modify|don't modify|no changes|explain only|no command)\b/
-  ];
-  if (readOnlyHints.some((pattern) => pattern.test(text))) {
-    return false;
+function normalizeUserFacingSummary(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return trimmed;
   }
 
-  const writeHints = [
-    /修改|修复|重构|实现|新增|删除|替换|补丁|提交|写入|创建/,
-    /\b(modify|fix|refactor|implement|add|create|delete|replace|patch|write|edit|update)\b/
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const filtered = lines.filter((line) => !isMetaNarrationLine(line));
+  const next = (filtered.length > 0 ? filtered.join("\n") : trimmed).trim();
+  return next;
+}
+
+function isMetaNarrationLine(line: string): boolean {
+  const patterns = [
+    /^用户(发送了|询问了|提问了|要求|请求)/,
+    /^我已(经)?(友好回应|回复|完成|准备)/,
+    /^这是(我|系统).*(记录|总结)/,
+    /^以下是(对话|聊天).*(记录|总结)/
   ];
-  return writeHints.some((pattern) => pattern.test(text));
+  return patterns.some((pattern) => pattern.test(line));
 }

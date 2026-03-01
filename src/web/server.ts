@@ -52,7 +52,7 @@ export async function startWebServer(options: WebServerOptions): Promise<{
           res,
           200,
           "application/javascript; charset=utf-8",
-          buildJs(runtimeConfig.agentSettings.routing.defaultEnablePlanMode)
+          buildJs()
         );
       }
       if (method === "GET" && url === "/api/history") {
@@ -69,9 +69,8 @@ export async function startWebServer(options: WebServerOptions): Promise<{
           });
         }
 
-        const payload = (await readJsonBody(req)) as { message?: string; planMode?: boolean };
+        const payload = (await readJsonBody(req)) as { message?: string };
         const userMessage = typeof payload.message === "string" ? payload.message.trim() : "";
-        const planMode = typeof payload.planMode === "boolean" ? payload.planMode : undefined;
         if (!userMessage) {
           return sendJson(res, 400, {
             ok: false,
@@ -96,8 +95,7 @@ export async function startWebServer(options: WebServerOptions): Promise<{
           const memoryTurns = buildMemoryTurns(history, entry.id);
           const result = await orchestrator.run({
             task: userMessage,
-            memoryTurns,
-            planMode
+            memoryTurns
           });
           entry.status = "completed";
           entry.result = result;
@@ -105,7 +103,7 @@ export async function startWebServer(options: WebServerOptions): Promise<{
 
           const durationMs = Date.now() - startedAt;
           console.log(
-            `[web] chat done id=${entry.id} status=completed mode=${result.mode} toolCalls=${result.toolCalls.length} durationMs=${durationMs}`
+            `[web] chat done id=${entry.id} status=completed toolCalls=${result.toolCalls.length} durationMs=${durationMs}`
           );
 
           return sendJson(res, 200, { ok: true, entry });
@@ -214,7 +212,7 @@ function buildMemoryTurns(history: ChatHistoryEntry[], currentEntryId: string): 
     .slice(-10)
     .map((entry) => ({
       user: entry.userMessage,
-      assistant: entry.result?.coder.summary ?? ""
+      assistant: entry.result?.summary ?? ""
     }));
 }
 
@@ -224,7 +222,7 @@ function buildHtml(): string {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>MyCoderAgent</title>
+  <title>团子 · TuanZi</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -232,7 +230,7 @@ function buildHtml(): string {
     <div id="history" class="history"></div>
     <form id="composer" class="composer">
       <div class="input-wrapper">
-        <textarea id="message" rows="1" placeholder="在这里输入需求...回车发送"></textarea>
+        <textarea id="message" rows="1" placeholder="和团子说点什么...Enter 发送，Shift+Enter 换行"></textarea>
         <button id="sendBtn" type="submit" class="send-btn" title="发送 (Enter)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -241,10 +239,6 @@ function buildHtml(): string {
         </button>
       </div>
       <div class="actions">
-        <label class="plan-toggle">
-          <input id="planModeToggle" type="checkbox" />
-          <span>Plan 模式</span>
-        </label>
         <span id="statusText" class="status"></span>
       </div>
     </form>
@@ -363,13 +357,11 @@ details.step-details > summary:hover { background: var(--hover); color: #aaaaaa;
 }
 .send-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
 .send-btn:disabled { color: var(--border); cursor: not-allowed; background: transparent; }
-.actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-.plan-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; user-select: none; }
-.plan-toggle input { accent-color: var(--accent); }
+.actions { display: flex; justify-content: flex-end; align-items: center; margin-top: 6px; }
 .status { color: var(--muted); font-size: 12px; }
 `;
 }
-function buildJs(defaultPlanMode: boolean): string {
+function buildJs(): string {
   return `const state = {
   history: [],
   sending: false,
@@ -383,10 +375,6 @@ const formEl = document.getElementById("composer");
 const messageEl = document.getElementById("message");
 const sendBtnEl = document.getElementById("sendBtn");
 const statusEl = document.getElementById("statusText");
-const planModeToggleEl = document.getElementById("planModeToggle");
-if (planModeToggleEl) {
-  planModeToggleEl.checked = ${defaultPlanMode ? "true" : "false"};
-}
 
 function updateStatus(text) { if(statusEl) statusEl.textContent = text || ""; }
 
@@ -409,7 +397,7 @@ function buildRenderKey(history) {
   return JSON.stringify(
     history.map((entry) => [
       entry.id, entry.status, entry.completedAt || "",
-      entry.result && entry.result.mode ? entry.result.mode : "",
+      entry.result && entry.result.summary ? entry.result.summary : "",
       entry.result && Array.isArray(entry.result.toolCalls) ? entry.result.toolCalls.length : 0
     ])
   );
@@ -501,7 +489,7 @@ function renderHistory() {
     empty.style.color = "var(--muted)";
     empty.style.textAlign = "center";
     empty.style.marginTop = "40px";
-    empty.textContent = "发送需求以开始...";
+    empty.textContent = "和团子开始对话...";
     historyEl.appendChild(empty);
     return;
   }
@@ -519,14 +507,10 @@ function renderHistory() {
     steps.className = "steps";
 
     if (entry.status === "error") {
-      steps.appendChild(createStep("❌", "Agent 错误", entry.error || "未知错误", entry.id + ":error"));
+      steps.appendChild(createStep("❌", "团子错误", entry.error || "未知错误", entry.id + ":error"));
     } else if (entry.status === "running") {
-      steps.appendChild(createStep("⏳", "正在处理...", null, entry.id + ":running"));
+      steps.appendChild(createStep("⏳", "团子正在处理...", null, entry.id + ":running"));
     } else if (entry.result) {
-      if (entry.result.plan && Object.keys(entry.result.plan).length > 0) {
-        steps.appendChild(createStep("🧠", "> 思考过程 (Plan)", entry.result.plan, entry.id + ":plan"));
-      }
-
       const toolCalls = Array.isArray(entry.result.toolCalls) ? entry.result.toolCalls : [];
       for (let i = 0; i < toolCalls.length; i++) {
         const call = toolCalls[i];
@@ -540,11 +524,10 @@ function renderHistory() {
         steps.appendChild(createStep(icon, title, contentStr, entry.id + ":tool:" + i));
       }
 
-      const coder = entry.result.coder;
-      if (coder && Object.keys(coder).length > 0) {
+      if (entry.result.summary) {
         const assistantMsg = document.createElement("div");
         assistantMsg.className = "msg-assistant";
-        assistantMsg.textContent = coder.summary || "";
+        assistantMsg.textContent = entry.result.summary || "";
         turn.appendChild(assistantMsg);
       }
     }
@@ -567,7 +550,7 @@ async function refreshHistory() {
   const wasAtBottom = (histDom.scrollHeight - histDom.scrollTop - histDom.clientHeight) < 60;
   
   renderHistory();
-  if (data.running) updateStatus("运行中...");
+  if (data.running) updateStatus("团子处理中...");
   
   if (state.history.length > prevLen || wasAtBottom) {
     requestAnimationFrame(() => {
@@ -576,21 +559,21 @@ async function refreshHistory() {
   }
 }
 
-async function sendMessage(message, planMode) {
+async function sendMessage(message) {
   setSending(true);
-  updateStatus("发送请求...");
+  updateStatus("正在发送给团子...");
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message, planMode })
+      body: JSON.stringify({ message })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data && data.error ? data.error : "请求失败");
     
     state.lastRenderKey = "";
     await refreshHistory();
-    updateStatus("任务已同步完成");
+    updateStatus("团子已完成");
   } catch (err) {
     updateStatus("失败: " + String(err));
     console.error(err);
@@ -603,12 +586,11 @@ async function sendMessage(message, planMode) {
 async function submitComposerMessage() {
   const message = messageEl ? messageEl.value.trim() : "";
   if (!message || state.sending) return;
-  const planMode = planModeToggleEl ? Boolean(planModeToggleEl.checked) : false;
   if(messageEl) {
     messageEl.value = "";
     messageEl.style.height = 'auto';
   }
-  await sendMessage(message, planMode);
+  await sendMessage(message);
 }
 
 if(formEl) {

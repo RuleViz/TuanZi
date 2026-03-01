@@ -5,12 +5,13 @@ import { asNumber, asString } from "../core/json-utils";
 import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_OUTPUT = 50_000;
+const DEFAULT_MAX_OUTPUT = 3_000;
+const MIDDLE_TRUNCATION_MARKER = "\n[... middle output omitted ...]\n";
 
 export class RunCommandTool implements Tool {
   readonly definition = {
     name: "run_command",
-    description: "Run a one-off terminal command and return stdout/stderr/exit code.",
+    description: "Run a one-off terminal command with sanitized and truncated output.",
     destructive: true,
     parameters: {
       type: "object",
@@ -45,7 +46,7 @@ export class RunCommandTool implements Tool {
     }
 
     const timeoutMs = clampInt(asNumber(input.timeout_ms) ?? DEFAULT_TIMEOUT_MS, 1000, 900_000);
-    const maxOutputChars = clampInt(asNumber(input.max_output_chars) ?? DEFAULT_MAX_OUTPUT, 1000, 1_000_000);
+    const maxOutputChars = clampInt(asNumber(input.max_output_chars) ?? DEFAULT_MAX_OUTPUT, 500, 20_000);
 
     const policyDecision = context.policyEngine?.evaluateTool(this.definition.name, input) ?? {
       decision: "ask" as const,
@@ -70,19 +71,34 @@ export class RunCommandTool implements Tool {
     const startedAt = Date.now();
     const execution = await executeShellCommand(command, cwd, timeoutMs, maxOutputChars);
     const durationMs = Date.now() - startedAt;
+    const stdout = sanitizeOutput(execution.stdout, maxOutputChars);
+    const stderr = sanitizeOutput(execution.stderr, maxOutputChars);
+
+    const payload = {
+      command,
+      cwd,
+      exitCode: execution.exitCode,
+      signal: execution.signal,
+      timedOut: execution.timedOut,
+      durationMs,
+      stdout,
+      stderr
+    };
+
+    const failed = execution.timedOut || execution.exitCode !== 0;
+    if (failed) {
+      const exitDisplay = execution.timedOut ? "timeout" : String(execution.exitCode);
+      const stdoutSection = stdout ? `\nstdout:\n${stdout}` : "";
+      return {
+        ok: false,
+        error: `Command failed (Exit Code ${exitDisplay}). stderr:\n${stderr || "[empty]"}${stdoutSection}`,
+        data: payload
+      };
+    }
 
     return {
       ok: true,
-      data: {
-        command,
-        cwd,
-        exitCode: execution.exitCode,
-        signal: execution.signal,
-        timedOut: execution.timedOut,
-        durationMs,
-        stdout: execution.stdout,
-        stderr: execution.stderr
-      }
+      data: payload
     };
   }
 }
@@ -155,9 +171,30 @@ async function executeShellCommand(
 }
 
 function appendLimited(original: string, addition: string, maxLength: number): string {
-  const combined = `${original}${addition}`;
+  const combined = `${original}${stripAnsi(addition)}`;
   if (combined.length <= maxLength) {
     return combined;
   }
-  return `${combined.slice(0, maxLength)}\n... output truncated ...`;
+  return truncateMiddle(combined, maxLength);
+}
+
+function sanitizeOutput(text: string, maxLength: number): string {
+  return truncateMiddle(stripAnsi(text), maxLength);
+}
+
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
+function truncateMiddle(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const available = maxLength - MIDDLE_TRUNCATION_MARKER.length;
+  if (available <= 0) {
+    return text.slice(0, maxLength);
+  }
+  const headLength = Math.ceil(available * 0.6);
+  const tailLength = Math.floor(available * 0.4);
+  return `${text.slice(0, headLength)}${MIDDLE_TRUNCATION_MARKER}${text.slice(text.length - tailLength)}`;
 }

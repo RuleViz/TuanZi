@@ -119,7 +119,20 @@ export class ReactToolAgent {
       };
     }
 
-    const args = parseToolArgs(call.function.arguments);
+    let args: JsonObject;
+    try {
+      args = parseToolArgs(call.function.arguments);
+    } catch (error) {
+      const message = error instanceof ToolArgsParseError ? error.message : `Failed to parse tool arguments: ${String(error)}`;
+      this.toolContext.logger.warn(`[tool] invalid args ${call.function.name} error=${message}`);
+      return {
+        args: {},
+        result: {
+          ok: false,
+          error: message
+        }
+      };
+    }
     this.toolContext.logger.info(`[tool] start ${call.function.name} args=${safePreview(args)}`);
     const result = await this.toolRegistry.execute(call.function.name, args, this.toolContext);
     this.toolContext.logger.info(`[tool] done ${call.function.name} ok=${result.ok}`);
@@ -131,14 +144,85 @@ function parseToolArgs(rawArguments: string): JsonObject {
   if (!rawArguments || rawArguments.trim() === "") {
     return {};
   }
+  const trimmed = rawArguments.trim();
+  const parsedJson = tryParseObject(trimmed);
+  if (parsedJson) {
+    return parsedJson;
+  }
+
+  const parsedXml = parseTaggedArgs(trimmed);
+  if (parsedXml) {
+    return parsedXml;
+  }
+
+  throw new ToolArgsParseError(
+    `Tool argument parsing failed. Expected JSON object or XML-like tags. Raw arguments: ${safeInlineText(rawArguments)}`,
+    rawArguments
+  );
+}
+
+function tryParseObject(text: string): JsonObject | null {
   try {
-    const parsed = JSON.parse(rawArguments) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
+    const parsed = JSON.parse(text) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as JsonObject;
     }
-    return parsed as JsonObject;
   } catch {
-    return {};
+    // Continue to JSON5 / XML fallback.
+  }
+
+  return tryParseLooseJsonObject(text);
+}
+
+function parseTaggedArgs(text: string): JsonObject | null {
+  const core = extractTagText(text, "tool_call") ?? text;
+  const entries = [...core.matchAll(/<([a-zA-Z_][\w-]*)>([\s\S]*?)<\/\1>/g)];
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const result: JsonObject = {};
+  for (const [, tag, rawValue] of entries) {
+    const key = tag.trim();
+    if (key === "tool_call" || key === "name") {
+      continue;
+    }
+    const value = rawValue.replace(/^\s*\n?/, "").replace(/\n?\s*$/, "");
+    result[key] = value;
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function extractTagText(text: string, tag: string): string | null {
+  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match ? match[1] : null;
+}
+
+function tryParseLooseJsonObject(text: string): JsonObject | null {
+  const normalized = text
+    .replace(/([{,]\s*)([A-Za-z_][\w-]*)(\s*:)/g, '$1"$2"$3')
+    .replace(/:\s*'([^'\\]*(?:\\.[^'\\]*)*)'/g, ': "$1"')
+    .replace(/,\s*([}\]])/g, "$1");
+  try {
+    const parsed = JSON.parse(normalized) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as JsonObject;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function safeInlineText(text: string): string {
+  const singleLine = text.replace(/\s+/g, " ").trim();
+  return singleLine.length > 500 ? `${singleLine.slice(0, 500)}...` : singleLine;
+}
+
+class ToolArgsParseError extends Error {
+  constructor(message: string, readonly rawArguments: string) {
+    super(message);
+    this.name = "ToolArgsParseError";
   }
 }
 
@@ -155,8 +239,12 @@ function safePreview(value: unknown): string {
 }
 
 function requestedCallSignature(call: ToolCall): string {
-  const args = parseToolArgs(call.function.arguments);
-  return `${call.function.name}:${stableStringify(args)}`;
+  try {
+    const args = parseToolArgs(call.function.arguments);
+    return `${call.function.name}:${stableStringify(args)}`;
+  } catch {
+    return `${call.function.name}:__RAW__${safeInlineText(call.function.arguments)}`;
+  }
 }
 
 function stableStringify(value: unknown): string {

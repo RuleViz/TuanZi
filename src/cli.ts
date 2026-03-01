@@ -98,6 +98,7 @@ async function handleAgentRun(flags: Record<string, string | boolean>): Promise<
   const approvalMode = parseApprovalMode(flags.approval);
   const runtimeConfig = loadRuntimeConfig({ workspaceRoot, approvalMode });
   const runtime = createToolRuntime(runtimeConfig);
+  printModelRuntime(runtimeConfig);
 
   let task = typeof flags.task === "string" ? flags.task.trim() : "";
   if (!task) {
@@ -109,10 +110,9 @@ async function handleAgentRun(flags: Record<string, string | boolean>): Promise<
   }
 
   const orchestrator = createOrchestrator(runtimeConfig, runtime);
-  runtime.logger.info("Running workflow loop ...");
+  runtime.logger.info("Running TuanZi loop ...");
   const result = await orchestrator.run({
-    task,
-    planMode: parsePlanModeFlag(flags.plan)
+    task
   });
   console.log(JSON.stringify(result, null, 2));
   return 0;
@@ -123,6 +123,8 @@ async function handleWebStart(flags: Record<string, string | boolean>): Promise<
   const approvalMode = parseApprovalMode(flags.approval);
   const host = typeof flags.host === "string" && flags.host.trim() ? flags.host.trim() : "127.0.0.1";
   const port = parsePort(flags.port);
+  const runtimeConfig = loadRuntimeConfig({ workspaceRoot, approvalMode });
+  printModelRuntime(runtimeConfig);
 
   const server = await startWebServer({
     workspaceRoot,
@@ -131,7 +133,7 @@ async function handleWebStart(flags: Record<string, string | boolean>): Promise<
     port
   });
 
-  console.log(`Web UI started: ${server.url}`);
+  console.log(`TuanZi Web UI started: ${server.url}`);
   console.log("Press Ctrl+C to stop.");
 
   await new Promise<void>((resolve) => {
@@ -196,20 +198,6 @@ function parsePort(rawPort: string | boolean | undefined): number {
   return intValue;
 }
 
-function parsePlanModeFlag(value: string | boolean | undefined): boolean | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (["on", "true", "1", "yes"].includes(normalized)) {
-    return true;
-  }
-  if (["off", "false", "0", "no"].includes(normalized)) {
-    return false;
-  }
-  return undefined;
-}
-
 function resolveWorkspace(rawWorkspace: string | undefined): string {
   return path.resolve(rawWorkspace ?? process.cwd());
 }
@@ -229,12 +217,12 @@ async function promptTask(): Promise<string> {
 function printHelp(): void {
   console.log(
     [
-      "MyCoderAgent MVP CLI",
+      "TuanZi (团子) CLI",
       "",
       "Commands:",
       "  greet [--time-based]                   显示中文问候语",
       "  hello [--time-based]                   显示中文问候语",
-      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny] [--plan on|off]",
+      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny]",
       "  web start [--workspace <abs-path>] [--approval manual|auto|deny] [--host 127.0.0.1] [--port 3000]",
       "  tools list [--workspace <abs-path>]",
       "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny]",
@@ -253,6 +241,17 @@ function printHelp(): void {
       "Project config file:",
       "  agent.config.json      routing/policy/webSearch/toolLoop/mcp settings"
     ].join("\n")
+  );
+}
+
+function printModelRuntime(runtimeConfig: ReturnType<typeof loadRuntimeConfig>): void {
+  const model = runtimeConfig.model;
+  const planner = model.plannerModel ?? "<unset>";
+  const search = model.searchModel ?? "<unset>";
+  const coder = model.coderModel ?? "<unset>";
+  const hasKey = model.apiKey ? "yes" : "no";
+  console.log(
+    `[model] keySource=${model.keySource} apiKey=${hasKey} baseUrl=${model.baseUrl} planner=${planner} search=${search} coder=${coder}`
   );
 }
 

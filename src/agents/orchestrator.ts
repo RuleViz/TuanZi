@@ -1,21 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { AgentContextStore } from "../core/context-store";
-import type { ExecutionPlan, RoutingSettings, SearchResult, ToolCallRecord, ToolExecutionContext } from "../core/types";
-import { CoderAgent } from "./coder-agent";
-import type { ChatCompletionClient } from "./model-types";
-import { PlannerAgent } from "./planner-agent";
-import { SearcherAgent } from "./searcher-agent";
+import type { ToolCallRecord, ToolExecutionContext } from "../core/types";
+import { TuanZiAgent } from "./tuanzi";
 
 export interface OrchestrationResult {
-  mode: "workflow" | "direct";
-  plan: ExecutionPlan;
-  search: SearchResult;
-  coder: {
-    summary: string;
-    changedFiles: string[];
-    executedCommands: Array<{ command: string; exitCode: number | null }>;
-    followUp: string[];
-  };
+  summary: string;
+  changedFiles: string[];
+  executedCommands: Array<{ command: string; exitCode: number | null }>;
+  followUp: string[];
   toolCalls: ToolCallRecord[];
 }
 
@@ -27,132 +18,26 @@ export interface ConversationMemoryTurn {
 export interface OrchestratorRunInput {
   task: string;
   memoryTurns?: ConversationMemoryTurn[];
-  planMode?: boolean;
 }
 
 export class PlanToDoOrchestrator {
-  private readonly plannerContext = new AgentContextStore();
-  private readonly searchContext = new AgentContextStore();
-  private readonly coderContext = new AgentContextStore();
-
   constructor(
-    private readonly planner: PlannerAgent,
-    private readonly searcher: SearcherAgent,
-    private readonly coder: CoderAgent,
-    private readonly directClient: ChatCompletionClient | null,
-    private readonly directModel: string | null,
-    private readonly routingSettings: RoutingSettings,
+    private readonly coder: TuanZiAgent,
     private readonly toolContext: ToolExecutionContext
-  ) {}
+  ) { }
 
   async run(input: string | OrchestratorRunInput): Promise<OrchestrationResult> {
-    const { task, memoryTurns, planMode } = normalizeRunInput(input);
+    const { task, memoryTurns } = normalizeRunInput(input);
     const conversationContext = buildConversationContext(memoryTurns);
-    const enablePlanMode =
-      typeof planMode === "boolean" ? planMode : this.routingSettings.defaultEnablePlanMode;
-
     this.toolContext.taskId = randomUUID();
-    if (shouldUseDirectAnswer(task, this.routingSettings) && this.directClient && this.directModel) {
-      const directSummary = await this.answerDirectly(task, conversationContext);
-      return {
-        mode: "direct",
-        plan: {
-          goal: "Direct Q&A response without file/tool workflow",
-          steps: [
-            {
-              id: "D1",
-              title: "Answer user request directly",
-              owner: "code",
-              acceptance: "Provide a concise helpful answer without tool calls."
-            }
-          ]
-        },
-        search: {
-          summary: "Skipped search phase for direct Q&A request.",
-          references: [],
-          webReferences: []
-        },
-        coder: {
-          summary: directSummary,
-          changedFiles: [],
-          executedCommands: [],
-          followUp: []
-        },
-        toolCalls: []
-      };
-    }
-
-    this.plannerContext.append({ role: "user", content: task });
-    const plan = enablePlanMode
-      ? await this.planner.buildPlan(task, conversationContext)
-      : buildImplicitPlan(task);
-    this.plannerContext.append({ role: "assistant", content: JSON.stringify(plan) });
-
-    this.searchContext.append({
-      role: "user",
-      content: JSON.stringify({
-        task,
-        plan
-      })
-    });
-    const searchOutput = await this.searcher.search(task, plan, conversationContext);
-    const search = searchOutput.result;
-    this.searchContext.append({ role: "assistant", content: JSON.stringify(search) });
-
-    for (const reference of search.references) {
-      this.coderContext.mountPath(reference.path);
-    }
-    this.coderContext.append({
-      role: "user",
-      content: JSON.stringify({
-        task,
-        plan,
-        mountedPaths: this.coderContext.getMountedPaths()
-      })
-    });
-
-    const coderOutput = await this.coder.execute(task, plan, search.references, conversationContext);
-    this.coderContext.append({ role: "assistant", content: JSON.stringify(coderOutput.result) });
-
+    const coderOutput = await this.coder.execute(task, conversationContext);
     return {
-      mode: "workflow",
-      plan,
-      search,
-      coder: coderOutput.result,
-      toolCalls: [...searchOutput.toolCalls, ...coderOutput.toolCalls]
+      summary: coderOutput.result.summary,
+      changedFiles: coderOutput.result.changedFiles,
+      executedCommands: coderOutput.result.executedCommands,
+      followUp: coderOutput.result.followUp,
+      toolCalls: coderOutput.toolCalls
     };
-  }
-
-  private async answerDirectly(task: string, conversationContext: string): Promise<string> {
-    const messages: Array<{ role: "system" | "user"; content: string }> = [
-      {
-        role: "system",
-        content:
-          "You are MyCoderAgent assistant. For pure Q&A requests, answer directly and do not use tools. Keep response concise and practical."
-      }
-    ];
-
-    if (conversationContext) {
-      messages.push({
-        role: "user",
-        content: [
-          "Conversation memory from previous turns (context only, lower priority than current request):",
-          conversationContext
-        ].join("\n")
-      });
-    }
-    messages.push({
-      role: "user",
-      content: `Current request:\n${task}`
-    });
-
-    const completion = await this.directClient!.complete({
-      model: this.directModel!,
-      temperature: 0.3,
-      messages
-    });
-    const text = completion.message.content?.trim();
-    return text && text.length > 0 ? text : "I do not have enough information to answer that directly.";
   }
 }
 
@@ -162,22 +47,7 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   }
   return {
     task: input.task,
-    memoryTurns: input.memoryTurns,
-    planMode: input.planMode
-  };
-}
-
-function buildImplicitPlan(task: string): ExecutionPlan {
-  return {
-    goal: task,
-    steps: [
-      {
-        id: "I1",
-        title: "Execute the request directly without planner stage",
-        owner: "code",
-        acceptance: "Complete the task with necessary tools and provide verification when applicable."
-      }
-    ]
+    memoryTurns: input.memoryTurns
   };
 }
 
@@ -225,28 +95,4 @@ export function buildConversationContext(
     return context.slice(context.length - maxChars);
   }
   return context;
-}
-
-export function shouldUseDirectAnswer(task: string, routingSettings: RoutingSettings): boolean {
-  if (!routingSettings.enableDirectMode) {
-    return false;
-  }
-
-  const normalized = task.trim().toLowerCase();
-  if (!normalized) {
-    return true;
-  }
-
-  if (routingSettings.directIntentPatterns.some((pattern) => normalized.includes(pattern.toLowerCase()))) {
-    return true;
-  }
-
-  const codeWorkflowHints = [
-    /代码|文件|函数|类|修复|修改|重构|测试|编译|运行命令|命令|目录|路径|diff|补丁|实现|开发|readme|tsconfig|工具调用|项目源码/,
-    /\b(code|file|files|function|class|fix|bug|refactor|test|build|compile|command|run|path|repo|repository|patch|diff)\b/i,
-    /[`$][\w./\\-]+/, // likely path/shell/code-like token
-    /[/\\][\w.-]+/
-  ];
-
-  return !codeWorkflowHints.some((pattern) => pattern.test(task));
 }

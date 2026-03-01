@@ -1,30 +1,26 @@
 ﻿import assert from "node:assert/strict";
 import { test } from "node:test";
-import { shouldUseDirectAnswer } from "../agents/orchestrator";
-import type { RoutingSettings } from "../core/types";
+import { buildConversationContext } from "../agents/orchestrator";
 
-const routing: RoutingSettings = {
-  enableDirectMode: true,
-  defaultEnablePlanMode: false,
-  directIntentPatterns: ["introduce", "explain", "how", "what"]
-};
-
-test("should route greeting/explanation requests to direct mode", () => {
-  assert.equal(shouldUseDirectAnswer("please explain TypeScript", routing), true);
-  assert.equal(shouldUseDirectAnswer("What is TypeScript?", routing), true);
+test("buildConversationContext should include user and assistant content", () => {
+  const context = buildConversationContext([
+    { user: "u1", assistant: "a1" },
+    { user: "u2", assistant: "a2" }
+  ]);
+  assert.match(context, /Turn 1:/);
+  assert.match(context, /User:\nu1/);
+  assert.match(context, /Assistant:\na2/);
 });
 
-test("should route code-edit requests to workflow mode", () => {
-  assert.equal(shouldUseDirectAnswer("please modify src/config.ts and fix bug", routing), false);
-  assert.equal(shouldUseDirectAnswer("run command npm test then patch file", routing), false);
-});
-
-test("should disable direct mode when routing config disabled", () => {
-  assert.equal(
-    shouldUseDirectAnswer("please explain TypeScript", {
-      ...routing,
-      enableDirectMode: false
-    }),
-    false
+test("buildConversationContext should respect maxTurns and maxChars", () => {
+  const context = buildConversationContext(
+    [
+      { user: "first", assistant: "x" },
+      { user: "second", assistant: "y" },
+      { user: "third", assistant: "z" }
+    ],
+    { maxTurns: 2, maxChars: 40 }
   );
+  assert.equal(context.includes("first"), false);
+  assert.equal(context.length <= 40, true);
 });

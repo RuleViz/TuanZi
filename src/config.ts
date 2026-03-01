@@ -8,6 +8,7 @@ export interface RuntimeConfig {
   approvalMode: ApprovalMode;
   agentSettings: AgentSettings;
   model: {
+    keySource: "mycoder" | "qwen" | "deepseek" | "none";
     baseUrl: string;
     apiKey: string | null;
     plannerModel: string | null;
@@ -27,7 +28,13 @@ export function loadRuntimeConfig(input: {
   const qwenApiKey = process.env.QWEN_API_KEY?.trim() || null;
   const deepseekApiKey = process.env.DEEPSEEK_API_KEY?.trim() || null;
   const mycoderApiKey = process.env.MYCODER_API_KEY?.trim() || null;
-  const keySource = mycoderApiKey ? "mycoder" : qwenApiKey ? "qwen" : deepseekApiKey ? "deepseek" : "none";
+  const keySource: RuntimeConfig["model"]["keySource"] = mycoderApiKey
+    ? "mycoder"
+    : qwenApiKey
+      ? "qwen"
+      : deepseekApiKey
+        ? "deepseek"
+        : "none";
   const apiKey = mycoderApiKey || qwenApiKey || deepseekApiKey;
 
   const explicitBaseUrl = process.env.MYCODER_API_BASE_URL?.trim() || null;
@@ -50,6 +57,7 @@ export function loadRuntimeConfig(input: {
     approvalMode,
     agentSettings,
     model: {
+      keySource,
       baseUrl,
       apiKey,
       plannerModel,
