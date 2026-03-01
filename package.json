@@ -1,0 +1,19 @@
+{
+  "name": "mycoderagent",
+  "version": "0.1.0",
+  "description": "MyCoderAgent MVP: local coding agent with safe file tools and Plan/Search/Code orchestration.",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test dist/tests"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  }
+}

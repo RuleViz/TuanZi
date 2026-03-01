@@ -1,0 +1,44 @@
+{
+  "routing": {
+    "enableDirectMode": true,
+    "directIntentPatterns": ["介绍", "解释", "是什么", "谁是", "为什么", "how", "what", "who", "why"]
+  },
+  "policy": {
+    "default": "allow",
+    "tools": {
+      "run_command": "ask",
+      "write_to_file": "ask",
+      "replace_file_content": "ask",
+      "delete_file": "ask"
+    },
+    "commandRules": {
+      "deny": ["rm -rf", "format", "mkfs", "shutdown", "git reset --hard"],
+      "allow": ["npm test", "npm run build", "echo", "git status"]
+    }
+  },
+  "webSearch": {
+    "enabled": true,
+    "provider": "mcp",
+    "maxUsesPerTask": 2,
+    "maxResultsPerUse": 5,
+    "maxCharsPerPage": 20000,
+    "cacheTtlMs": 600000
+  },
+  "toolLoop": {
+    "searchMaxTurns": 12,
+    "coderMaxTurns": 20,
+    "noProgressRepeatTurns": 2
+  },
+  "mcp": {
+    "enabled": false,
+    "command": "",
+    "args": [],
+    "env": {},
+    "tools": {
+      "webSearch": "web_search",
+      "fetchUrl": "fetch_url"
+    },
+    "startupTimeoutMs": 15000,
+    "requestTimeoutMs": 30000
+  }
+}

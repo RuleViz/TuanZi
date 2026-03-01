@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Cache
+.npm-cache/
+.pnpm-store/
+
+# Application config
+.mycoderagent/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Documentation files
+*.md
+!README.md
+AGENTS.md
+
+# Hidden files (except .gitignore)
+.*
+!.gitignore
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Test files
+test_greeting.js
+coverage/
+
+# TypeScript build info
+*.tsbuildinfo
