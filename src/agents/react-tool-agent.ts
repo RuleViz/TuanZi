@@ -18,7 +18,7 @@ export class ReactToolAgent {
     private readonly model: string,
     private readonly toolRegistry: ToolRegistry,
     private readonly toolContext: ToolExecutionContext
-  ) {}
+  ) { }
 
   async run(input: {
     systemPrompt: string;

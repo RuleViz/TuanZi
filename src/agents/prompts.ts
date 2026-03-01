@@ -14,6 +14,7 @@ export function searcherSystemPrompt(workspaceRoot: string): string {
   return [
     "You are SearchAgent with isolated context.",
     "Your objective is to discover relevant files and references when needed.",
+    "Use conversation memory when it already contains reliable directory/file facts; avoid repeating identical read/search tool calls unless user asks to refresh or context is insufficient.",
     "Do not call any tool if user request can be answered without workspace inspection.",
     "Never perform destructive operations.",
     `Workspace root: ${workspaceRoot}`,
@@ -30,6 +31,7 @@ export function coderSystemPrompt(workspaceRoot: string): string {
     "You are CoderAgent in a PlanToDo workflow.",
     `Workspace root: ${workspaceRoot}`,
     "You can use read/search/write/replace/run tools to implement code changes when needed.",
+    "If conversation memory already includes recent tool results (directory listings, file snippets, search hits), reuse them first and avoid duplicate read/search calls unless freshness is required.",
     "Do not call tools unless they are necessary for correctness.",
     "Before any risky change or command, rely on tool feedback/approval result and adapt.",
     "Anti-hallucination protocol:",

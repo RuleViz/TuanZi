@@ -4,6 +4,7 @@ import type {
   ExecutionPlan,
   SearchReference,
   SearchResult,
+  ToolCallRecord,
   ToolExecutionContext,
   ToolExecutionResult
 } from "../core/types";
@@ -21,17 +22,25 @@ const SEARCH_TOOLS = [
   "read_url_content"
 ];
 
+export interface SearcherOutput {
+  result: SearchResult;
+  toolCalls: ToolCallRecord[];
+}
+
 export class SearcherAgent {
   constructor(
     private readonly client: ChatCompletionClient | null,
     private readonly model: string | null,
     private readonly toolRegistry: ToolRegistry,
     private readonly toolContext: ToolExecutionContext
-  ) {}
+  ) { }
 
-  async search(task: string, plan: ExecutionPlan, conversationContext = ""): Promise<SearchResult> {
+  async search(task: string, plan: ExecutionPlan, conversationContext = ""): Promise<SearcherOutput> {
     if (!this.client || !this.model) {
-      return this.fallbackSearch(task);
+      return {
+        result: await this.fallbackSearch(task),
+        toolCalls: []
+      };
     }
 
     const userPromptSections = [
@@ -61,9 +70,19 @@ export class SearcherAgent {
       temperature: 0.1
     });
 
+    const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
+      toolName: call.name,
+      args: call.args,
+      result: call.result,
+      timestamp: new Date().toISOString()
+    }));
+
     const parsed = parseJsonObject(output.finalText);
     if (!parsed) {
-      return fallbackSearchFromToolCalls(output.toolCalls, "模型输出无法解析为 JSON，回退为工具调用结果。");
+      return {
+        result: fallbackSearchFromToolCalls(output.toolCalls, "Model output is not valid JSON; fallback to tool outputs."),
+        toolCalls
+      };
     }
 
     const references = Array.isArray(parsed.references)
@@ -72,31 +91,34 @@ export class SearcherAgent {
 
     const webReferences = Array.isArray(parsed.webReferences)
       ? parsed.webReferences
-          .map((item) => {
-            if (!item || typeof item !== "object" || Array.isArray(item)) {
-              return null;
-            }
-            const record = item as Record<string, unknown>;
-            const url = typeof record.url === "string" ? record.url : null;
-            const reason = typeof record.reason === "string" ? record.reason : "";
-            if (!url) {
-              return null;
-            }
-            return { url, reason };
-          })
-          .filter((item): item is { url: string; reason: string } => item !== null)
+        .map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) {
+            return null;
+          }
+          const record = item as Record<string, unknown>;
+          const url = typeof record.url === "string" ? record.url : null;
+          const reason = typeof record.reason === "string" ? record.reason : "";
+          if (!url) {
+            return null;
+          }
+          return { url, reason };
+        })
+        .filter((item): item is { url: string; reason: string } => item !== null)
       : [];
 
     return {
-      summary: typeof parsed.summary === "string" ? parsed.summary : "Searcher completed.",
-      references,
-      webReferences
+      result: {
+        summary: typeof parsed.summary === "string" ? parsed.summary : "Searcher completed.",
+        references,
+        webReferences
+      },
+      toolCalls
     };
   }
 
   private async fallbackSearch(task: string): Promise<SearchResult> {
     const keywords = task
-      .split(/[\s,，。.!?;；:：/\\]+/)
+      .split(/[\s,.;!?/\\]+/)
       .map((item) => item.trim())
       .filter((item) => item.length >= 2)
       .slice(0, 5);
@@ -134,7 +156,7 @@ export class SearcherAgent {
     }
 
     return {
-      summary: "Searcher 使用 fallback 模式，基于文件名匹配给出候选文件。",
+      summary: "Searcher fallback mode used file-name matching to collect candidate files.",
       references: uniqueByPath(references).slice(0, 20),
       webReferences: []
     };

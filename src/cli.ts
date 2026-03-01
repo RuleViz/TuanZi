@@ -109,8 +109,11 @@ async function handleAgentRun(flags: Record<string, string | boolean>): Promise<
   }
 
   const orchestrator = createOrchestrator(runtimeConfig, runtime);
-  runtime.logger.info("Running Plan -> Search -> Code loop ...");
-  const result = await orchestrator.run(task);
+  runtime.logger.info("Running workflow loop ...");
+  const result = await orchestrator.run({
+    task,
+    planMode: parsePlanModeFlag(flags.plan)
+  });
   console.log(JSON.stringify(result, null, 2));
   return 0;
 }
@@ -193,6 +196,20 @@ function parsePort(rawPort: string | boolean | undefined): number {
   return intValue;
 }
 
+function parsePlanModeFlag(value: string | boolean | undefined): boolean | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["on", "true", "1", "yes"].includes(normalized)) {
+    return true;
+  }
+  if (["off", "false", "0", "no"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
 function resolveWorkspace(rawWorkspace: string | undefined): string {
   return path.resolve(rawWorkspace ?? process.cwd());
 }
@@ -217,7 +234,7 @@ function printHelp(): void {
       "Commands:",
       "  greet [--time-based]                   显示中文问候语",
       "  hello [--time-based]                   显示中文问候语",
-      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny]",
+      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny] [--plan on|off]",
       "  web start [--workspace <abs-path>] [--approval manual|auto|deny] [--host 127.0.0.1] [--port 3000]",
       "  tools list [--workspace <abs-path>]",
       "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny]",

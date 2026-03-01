@@ -28,3 +28,8 @@ test("buildConversationContext should keep recent turns when maxTurns is limited
   assert.equal(context.includes("turn-3"), true);
 });
 
+test("buildConversationContext should not truncate long memory by default", () => {
+  const longAssistant = "x".repeat(9000);
+  const context = buildConversationContext([{ user: "keep all", assistant: longAssistant }]);
+  assert.equal(context.includes(longAssistant), true);
+});

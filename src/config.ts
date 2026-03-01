@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+﻿import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ApprovalMode } from "./core/approval-gate";
 import type { AgentSettings, JsonObject, PolicyDecision } from "./core/types";
@@ -62,7 +62,8 @@ export function loadRuntimeConfig(input: {
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   routing: {
     enableDirectMode: true,
-    directIntentPatterns: ["介绍", "解释", "是什么", "谁是", "为什么", "how", "what", "who", "why"]
+    defaultEnablePlanMode: false,
+    directIntentPatterns: ["introduce", "explain", "who", "what", "why", "how"]
   },
   policy: {
     default: "allow",
@@ -140,6 +141,10 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
     const enableDirectMode = asBoolean(routingRaw.enableDirectMode);
     if (enableDirectMode !== null) {
       base.routing.enableDirectMode = enableDirectMode;
+    }
+    const defaultEnablePlanMode = asBoolean(routingRaw.defaultEnablePlanMode);
+    if (defaultEnablePlanMode !== null) {
+      base.routing.defaultEnablePlanMode = defaultEnablePlanMode;
     }
     const directPatterns = asStringArray(routingRaw.directIntentPatterns);
     if (directPatterns) {
@@ -336,3 +341,6 @@ function asWebSearchProvider(value: unknown): "mcp" | "http" | null {
   }
   return null;
 }
+
+
+

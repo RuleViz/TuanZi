@@ -27,6 +27,7 @@ export interface ConversationMemoryTurn {
 export interface OrchestratorRunInput {
   task: string;
   memoryTurns?: ConversationMemoryTurn[];
+  planMode?: boolean;
 }
 
 export class PlanToDoOrchestrator {
@@ -45,8 +46,10 @@ export class PlanToDoOrchestrator {
   ) {}
 
   async run(input: string | OrchestratorRunInput): Promise<OrchestrationResult> {
-    const { task, memoryTurns } = normalizeRunInput(input);
+    const { task, memoryTurns, planMode } = normalizeRunInput(input);
     const conversationContext = buildConversationContext(memoryTurns);
+    const enablePlanMode =
+      typeof planMode === "boolean" ? planMode : this.routingSettings.defaultEnablePlanMode;
 
     this.toolContext.taskId = randomUUID();
     if (shouldUseDirectAnswer(task, this.routingSettings) && this.directClient && this.directModel) {
@@ -80,7 +83,9 @@ export class PlanToDoOrchestrator {
     }
 
     this.plannerContext.append({ role: "user", content: task });
-    const plan = await this.planner.buildPlan(task, conversationContext);
+    const plan = enablePlanMode
+      ? await this.planner.buildPlan(task, conversationContext)
+      : buildImplicitPlan(task);
     this.plannerContext.append({ role: "assistant", content: JSON.stringify(plan) });
 
     this.searchContext.append({
@@ -90,7 +95,8 @@ export class PlanToDoOrchestrator {
         plan
       })
     });
-    const search = await this.searcher.search(task, plan, conversationContext);
+    const searchOutput = await this.searcher.search(task, plan, conversationContext);
+    const search = searchOutput.result;
     this.searchContext.append({ role: "assistant", content: JSON.stringify(search) });
 
     for (const reference of search.references) {
@@ -113,7 +119,7 @@ export class PlanToDoOrchestrator {
       plan,
       search,
       coder: coderOutput.result,
-      toolCalls: coderOutput.toolCalls
+      toolCalls: [...searchOutput.toolCalls, ...coderOutput.toolCalls]
     };
   }
 
@@ -156,16 +162,23 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   }
   return {
     task: input.task,
-    memoryTurns: input.memoryTurns
+    memoryTurns: input.memoryTurns,
+    planMode: input.planMode
   };
 }
 
-function normalizeMemoryText(text: string, maxLen: number): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLen) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLen)}...`;
+function buildImplicitPlan(task: string): ExecutionPlan {
+  return {
+    goal: task,
+    steps: [
+      {
+        id: "I1",
+        title: "Execute the request directly without planner stage",
+        owner: "code",
+        acceptance: "Complete the task with necessary tools and provide verification when applicable."
+      }
+    ]
+  };
 }
 
 export function buildConversationContext(
@@ -176,37 +189,42 @@ export function buildConversationContext(
     return "";
   }
 
-  const maxTurns = options?.maxTurns ?? 8;
-  const maxChars = options?.maxChars ?? 6000;
-  const recentTurns = memoryTurns.slice(-maxTurns);
+  const maxTurns =
+    typeof options?.maxTurns === "number" && Number.isFinite(options.maxTurns) && options.maxTurns > 0
+      ? Math.floor(options.maxTurns)
+      : null;
+  const maxChars =
+    typeof options?.maxChars === "number" && Number.isFinite(options.maxChars) && options.maxChars > 0
+      ? Math.floor(options.maxChars)
+      : null;
+  const selectedTurns = maxTurns === null ? memoryTurns : memoryTurns.slice(-maxTurns);
   const chunks: string[] = [];
-  let totalChars = 0;
 
-  for (let index = recentTurns.length - 1; index >= 0; index -= 1) {
-    const turn = recentTurns[index];
-    const user = normalizeMemoryText(turn.user, 800);
-    const assistant = normalizeMemoryText(turn.assistant, 1200);
+  for (let index = 0; index < selectedTurns.length; index += 1) {
+    const turn = selectedTurns[index];
+    const user = turn.user;
+    const assistant = turn.assistant;
     if (!user && !assistant) {
       continue;
     }
 
-    const turnText = [
-      `Turn ${index + 1}:`,
-      user ? `User: ${user}` : "",
-      assistant ? `Assistant: ${assistant}` : ""
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    if (chunks.length > 0 && totalChars + turnText.length + 2 > maxChars) {
-      break;
+    const turnTextParts = [`Turn ${index + 1}:`];
+    if (user) {
+      turnTextParts.push("User:");
+      turnTextParts.push(user);
     }
-
-    chunks.unshift(turnText);
-    totalChars += turnText.length + 2;
+    if (assistant) {
+      turnTextParts.push("Assistant:");
+      turnTextParts.push(assistant);
+    }
+    chunks.push(turnTextParts.join("\n"));
   }
 
-  return chunks.join("\n\n");
+  const context = chunks.join("\n\n");
+  if (maxChars !== null && context.length > maxChars) {
+    return context.slice(context.length - maxChars);
+  }
+  return context;
 }
 
 export function shouldUseDirectAnswer(task: string, routingSettings: RoutingSettings): boolean {

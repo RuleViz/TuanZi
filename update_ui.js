@@ -1,225 +1,10 @@
-import { randomUUID } from "node:crypto";
-import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import type { ConversationMemoryTurn, OrchestrationResult } from "../agents/orchestrator";
-import { loadRuntimeConfig } from "../config";
-import type { ApprovalMode } from "../core/approval-gate";
-import { createOrchestrator, createToolRuntime } from "../runtime";
+const fs = require('fs');
 
-export interface WebServerOptions {
-  workspaceRoot: string;
-  approvalMode: ApprovalMode;
-  host: string;
-  port: number;
-}
+const path = 'src/web/server.ts';
+let code = fs.readFileSync(path, 'utf8');
 
-export interface ChatHistoryEntry {
-  id: string;
-  createdAt: string;
-  completedAt?: string;
-  userMessage: string;
-  status: "running" | "completed" | "error";
-  error?: string;
-  result?: OrchestrationResult;
-}
-
-export async function startWebServer(options: WebServerOptions): Promise<{
-  url: string;
-  close: () => Promise<void>;
-}> {
-  const runtimeConfig = loadRuntimeConfig({
-    workspaceRoot: options.workspaceRoot,
-    approvalMode: options.approvalMode
-  });
-  const toolRuntime = createToolRuntime(runtimeConfig);
-  const orchestrator = createOrchestrator(runtimeConfig, toolRuntime);
-
-  const history: ChatHistoryEntry[] = [];
-  let inFlight = false;
-
-  const server = http.createServer(async (req, res) => {
-    try {
-      const method = req.method ?? "GET";
-      const url = req.url ?? "/";
-
-      if (method === "GET" && (url === "/" || url === "/index.html")) {
-        return sendText(res, 200, "text/html; charset=utf-8", buildHtml());
-      }
-      if (method === "GET" && url === "/styles.css") {
-        return sendText(res, 200, "text/css; charset=utf-8", buildCss());
-      }
-      if (method === "GET" && url === "/app.js") {
-        return sendText(
-          res,
-          200,
-          "application/javascript; charset=utf-8",
-          buildJs(runtimeConfig.agentSettings.routing.defaultEnablePlanMode)
-        );
-      }
-      if (method === "GET" && url === "/api/history") {
-        return sendJson(res, 200, {
-          running: inFlight,
-          history
-        });
-      }
-      if (method === "POST" && url === "/api/chat") {
-        if (inFlight) {
-          return sendJson(res, 429, {
-            ok: false,
-            error: "Another request is still running. Please wait."
-          });
-        }
-
-        const payload = (await readJsonBody(req)) as { message?: string; planMode?: boolean };
-        const userMessage = typeof payload.message === "string" ? payload.message.trim() : "";
-        const planMode = typeof payload.planMode === "boolean" ? payload.planMode : undefined;
-        if (!userMessage) {
-          return sendJson(res, 400, {
-            ok: false,
-            error: "message is required."
-          });
-        }
-
-        const entry: ChatHistoryEntry = {
-          id: randomUUID(),
-          createdAt: new Date().toISOString(),
-          userMessage,
-          status: "running"
-        };
-        history.push(entry);
-        trimHistory(history, 60);
-        inFlight = true;
-
-        const startedAt = Date.now();
-        console.log(`[web] chat start id=${entry.id} message=${shortText(userMessage, 120)}`);
-
-        try {
-          const memoryTurns = buildMemoryTurns(history, entry.id);
-          const result = await orchestrator.run({
-            task: userMessage,
-            memoryTurns,
-            planMode
-          });
-          entry.status = "completed";
-          entry.result = result;
-          entry.completedAt = new Date().toISOString();
-
-          const durationMs = Date.now() - startedAt;
-          console.log(
-            `[web] chat done id=${entry.id} status=completed mode=${result.mode} toolCalls=${result.toolCalls.length} durationMs=${durationMs}`
-          );
-
-          return sendJson(res, 200, { ok: true, entry });
-        } catch (error) {
-          entry.status = "error";
-          entry.error = error instanceof Error ? error.message : String(error);
-          entry.completedAt = new Date().toISOString();
-
-          const durationMs = Date.now() - startedAt;
-          console.error(`[web] chat done id=${entry.id} status=error durationMs=${durationMs} error=${entry.error}`);
-
-          return sendJson(res, 500, { ok: false, entry });
-        } finally {
-          inFlight = false;
-        }
-      }
-
-      return sendJson(res, 404, { ok: false, error: "Not found" });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return sendJson(res, 500, { ok: false, error: message });
-    }
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port, options.host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const url = `http://${options.host}:${options.port}`;
-  return {
-    url,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      })
-  };
-}
-
-function sendText(res: ServerResponse, statusCode: number, contentType: string, body: string): void {
-  res.statusCode = statusCode;
-  res.setHeader("content-type", contentType);
-  res.end(body);
-}
-
-function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
-  sendText(res, statusCode, "application/json; charset=utf-8", JSON.stringify(payload));
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-
-  for await (const chunk of req) {
-    const bufferChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bufferChunk.length;
-    if (size > 1_000_000) {
-      throw new Error("Request body too large.");
-    }
-    chunks.push(bufferChunk);
-  }
-
-  if (chunks.length === 0) {
-    return {};
-  }
-
-  const rawText = Buffer.concat(chunks).toString("utf8").replace(/^\uFEFF/, "").trim();
-  if (!rawText) {
-    return {};
-  }
-
-  const parsed = JSON.parse(rawText) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Body must be JSON object.");
-  }
-  return parsed as Record<string, unknown>;
-}
-
-function trimHistory(history: ChatHistoryEntry[], maxItems: number): void {
-  if (history.length <= maxItems) {
-    return;
-  }
-  history.splice(0, history.length - maxItems);
-}
-
-function shortText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) {
-    return text;
-  }
-  return `${text.slice(0, maxLen)}...`;
-}
-
-function buildMemoryTurns(history: ChatHistoryEntry[], currentEntryId: string): ConversationMemoryTurn[] {
-  return history
-    .filter((entry) => entry.id !== currentEntryId)
-    .filter((entry) => entry.status === "completed" && entry.result)
-    .slice(-10)
-    .map((entry) => ({
-      user: entry.userMessage,
-      assistant: entry.result?.coder.summary ?? ""
-    }));
-}
-
-function buildHtml(): string {
-  return `<!doctype html>
+const html = `function buildHtml(): string {
+  return \`<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
@@ -241,20 +26,17 @@ function buildHtml(): string {
         </button>
       </div>
       <div class="actions">
-        <label class="plan-toggle">
-          <input id="planModeToggle" type="checkbox" />
-          <span>Plan 模式</span>
-        </label>
         <span id="statusText" class="status"></span>
       </div>
     </form>
   </main>
   <script src="/app.js"></script>
 </body>
-</html>`;
-}
-function buildCss(): string {
-  return `:root {
+</html>\`;
+}`;
+
+const css = `function buildCss(): string {
+  return \`:root {
   --ink: #cccccc;
   --muted: #888888;
   --bg: #1e1e1e;
@@ -295,17 +77,9 @@ html, body {
 }
 .msg-user::before { content: "👤"; font-size: 14px; margin-top: 1px; opacity: 0.7; }
 
-.msg-assistant {
-  margin-top: 4px;
-  color: #eeeeee;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-}
-
 .steps { 
   display: flex; flex-direction: column; gap: 2px; 
-  border-left: 1px solid var(--step-border); margin-left: 6px; padding: 2px 0 2px 14px; 
+  border-left: 1px solid var(--step-border); margin-left: 6px; padding-left: 14px; 
 }
 
 .step { 
@@ -364,13 +138,12 @@ details.step-details > summary:hover { background: var(--hover); color: #aaaaaa;
 .send-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
 .send-btn:disabled { color: var(--border); cursor: not-allowed; background: transparent; }
 .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-.plan-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; user-select: none; }
-.plan-toggle input { accent-color: var(--accent); }
 .status { color: var(--muted); font-size: 12px; }
-`;
-}
-function buildJs(defaultPlanMode: boolean): string {
-  return `const state = {
+\`;
+}`;
+
+const js = `function buildJs(): string {
+  return \`const state = {
   history: [],
   sending: false,
   polling: null,
@@ -383,10 +156,6 @@ const formEl = document.getElementById("composer");
 const messageEl = document.getElementById("message");
 const sendBtnEl = document.getElementById("sendBtn");
 const statusEl = document.getElementById("statusText");
-const planModeToggleEl = document.getElementById("planModeToggle");
-if (planModeToggleEl) {
-  planModeToggleEl.checked = ${defaultPlanMode ? "true" : "false"};
-}
 
 function updateStatus(text) { if(statusEl) statusEl.textContent = text || ""; }
 
@@ -534,18 +303,17 @@ function renderHistory() {
         const title = getToolTitle(call);
         
         let contentStr = "";
-        if (call.args) contentStr += "--- 参数 (Args) ---\\\\n" + JSON.stringify(call.args, null, 2) + "\\\\n\\\\n";
-        if (call.result) contentStr += "--- 结果 (Result) ---\\\\n" + JSON.stringify(call.result, null, 2);
+        if (call.args) contentStr += "--- 参数 (Args) ---\\n" + JSON.stringify(call.args, null, 2) + "\\n\\n";
+        if (call.result) contentStr += "--- 结果 (Result) ---\\n" + JSON.stringify(call.result, null, 2);
         
         steps.appendChild(createStep(icon, title, contentStr, entry.id + ":tool:" + i));
       }
 
       const coder = entry.result.coder;
       if (coder && Object.keys(coder).length > 0) {
-        const assistantMsg = document.createElement("div");
-        assistantMsg.className = "msg-assistant";
-        assistantMsg.textContent = coder.summary || "";
-        turn.appendChild(assistantMsg);
+        let title = "已完成";
+        if (coder.summary) title = coder.summary;
+        steps.appendChild(createStep("💬", "> " + title, coder, entry.id + ":coder"));
       }
     }
     
@@ -576,14 +344,14 @@ async function refreshHistory() {
   }
 }
 
-async function sendMessage(message, planMode) {
+async function sendMessage(message) {
   setSending(true);
   updateStatus("发送请求...");
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ message, planMode })
+      body: JSON.stringify({ message })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data && data.error ? data.error : "请求失败");
@@ -603,12 +371,11 @@ async function sendMessage(message, planMode) {
 async function submitComposerMessage() {
   const message = messageEl ? messageEl.value.trim() : "";
   if (!message || state.sending) return;
-  const planMode = planModeToggleEl ? Boolean(planModeToggleEl.checked) : false;
   if(messageEl) {
     messageEl.value = "";
     messageEl.style.height = 'auto';
   }
-  await sendMessage(message, planMode);
+  await sendMessage(message);
 }
 
 if(formEl) {
@@ -640,5 +407,10 @@ if(messageEl) {
   state.polling = setInterval(() => {
     refreshHistory().catch(() => {});
   }, 2500);
-})();`;
-}
+})();\`;
+}`;
+
+const htmlStart = code.indexOf('function buildHtml(): string {');
+const preamble = code.substring(0, htmlStart);
+fs.writeFileSync(path, preamble + html + '\n' + css + '\n' + js + '\n');
+console.log("Cleanup and fix completed.");

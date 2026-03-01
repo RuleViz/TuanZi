@@ -39,6 +39,7 @@ class MemoryLogger {
 const minimalSettings: AgentSettings = {
   routing: {
     enableDirectMode: true,
+    defaultEnablePlanMode: false,
     directIntentPatterns: []
   },
   policy: {

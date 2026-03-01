@@ -5,6 +5,7 @@ export type PolicyDecision = "allow" | "ask" | "deny";
 export interface RoutingSettings {
   enableDirectMode: boolean;
   directIntentPatterns: string[];
+  defaultEnablePlanMode: boolean;
 }
 
 export interface PolicySettings {

@@ -33,7 +33,7 @@ const WRITE_ENABLED_CODER_TOOLS = [
   "search_web",
   "fetch_url",
   "read_url_content",
-      "run_command"
+  "run_command"
 ];
 
 export class CoderAgent {
@@ -42,7 +42,7 @@ export class CoderAgent {
     private readonly model: string | null,
     private readonly toolRegistry: ToolRegistry,
     private readonly toolContext: ToolExecutionContext
-  ) {}
+  ) { }
 
   async execute(task: string, plan: ExecutionPlan, references: SearchReference[], conversationContext = ""): Promise<{
     result: CoderResult;
@@ -112,8 +112,8 @@ export class CoderAgent {
 
     const executedCommands = Array.isArray(parsed.executedCommands)
       ? parsed.executedCommands
-          .map((item) => toExecutedCommand(item))
-          .filter((item): item is { command: string; exitCode: number | null } => item !== null)
+        .map((item) => toExecutedCommand(item))
+        .filter((item): item is { command: string; exitCode: number | null } => item !== null)
       : collectExecutedCommands(toolCalls);
 
     const followUp = Array.isArray(parsed.followUp)
