@@ -16,12 +16,15 @@ const ALL_CODER_TOOLS = [
   "grep_search",
   "view_file",
   "write_to_file",
-  "replace_file_content",
+  "diff_apply",
   "delete_file",
+  "codebase_search",
   "search_web",
   "fetch_url",
   "read_url_content",
-  "run_command"
+  "run_command",
+  "browser_action",
+  "checkpoint"
 ];
 
 export class TuanZiAgent {
@@ -90,7 +93,7 @@ export class TuanZiAgent {
 }
 
 function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {
-  const fileTools = new Set(["write_to_file", "replace_file_content", "delete_file"]);
+  const fileTools = new Set(["write_to_file", "diff_apply", "delete_file"]);
   const paths = new Set<string>();
 
   for (const call of toolCalls) {

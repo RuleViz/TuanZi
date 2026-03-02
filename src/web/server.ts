@@ -456,10 +456,14 @@ function getToolTitle(call) {
       extra = call.args && call.args.Query ? '"' + call.args.Query + '"' : '';
   } else if (name === 'run_command') {
     extra = call.args && call.args.CommandLine ? call.args.CommandLine : '';
-  } else if (name === 'multi_replace_file_content' || name === 'replace_file_content' || name === 'write_to_file') {
-    extra = call.args && call.args.TargetFile ? call.args.TargetFile.split(/[\\\\/]/).pop() : '';
+  } else if (name === 'diff_apply' || name === 'write_to_file') {
+    const targetFile = call.args && (call.args.targetFile || call.args.TargetFile || call.args.path);
+    extra = typeof targetFile === "string" ? targetFile.split(/[\\\\/]/).pop() : '';
     let additions = "";
-    if (call.args && call.args.ReplacementChunks) additions = " (" + call.args.ReplacementChunks.length + " chunks)";
+    if (name === "diff_apply" && call.args && typeof call.args.diff === "string") {
+      const hunkCount = (call.args.diff.match(/^@@/gm) || []).length;
+      if (hunkCount > 0) additions = " (" + hunkCount + " hunks)";
+    }
     detail = '<span style="color:var(--accent); margin-left:6px; font-size:12px;">' + additions + '</span>';
   } else {
     extra = JSON.stringify(call.args).substring(0, 30);

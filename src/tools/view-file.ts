@@ -47,7 +47,17 @@ export class ViewFileTool implements Tool {
         assertInsideWorkspace(absolutePath, context.workspaceRoot);
         const stat = await fs.stat(absolutePath).catch(() => null);
         if (!stat || !stat.isFile()) {
-          return `=== File: ${absolutePath} ===\n[Error] File not found.`;
+          return {
+            absolutePath,
+            content: "",
+            metadata: {
+              totalLines: 0,
+              fileSize: 0,
+              viewedRange: `${startLine}-${startLine}`,
+              hasMore: false
+            },
+            error: "File not found."
+          };
         }
 
         const content = await fs.readFile(absolutePath, "utf8");
@@ -55,15 +65,45 @@ export class ViewFileTool implements Tool {
         const safeEndLine = Math.min(effectiveEndLine, lines.length || 1);
         const selectedLines = lines.slice(startLine - 1, safeEndLine);
         const formattedLines = selectedLines.map((line, index) => `${startLine + index}: ${line}`);
-        return `=== File: ${absolutePath} ===\n${formattedLines.join("\n")}`;
+        return {
+          absolutePath,
+          content: formattedLines.join("\n"),
+          metadata: {
+            totalLines: lines.length,
+            fileSize: stat.size,
+            viewedRange: `${startLine}-${safeEndLine}`,
+            hasMore: safeEndLine < lines.length
+          }
+        };
       })
     );
 
-    const joined = blocks.join("\n\n");
+    const joined = blocks
+      .map((block) => {
+        const header = `=== File: ${block.absolutePath} ===`;
+        if (block.error) {
+          return `${header}\n[Error] ${block.error}`;
+        }
+        return `${header}\n${block.content}`;
+      })
+      .join("\n\n");
     const truncationHint = truncationApplied
       ? "\n\n... (output truncated for safety; narrow start_line/end_line to continue reading)"
       : "";
-    return { ok: true, data: `${joined}${truncationHint}` };
+    const metadata = blocks.length === 1 ? blocks[0].metadata : undefined;
+    return {
+      ok: true,
+      data: {
+        content: `${joined}${truncationHint}`,
+        files: blocks.map((block) => ({
+          path: block.absolutePath,
+          content: block.content,
+          metadata: block.metadata,
+          error: block.error
+        })),
+        metadata
+      }
+    };
   }
 }
 

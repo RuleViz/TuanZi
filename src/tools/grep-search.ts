@@ -13,6 +13,11 @@ interface GrepHit {
   after: string[];
 }
 
+interface GitignoreRule {
+  negative: boolean;
+  matcher: RegExp;
+}
+
 const SKIP_DIR_NAMES = new Set([
   ".git",
   "node_modules",
@@ -83,10 +88,21 @@ export class GrepSearchTool implements Tool {
     }
 
     const hits: GrepHit[] = [];
+    const gitignoreRules = stat.isDirectory() ? await loadGitignoreRules(searchPath) : [];
     if (stat.isFile()) {
-      await this.searchFile(searchPath, regex, contextLines, hits, maxResults);
+      const fileHits = await this.searchFile(searchPath, regex, contextLines, maxResults);
+      hits.push(...fileHits);
     } else if (stat.isDirectory()) {
-      await this.searchDirectory(searchPath, searchPath, regex, includeMatchers, contextLines, hits, maxResults);
+      await this.searchDirectory(
+        searchPath,
+        searchPath,
+        regex,
+        includeMatchers,
+        contextLines,
+        hits,
+        maxResults,
+        gitignoreRules
+      );
     } else {
       return { ok: false, error: "Unsupported search_path type." };
     }
@@ -109,13 +125,17 @@ export class GrepSearchTool implements Tool {
     includeMatchers: RegExp[],
     contextLines: number,
     hits: GrepHit[],
-    maxResults: number
+    maxResults: number,
+    gitignoreRules: GitignoreRule[]
   ): Promise<void> {
     if (hits.length >= maxResults) {
       return;
     }
 
     const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    const files: string[] = [];
+    const subdirs: string[] = [];
+
     for (const entry of entries) {
       if (hits.length >= maxResults) {
         return;
@@ -126,8 +146,13 @@ export class GrepSearchTool implements Tool {
       }
 
       const absolutePath = path.join(currentPath, entry.name);
+      const relativePath = path.relative(rootPath, absolutePath).replace(/\\/g, "/");
+      if (shouldIgnoreByGitignore(relativePath, entry.isDirectory(), gitignoreRules)) {
+        continue;
+      }
+
       if (entry.isDirectory()) {
-        await this.searchDirectory(rootPath, absolutePath, regex, includeMatchers, contextLines, hits, maxResults);
+        subdirs.push(absolutePath);
         continue;
       }
 
@@ -135,12 +160,38 @@ export class GrepSearchTool implements Tool {
         continue;
       }
 
-      const relativePath = path.relative(rootPath, absolutePath).replace(/\\/g, "/");
       if (includeMatchers.length > 0 && !includeMatchers.some((matcher) => matcher.test(entry.name) || matcher.test(relativePath))) {
         continue;
       }
 
-      await this.searchFile(absolutePath, regex, contextLines, hits, maxResults);
+      files.push(absolutePath);
+    }
+
+    const batchSize = 10;
+    for (let i = 0; i < files.length; i += batchSize) {
+      if (hits.length >= maxResults) {
+        return;
+      }
+      const remaining = maxResults - hits.length;
+      const batch = files.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map((absolutePath) => this.searchFile(absolutePath, regex, contextLines, remaining))
+      );
+      for (const result of batchResults) {
+        for (const hit of result) {
+          if (hits.length >= maxResults) {
+            return;
+          }
+          hits.push(hit);
+        }
+      }
+    }
+
+    for (const subdir of subdirs) {
+      if (hits.length >= maxResults) {
+        return;
+      }
+      await this.searchDirectory(rootPath, subdir, regex, includeMatchers, contextLines, hits, maxResults, gitignoreRules);
     }
   }
 
@@ -148,27 +199,24 @@ export class GrepSearchTool implements Tool {
     absoluteFilePath: string,
     regex: RegExp,
     contextLines: number,
-    hits: GrepHit[],
     maxResults: number
-  ): Promise<void> {
-    if (hits.length >= maxResults) {
-      return;
-    }
+  ): Promise<GrepHit[]> {
+    const hits: GrepHit[] = [];
 
     const stat = await fs.stat(absoluteFilePath).catch(() => null);
     if (!stat || !stat.isFile() || stat.size > 2 * 1024 * 1024) {
-      return;
+      return hits;
     }
 
     const text = await fs.readFile(absoluteFilePath, "utf8").catch(() => null);
     if (text === null) {
-      return;
+      return hits;
     }
 
     const lines = text.split(/\r?\n/);
     for (let index = 0; index < lines.length; index += 1) {
       if (hits.length >= maxResults) {
-        return;
+        return hits;
       }
 
       const line = lines[index];
@@ -189,7 +237,52 @@ export class GrepSearchTool implements Tool {
         after
       });
     }
+    return hits;
   }
+}
+
+async function loadGitignoreRules(searchRoot: string): Promise<GitignoreRule[]> {
+  const gitignorePath = path.join(searchRoot, ".gitignore");
+  const text = await fs.readFile(gitignorePath, "utf8").catch(() => null);
+  if (text === null) {
+    return [];
+  }
+
+  const rules: GitignoreRule[] = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const negative = trimmed.startsWith("!");
+    const rawPattern = negative ? trimmed.slice(1).trim() : trimmed;
+    if (!rawPattern) {
+      continue;
+    }
+    rules.push({
+      negative,
+      matcher: globToRegExp(rawPattern)
+    });
+  }
+  return rules;
+}
+
+function shouldIgnoreByGitignore(relativePath: string, isDirectory: boolean, rules: GitignoreRule[]): boolean {
+  if (rules.length === 0) {
+    return false;
+  }
+  const normalized = relativePath.replace(/\\/g, "/");
+  const candidate = isDirectory ? `${normalized}/` : normalized;
+  let ignored = false;
+  for (const rule of rules) {
+    if (!rule.matcher.test(normalized) && !rule.matcher.test(candidate)) {
+      continue;
+    }
+    ignored = !rule.negative;
+  }
+  return ignored;
 }
 
 function clampInt(value: number, min: number, max: number): number {

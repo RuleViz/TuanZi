@@ -20,7 +20,7 @@
 - `fetch_url` / `read_url_content`（可通过 MCP 工具桥接）
 
 ### Phase 3: 智能修改引擎
-- `replace_file_content`（`targetContent` 唯一性校验，0 或 >1 直接报错）
+- `diff_apply`（统一 diff 多 hunk 修改，支持模糊匹配）
 
 ### Phase 4: 命令执行与安全循环
 - `run_command`（阻塞执行、超时、输出截断）

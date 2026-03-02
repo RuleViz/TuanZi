@@ -19,7 +19,13 @@ export class RunCommandTool implements Tool {
         command: { type: "string", description: "Command to execute." },
         cwd: { type: "string", description: "Absolute working directory. Defaults to workspace root." },
         timeout_ms: { type: "number", description: "Timeout in milliseconds." },
-        max_output_chars: { type: "number", description: "Max stdout/stderr characters to keep." }
+        max_output_chars: { type: "number", description: "Max stdout/stderr characters to keep." },
+        parse_json_output: { type: "boolean", description: "Attempt to parse stdout as JSON." },
+        env: {
+          type: "object",
+          description: "Additional environment variables as key/value strings.",
+          additionalProperties: { type: "string" }
+        }
       },
       required: ["command"],
       additionalProperties: false
@@ -47,6 +53,11 @@ export class RunCommandTool implements Tool {
 
     const timeoutMs = clampInt(asNumber(input.timeout_ms) ?? DEFAULT_TIMEOUT_MS, 1000, 900_000);
     const maxOutputChars = clampInt(asNumber(input.max_output_chars) ?? DEFAULT_MAX_OUTPUT, 500, 20_000);
+    const parseJsonOutput = input.parse_json_output === true;
+    const envOverrides = parseEnvOverrides(input.env);
+    if (!envOverrides.ok) {
+      return { ok: false, error: envOverrides.error };
+    }
 
     const policyDecision = context.policyEngine?.evaluateTool(this.definition.name, input) ?? {
       decision: "ask" as const,
@@ -69,10 +80,11 @@ export class RunCommandTool implements Tool {
     }
 
     const startedAt = Date.now();
-    const execution = await executeShellCommand(command, cwd, timeoutMs, maxOutputChars);
+    const execution = await executeShellCommand(command, cwd, timeoutMs, maxOutputChars, envOverrides.value);
     const durationMs = Date.now() - startedAt;
     const stdout = sanitizeOutput(execution.stdout, maxOutputChars);
     const stderr = sanitizeOutput(execution.stderr, maxOutputChars);
+    const parsedOutput = parseJsonOutput ? tryParseJson(stdout) : undefined;
 
     const payload = {
       command,
@@ -82,7 +94,8 @@ export class RunCommandTool implements Tool {
       timedOut: execution.timedOut,
       durationMs,
       stdout,
-      stderr
+      stderr,
+      parsedOutput
     };
 
     const failed = execution.timedOut || execution.exitCode !== 0;
@@ -125,7 +138,8 @@ async function executeShellCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
-  maxOutputChars: number
+  maxOutputChars: number,
+  envOverrides: Record<string, string>
 ): Promise<{
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -137,7 +151,10 @@ async function executeShellCommand(
     const child = spawn(command, {
       cwd,
       shell: true,
-      env: process.env
+      env: {
+        ...process.env,
+        ...envOverrides
+      }
     });
 
     let stdout = "";
@@ -168,6 +185,35 @@ async function executeShellCommand(
       });
     });
   });
+}
+
+function parseEnvOverrides(value: unknown): { ok: true; value: Record<string, string> } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, value: {} };
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, error: "env must be an object with string values." };
+  }
+  const parsed: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "string") {
+      return { ok: false, error: `env.${key} must be a string.` };
+    }
+    parsed[key] = raw;
+  }
+  return { ok: true, value: parsed };
+}
+
+function tryParseJson(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return null;
+  }
 }
 
 function appendLimited(original: string, addition: string, maxLength: number): string {

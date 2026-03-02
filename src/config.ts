@@ -78,7 +78,7 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
     tools: {
       run_command: "ask",
       write_to_file: "ask",
-      replace_file_content: "ask",
+      diff_apply: "ask",
       delete_file: "ask"
     },
     commandRules: {
