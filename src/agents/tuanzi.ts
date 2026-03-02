@@ -64,7 +64,8 @@ export class TuanZiAgent {
     }
     userPromptSections.push(
       "",
-      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language."
+      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language.",
+      "Output style requirement: keep wording professional and avoid unnecessary decorative symbols unless the user explicitly requests that style."
     );
     const userPrompt = userPromptSections.join("\n");
 

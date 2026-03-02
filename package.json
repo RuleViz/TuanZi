@@ -16,10 +16,14 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@types/figlet": "^1.7.0",
+    "@types/gradient-string": "^1.1.6",
     "@types/node": "^22.10.1",
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "figlet": "^1.10.0",
+    "gradient-string": "^3.0.0",
     "puppeteer-core": "^24.37.5"
   }
 }

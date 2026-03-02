@@ -2,6 +2,8 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
+import figlet from "figlet";
+import gradient from "gradient-string";
 import type {
   ConversationMemoryTurn,
   OrchestrationResult,
@@ -18,6 +20,9 @@ import { ChatSessionStore } from "./session-store";
 const PROJECT_CONTEXT_FILE = "TUANZI.md";
 const PROJECT_CONTEXT_MAX_CHARS = 12_000;
 const RUN_COMMAND_OUTPUT_PREVIEW_CHARS = 1_200;
+const WELCOME_BANNER_TEXT = "TUANZI";
+const WELCOME_BANNER_FONT = "ANSI Shadow";
+const WELCOME_BANNER_COLORS = ["#555555", "#ffffff", "#aaaaaa"] as const;
 
 export interface InteractiveChatOptions {
   workspaceRoot: string;
@@ -155,6 +160,7 @@ class InteractiveChatSession {
     const contextInfo = await this.detectProjectContextMeta();
     const modelDisplay = this.currentModelDisplay(runtimeConfig);
 
+    printWelcomeBanner();
     console.log("🍡 TuanZi 交互式 CLI");
     console.log(`工作区: ${runtimeConfig.workspaceRoot}`);
     console.log(`模型: ${modelDisplay}`);
@@ -1166,4 +1172,15 @@ async function sleep(ms: number): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function printWelcomeBanner(): void {
+  try {
+    const asciiText = figlet.textSync(WELCOME_BANNER_TEXT, { font: WELCOME_BANNER_FONT });
+    const bwGradient = gradient([...WELCOME_BANNER_COLORS]);
+    console.log(bwGradient.multiline(asciiText));
+  } catch {
+    // Fallback when terminal does not support ANSI or figlet fails.
+    console.log("TUANZI");
+  }
 }
