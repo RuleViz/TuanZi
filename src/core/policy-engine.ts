@@ -40,19 +40,35 @@ function matchesAnyRule(command: string, rules: string[]): boolean {
     if (!trimmed) {
       return false;
     }
-    if (trimmed.startsWith("/") && trimmed.endsWith("/") && trimmed.length > 2) {
-      try {
-        const regex = new RegExp(trimmed.slice(1, -1), "i");
-        return regex.test(command);
-      } catch {
-        return normalized.includes(trimmed.toLowerCase());
-      }
+    const regex = parseRegexLiteral(trimmed);
+    if (regex) {
+      return regex.test(command);
     }
     return normalized.includes(trimmed.toLowerCase());
   });
 }
 
+function parseRegexLiteral(input: string): RegExp | null {
+  if (!input.startsWith("/") || input.length < 2) {
+    return null;
+  }
+  const lastSlash = input.lastIndexOf("/");
+  if (lastSlash <= 0) {
+    return null;
+  }
+  const pattern = input.slice(1, lastSlash);
+  const rawFlags = input.slice(lastSlash + 1);
+  if (!pattern) {
+    return null;
+  }
+  const flags = rawFlags || "i";
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
+
 function isPolicyDecision(value: unknown): value is PolicyDecision {
   return value === "allow" || value === "ask" || value === "deny";
 }
-

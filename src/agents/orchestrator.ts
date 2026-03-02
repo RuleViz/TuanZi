@@ -13,6 +13,7 @@ export interface OrchestrationResult {
 export interface ConversationMemoryTurn {
   user: string;
   assistant: string;
+  toolCalls?: ToolCallRecord[];
 }
 
 export interface OrchestratorRunInput {
@@ -86,6 +87,19 @@ export function buildConversationContext(
     if (assistant) {
       turnTextParts.push("Assistant:");
       turnTextParts.push(assistant);
+    }
+    if (turn.toolCalls && turn.toolCalls.length > 0) {
+      turnTextParts.push("Executed Tools:");
+      for (const call of turn.toolCalls) {
+        let resultStr = "";
+        try {
+          const rawResult = JSON.stringify(call.result);
+          resultStr = rawResult.length > 1500 ? rawResult.slice(0, 1500) + "...(truncated)" : rawResult;
+        } catch {
+          resultStr = "[Unserializable result]";
+        }
+        turnTextParts.push(`- Tool: ${call.toolName} | Args: ${JSON.stringify(call.args)} | Result: ${resultStr}`);
+      }
     }
     chunks.push(turnTextParts.join("\n"));
   }

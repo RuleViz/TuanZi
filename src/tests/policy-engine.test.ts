@@ -10,7 +10,7 @@ const settings: PolicySettings = {
     write_to_file: "ask"
   },
   commandRules: {
-    deny: ["rm -rf", "git reset --hard"],
+    deny: ["/^rm -rf\\b/i", "/^format\\b/i", "git reset --hard"],
     allow: ["echo", "git status"]
   }
 };
@@ -31,4 +31,16 @@ test("PolicyEngine should fallback to tool policy when no command rule matched",
   const engine = new ConfigPolicyEngine(settings);
   const decision = engine.evaluateTool("run_command", { command: "npm run lint" });
   assert.equal(decision.decision, "ask");
+});
+
+test("PolicyEngine regex deny should not block git --pretty=format argument", () => {
+  const engine = new ConfigPolicyEngine(settings);
+  const decision = engine.evaluateTool("run_command", { command: "git log --pretty=format:%H -n 1" });
+  assert.equal(decision.decision, "ask");
+});
+
+test("PolicyEngine regex deny should block format command at command head", () => {
+  const engine = new ConfigPolicyEngine(settings);
+  const decision = engine.evaluateTool("run_command", { command: "format C:" });
+  assert.equal(decision.decision, "deny");
 });

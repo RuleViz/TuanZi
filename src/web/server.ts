@@ -212,7 +212,8 @@ function buildMemoryTurns(history: ChatHistoryEntry[], currentEntryId: string): 
     .slice(-10)
     .map((entry) => ({
       user: entry.userMessage,
-      assistant: entry.result?.summary ?? ""
+      assistant: entry.result?.summary ?? "",
+      toolCalls: entry.result?.toolCalls
     }));
 }
 

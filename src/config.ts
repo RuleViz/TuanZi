@@ -82,7 +82,7 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
       delete_file: "ask"
     },
     commandRules: {
-      deny: ["rm -rf", "format", "mkfs", "shutdown", "git reset --hard"],
+      deny: ["/^rm -rf\\b/i", "/^format\\b/i", "/^mkfs\\b/i", "/^shutdown\\b/i", "git reset --hard"],
       allow: ["npm test", "npm run build", "echo", "git status"]
     }
   },

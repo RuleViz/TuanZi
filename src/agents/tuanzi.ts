@@ -157,17 +157,19 @@ function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {
 function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: string; exitCode: number | null }> {
   const commands: Array<{ command: string; exitCode: number | null }> = [];
   for (const call of toolCalls) {
-    if (call.toolName !== "run_command" || !call.result.ok || !call.result.data) {
+    if (call.toolName !== "run_command") {
       continue;
     }
-    if (typeof call.result.data !== "object" || Array.isArray(call.result.data)) {
-      continue;
-    }
+    const commandFromArgs = typeof call.args.command === "string" ? call.args.command : null;
+    let commandFromData: string | null = null;
+    let exitCode: number | null = null;
 
-    const data = call.result.data as Record<string, unknown>;
-    const command = typeof data.command === "string" ? data.command : null;
-    const exitCode =
-      typeof data.exitCode === "number" ? data.exitCode : data.exitCode === null ? null : null;
+    if (call.result.data && typeof call.result.data === "object" && !Array.isArray(call.result.data)) {
+      const data = call.result.data as Record<string, unknown>;
+      commandFromData = typeof data.command === "string" ? data.command : null;
+      exitCode = typeof data.exitCode === "number" ? data.exitCode : null;
+    }
+    const command = commandFromData ?? commandFromArgs;
     if (command) {
       commands.push({ command, exitCode });
     }
