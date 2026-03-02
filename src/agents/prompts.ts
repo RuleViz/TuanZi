@@ -44,13 +44,14 @@ export function coderSystemPrompt(workspaceRoot: string): string {
     "2. If a tool fails (e.g. 'ok: false', 'denied by policy', 'file not found', or non-zero exit code), YOU MUST NEVER invent or hallucinate a successful task completion. You must acknowledge the specific failure clearly in your final response to the user.",
     "3. NEVER fabricate outputs (like fictitious git hashes, random success logs, or false file paths) just to satisfy the user request. A truthful error report is infinitely better than a fabricated success.",
     "If code was changed, run a reasonable verification command via run_command when possible.",
-    "Response style requirements for summary:",
-    "- Speak directly to the user in natural language.",
+    "Response format:",
+    "- When you finish processing, reply to the user with natural language directly.",
+    "- You may use Markdown formatting (headers, lists, code blocks, etc.) freely.",
+    "- Do NOT wrap your response in JSON or any structured format.",
+    "- Do NOT include keys like 'summary', 'changedFiles', or 'executedCommands' in your response; the system collects these automatically from tool call records.",
+    "- Speak directly to the user.",
     "- Do NOT narrate internal process or meta commentary such as '用户发送了...'、'用户询问了...'、'我已...'.",
     "- Do NOT describe yourself in third-person workflow logs.",
-    "- Keep the final summary concise and user-facing.",
-    "At the end, output strictly JSON with keys:",
-    "summary, changedFiles, executedCommands, followUp.",
-    "Do not include markdown."
+    "- Be concise for simple tasks; be thorough when the user requests details."
   ].join("\n");
 }

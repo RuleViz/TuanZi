@@ -57,7 +57,7 @@ export class TuanZiAgent {
     }
     userPromptSections.push(
       "",
-      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and return a strict JSON summary."
+      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language."
     );
     const userPrompt = userPromptSections.join("\n");
 
@@ -69,64 +69,24 @@ export class TuanZiAgent {
       temperature: 0.15
     });
 
-    const parsed = parseJsonObject(output.finalText);
     const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
       toolName: call.name,
       args: call.args,
       result: call.result,
       timestamp: new Date().toISOString()
     }));
-
-    if (!parsed) {
-      const fallbackSummary = output.finalText.trim()
-        ? normalizeUserFacingSummary(output.finalText)
-        : "TuanZi completed tool execution but returned an empty final message.";
-      return {
-        result: buildCoderResultFromToolCalls(toolCalls, fallbackSummary),
-        toolCalls
-      };
-    }
-
-    const changedFiles = Array.isArray(parsed.changedFiles)
-      ? parsed.changedFiles.filter((item): item is string => typeof item === "string")
-      : collectChangedFiles(toolCalls);
-
-    const executedCommands = Array.isArray(parsed.executedCommands)
-      ? parsed.executedCommands
-        .map((item) => toExecutedCommand(item))
-        .filter((item): item is { command: string; exitCode: number | null } => item !== null)
-      : collectExecutedCommands(toolCalls);
-
-    const followUp = Array.isArray(parsed.followUp)
-      ? parsed.followUp.filter((item): item is string => typeof item === "string")
-      : [];
+    const summary = extractUserFacingText(output.finalText);
 
     return {
       result: {
-        summary:
-          typeof parsed.summary === "string" && parsed.summary.trim()
-            ? normalizeUserFacingSummary(parsed.summary)
-            : "TuanZi completed with parsed JSON summary.",
-        changedFiles,
-        executedCommands,
-        followUp
+        summary,
+        changedFiles: collectChangedFiles(toolCalls),
+        executedCommands: collectExecutedCommands(toolCalls),
+        followUp: []
       },
       toolCalls
     };
   }
-}
-
-function toExecutedCommand(value: unknown): { command: string; exitCode: number | null } | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  const command = typeof record.command === "string" ? record.command : null;
-  const exitCode = typeof record.exitCode === "number" ? record.exitCode : record.exitCode === null ? null : null;
-  if (!command) {
-    return null;
-  }
-  return { command, exitCode };
 }
 
 function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {
@@ -189,28 +149,25 @@ function fallbackCoderResult(): CoderResult {
   };
 }
 
-function buildCoderResultFromToolCalls(toolCalls: ToolCallRecord[], summary: string): CoderResult {
-  return {
-    summary: normalizeUserFacingSummary(summary),
-    changedFiles: collectChangedFiles(toolCalls),
-    executedCommands: collectExecutedCommands(toolCalls),
-    followUp: []
-  };
-}
-
-function normalizeUserFacingSummary(text: string): string {
-  const trimmed = text.trim();
+function extractUserFacingText(rawText: string): string {
+  const trimmed = rawText.trim();
   if (!trimmed) {
-    return trimmed;
+    return "TuanZi completed but returned an empty response.";
   }
 
-  const lines = trimmed
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const filtered = lines.filter((line) => !isMetaNarrationLine(line));
-  const next = (filtered.length > 0 ? filtered.join("\n") : trimmed).trim();
-  return next;
+  const maybeJsonSummary = tryExtractJsonSummary(trimmed);
+  const source = maybeJsonSummary ?? trimmed;
+  const lines = source.split(/\r?\n/);
+  const filtered = lines.filter((line) => !isMetaNarrationLine(line.trim()));
+  return (filtered.length > 0 ? filtered.join("\n") : source).trim();
+}
+
+function tryExtractJsonSummary(text: string): string | null {
+  const parsed = parseJsonObject(text);
+  if (!parsed || typeof parsed.summary !== "string" || !parsed.summary.trim()) {
+    return null;
+  }
+  return parsed.summary;
 }
 
 function isMetaNarrationLine(line: string): boolean {
