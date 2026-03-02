@@ -7,19 +7,22 @@ import { LocalBackupManager } from "./core/backup-manager";
 import { ConsoleLogger } from "./core/logger";
 import { ConfigPolicyEngine } from "./core/policy-engine";
 import { ToolRegistry } from "./core/tool-registry";
-import type { ToolExecutionContext } from "./core/types";
+import type { ApprovalGate, Logger, ToolExecutionContext } from "./core/types";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
 
 export interface ToolRuntime {
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
-  logger: ConsoleLogger;
+  logger: Logger;
 }
 
-export function createToolRuntime(runtimeConfig: RuntimeConfig): ToolRuntime {
-  const logger = new ConsoleLogger();
-  const approvalGate = new ConsoleApprovalGate(runtimeConfig.approvalMode);
+export function createToolRuntime(
+  runtimeConfig: RuntimeConfig,
+  overrides?: { logger?: Logger; approvalGate?: ApprovalGate }
+): ToolRuntime {
+  const logger = overrides?.logger ?? new ConsoleLogger();
+  const approvalGate = overrides?.approvalGate ?? new ConsoleApprovalGate(runtimeConfig.approvalMode);
   const backupManager = new LocalBackupManager(runtimeConfig.workspaceRoot);
   const policyEngine = new ConfigPolicyEngine(runtimeConfig.agentSettings.policy);
   const mcpBridge = new McpManager(runtimeConfig.agentSettings.mcp, logger);

@@ -21,17 +21,28 @@ export interface OrchestratorRunInput {
   memoryTurns?: ConversationMemoryTurn[];
 }
 
+export type OrchestratorPhase = "running";
+
+export interface OrchestratorRunHooks {
+  onPhaseChange?: (phase: OrchestratorPhase) => void;
+  onAssistantTextDelta?: (delta: string) => void;
+}
+
 export class PlanToDoOrchestrator {
   constructor(
     private readonly coder: TuanZiAgent,
     private readonly toolContext: ToolExecutionContext
   ) { }
 
-  async run(input: string | OrchestratorRunInput): Promise<OrchestrationResult> {
+  async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
     const { task, memoryTurns } = normalizeRunInput(input);
     const conversationContext = buildConversationContext(memoryTurns);
     this.toolContext.taskId = randomUUID();
-    const coderOutput = await this.coder.execute(task, conversationContext);
+    hooks?.onPhaseChange?.("running");
+    const coderOutput = await this.coder.execute(task, conversationContext, {
+      onAssistantTextDelta: hooks?.onAssistantTextDelta
+    });
+
     return {
       summary: coderOutput.result.summary,
       changedFiles: coderOutput.result.changedFiles,

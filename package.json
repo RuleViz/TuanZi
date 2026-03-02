@@ -4,6 +4,9 @@
   "description": "MyCoderAgent MVP: local coding agent with safe file tools and Plan/Search/Code orchestration.",
   "private": true,
   "main": "dist/index.js",
+  "bin": {
+    "tuanzi": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",

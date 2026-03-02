@@ -26,6 +26,7 @@ export class ReactToolAgent {
     allowedTools: string[];
     temperature?: number;
     maxTurns?: number;
+    onAssistantTextDelta?: (delta: string) => void;
   }): Promise<ToolLoopOutput> {
     const maxTurns = input.maxTurns ?? 12;
     this.toolContext.logger.info(
@@ -47,6 +48,8 @@ export class ReactToolAgent {
         messages,
         tools: toolDefinitions,
         temperature: input.temperature ?? 0.2
+      }, {
+        onContentDelta: input.onAssistantTextDelta
       });
 
       const assistantMessage = completion.message;

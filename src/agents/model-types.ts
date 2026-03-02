@@ -21,6 +21,10 @@ export interface ChatCompletionResult {
   message: ChatMessage;
 }
 
+export interface ChatCompletionOptions {
+  onContentDelta?: (delta: string) => void;
+}
+
 export interface ChatCompletionClient {
   complete(input: {
     model: string;
@@ -34,5 +38,5 @@ export interface ChatCompletionClient {
       };
     }>;
     temperature?: number;
-  }): Promise<ChatCompletionResult>;
+  }, options?: ChatCompletionOptions): Promise<ChatCompletionResult>;
 }

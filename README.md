@@ -36,6 +36,19 @@
 - no-progress 断路器（重复工具调用自动终止）
 - 联网搜索预算控制、TTL 缓存、来源评分排序
 
+### Phase 6: 交互式 CLI（终端多轮会话）
+- 默认进入交互模式（`tuanzi` / `npm start --`）
+- 斜杠命令：`/help`、`/clear`、`/model`、`/checkpoint`、`/tools`、`/config`、`/cost`、`/exit`
+- 会话记忆：自动携带最近 10 轮上下文
+- Agent 阶段指示：Running
+- 工具调用可视化：工具名、参数、状态、结果摘要
+- 会话检查点：`/checkpoint save|load|list|drop`
+- 终端直执行：`!<command>`
+- 文件引用：在提问里使用 `@path/to/file`
+- 流式回复：CLI 支持 OpenAI-Compatible SSE token 实时输出
+- 项目上下文：每轮自动注入工作区 `TUANZI.md`（若存在）
+- 多行输入：在行尾输入 `\` 继续下一行，支持 `Esc` 清空草稿、`Ctrl+L` 清屏
+
 ## 项目结构
 
 ```txt
@@ -61,25 +74,34 @@ npm install
 npm run build
 ```
 
-3) 运行 Agent（自动 Plan/Search/Code）
+3) 运行交互式 CLI（推荐）
+
+```bash
+npm start --
+# 或
+npm start -- chat --approval manual
+```
+
+4) 运行单次 Agent 任务（批处理）
 
 ```bash
 npm start -- agent run --task "按照需求修改并验证代码" --approval manual
 ```
 
-4) 启动 Web 交互页面
+5) 启动 Web 交互页面
 
 ```bash
 npm start -- web start --host 127.0.0.1 --port 3000 --approval manual
 ```
 
 浏览器打开 `http://127.0.0.1:3000`。
+Web 端当前为非流式响应（一次性返回）。
 页面会展示：
 - 聊天历史（每轮 user/agent）
 - Plan / Search / Coder 结构化输出
 - 工具调用记录（tool name、args、result）
 
-4) 调试单个工具
+6) 调试单个工具
 
 ```bash
 npm start -- tools list
@@ -87,7 +109,7 @@ npm start -- tools run view_file --args "{\"path\":\"E:\\\\project\\\\Nice\\\\My
 npm start -- tools run view_file --args-file .\\tool-args.json
 ```
 
-5) 运行测试
+7) 运行测试
 
 ```bash
 npm test
@@ -126,6 +148,16 @@ set MYCODER_MODEL=deepseek-chat
 - `MYCODER_PLANNER_MODEL`
 - `MYCODER_SEARCH_MODEL`
 - `MYCODER_CODER_MODEL`
+
+交互模式支持临时会话切换：
+
+```bash
+npm start -- chat --model deepseek-chat
+```
+
+工作区可选上下文文件：
+
+- `TUANZI.md`：存在时会在每轮任务自动注入为项目约束上下文（带长度截断保护）
 
 如果未配置 `MYCODER_API_KEY`、`QWEN_API_KEY` 且未配置 `DEEPSEEK_API_KEY`，系统会进入降级模式（工具可用，Agent 不自动改代码）。
 

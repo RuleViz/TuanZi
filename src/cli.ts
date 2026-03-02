@@ -8,14 +8,28 @@ import type { JsonObject } from "./core/types";
 import { createOrchestrator, createToolRuntime } from "./runtime";
 import { startWebServer } from "./web/server";
 import { getGreetingResponse } from "./greeting";
+import { startInteractiveChat } from "./tui/interactive-chat";
 
 export async function runCli(argv: string[]): Promise<number> {
   const parsed = parseArgs(argv);
   const [mainCommand, subCommand, ...restPositionals] = parsed.positionals;
+  const helpFlag = parsed.flags.help === true;
 
-  if (!mainCommand || mainCommand === "help" || mainCommand === "--help" || mainCommand === "-h") {
+  if (helpFlag || mainCommand === "help" || mainCommand === "--help" || mainCommand === "-h") {
     printHelp();
     return 0;
+  }
+
+  if (!mainCommand) {
+    if (!input.isTTY || !output.isTTY) {
+      printHelp();
+      return 0;
+    }
+    return handleInteractiveChat(parsed.flags);
+  }
+
+  if (mainCommand === "chat" || (mainCommand === "agent" && subCommand === "chat")) {
+    return handleInteractiveChat(parsed.flags);
   }
 
   if (mainCommand === "tools" && subCommand === "list") {
@@ -51,6 +65,18 @@ async function handleToolsList(flags: Record<string, string | boolean>): Promise
   const payload = toolNames.map((name) => runtime.registry.getTool(name)!.definition);
   console.log(JSON.stringify(payload, null, 2));
   return 0;
+}
+
+async function handleInteractiveChat(flags: Record<string, string | boolean>): Promise<number> {
+  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
+  const approvalMode = parseApprovalMode(flags.approval);
+  const modelOverride = typeof flags.model === "string" && flags.model.trim() ? flags.model.trim() : null;
+
+  return startInteractiveChat({
+    workspaceRoot,
+    approvalMode,
+    modelOverride
+  });
 }
 
 async function handleToolsRun(positionals: string[], flags: Record<string, string | boolean>): Promise<number> {
@@ -220,9 +246,12 @@ function printHelp(): void {
       "TuanZi (团子) CLI",
       "",
       "Commands:",
+      "  chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>]",
+      "  (no command)                           等同于 chat，默认进入交互模式",
       "  greet [--time-based]                   显示中文问候语",
       "  hello [--time-based]                   显示中文问候语",
       "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny]",
+      "  agent chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>]",
       "  web start [--workspace <abs-path>] [--approval manual|auto|deny] [--host 127.0.0.1] [--port 3000]",
       "  tools list [--workspace <abs-path>]",
       "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny]",
