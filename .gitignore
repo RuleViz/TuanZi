@@ -22,6 +22,7 @@ yarn-error.log*
 *.md
 !README.md
 !CHANGELOG.md
+!README.zh-CN.md
 
 # Scratch / Temporary scripts
 update_ui.js
