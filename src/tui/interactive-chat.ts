@@ -17,6 +17,29 @@ import { createOrchestrator, createToolRuntime } from "../runtime";
 import { parseSlashCommand, type SlashCommand } from "./slash-commands";
 import { ChatSessionStore } from "./session-store";
 
+function getCharWidth(codePoint: number): number {
+  if (
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+    (codePoint >= 0x3000 && codePoint <= 0x303f) ||
+    (codePoint >= 0xff00 && codePoint <= 0xffef) ||
+    (codePoint >= 0x2000 && codePoint <= 0x206f) ||
+    codePoint > 0xffff
+  ) {
+    return 2;
+  }
+  return 1;
+}
+
+function getStringVisibleWidth(str: string): number {
+  let w = 0;
+  for (const char of str) {
+    const cp = char.codePointAt(0);
+    w += cp ? getCharWidth(cp) : 1;
+  }
+  return w;
+}
+
 const PROJECT_CONTEXT_FILE = "TUANZI.md";
 const PROJECT_CONTEXT_MAX_CHARS = 12_000;
 const RUN_COMMAND_OUTPUT_PREVIEW_CHARS = 1_200;
@@ -161,18 +184,14 @@ class InteractiveChatSession {
     const modelDisplay = this.currentModelDisplay(runtimeConfig);
 
     printWelcomeBanner();
-    console.log("🍡 TuanZi 交互式 CLI");
-    console.log(`工作区: ${runtimeConfig.workspaceRoot}`);
+
+    const dim = "\x1b[38;2;120;120;120m";
+    const reset = "\x1b[0m";
+
+    console.log(`${dim}工作区: ${runtimeConfig.workspaceRoot}`);
     console.log(`模型: ${modelDisplay}`);
-    console.log(`审批: ${runtimeConfig.approvalMode}`);
-    console.log(`工具: ${runtime.registry.getToolNames().length} 个已加载`);
-    if (contextInfo) {
-      console.log(`项目上下文: ${PROJECT_CONTEXT_FILE} 已加载 (${formatSize(contextInfo.size)})`);
-    } else {
-      console.log(`项目上下文: 未找到 ${PROJECT_CONTEXT_FILE}`);
-    }
-    console.log("输入 /help 查看可用命令，支持 `!命令` 直接执行、`@文件` 引用文件内容。");
-    console.log("多行输入: 行尾输入反斜杠 \\ 继续下一行。\n");
+    console.log(`上下文: ${contextInfo ? `${PROJECT_CONTEXT_FILE} (${formatSize(contextInfo.size)})` : `未找到 ${PROJECT_CONTEXT_FILE}`}`);
+    console.log(`提示: 输入 /help 获取帮助，行尾添加 \\ 多行输入${reset}\n`);
   }
 
   private async detectProjectContextMeta(): Promise<{ size: number } | null> {
@@ -192,26 +211,76 @@ class InteractiveChatSession {
     const planner = runtimeConfig.model.plannerModel ?? "<unset>";
     const search = runtimeConfig.model.searchModel ?? "<unset>";
     const coder = runtimeConfig.model.coderModel ?? "<unset>";
+    if (planner === search && search === coder) {
+      return planner;
+    }
     return `planner=${planner} search=${search} coder=${coder}`;
   }
 
   private async promptMultiline(question: string): Promise<string> {
     const lines: string[] = [];
-    let promptLabel = question;
+
+    const borderStyle = "\x1b[38;2;85;95;110m";
+    const reset = "\x1b[0m";
+
+    let promptLabel = `> `;
+    let initialValue = "";
+
+    const erasePreviousLine = (prevLine: string) => {
+      const cols = (output as NodeJS.WriteStream).columns || 80;
+      const textWidth = Math.max(1, cols - 3);
+      const chars = prevLine.length + 1;
+      const prevChunks = Math.max(1, Math.ceil(chars / textWidth));
+      output.write(`\x1b[${prevChunks}A\r\x1b[J`);
+    };
 
     while (true) {
-      const line = await this.promptLine(promptLabel);
+      if (lines.length === 0) {
+        const boxWidth = (output as NodeJS.WriteStream).columns || 80;
+        output.write(`${borderStyle}${'─'.repeat(boxWidth)}${reset}\n`);
+      }
+
+      const lineResult = await this.promptLine(promptLabel, {
+        allowBack: lines.length > 0,
+        initialValue: initialValue
+      });
+      initialValue = "";
+
       if (this.exitRequested) {
+        const boxWidth = (output as NodeJS.WriteStream).columns || 80;
+        output.write(`${borderStyle}${'─'.repeat(boxWidth)}${reset}\n`);
         return "";
       }
+
+      if (lineResult.back) {
+        const prevLine = lines.pop() ?? "";
+
+        erasePreviousLine(prevLine);
+
+        initialValue = prevLine + "\\";
+
+        if (lines.length === 0) {
+          output.write(`\x1b[1A\r\x1b[J`);
+          promptLabel = `> `;
+        } else {
+          promptLabel = `  `;
+        }
+        continue;
+      }
+
+      const line = lineResult.value;
+
       if (isContinuationLine(line)) {
         lines.push(stripContinuationMarker(line));
-        promptLabel = "... ";
+        promptLabel = `  `;
         continue;
       }
       lines.push(line);
       break;
     }
+
+    const boxWidth = (output as NodeJS.WriteStream).columns || 80;
+    output.write(`${borderStyle}${'─'.repeat(boxWidth)}${reset}\n`);
 
     const merged = lines.join("\n");
     this.rememberPromptHistory(merged);
@@ -223,18 +292,23 @@ class InteractiveChatSession {
     if (!trimmed) {
       return;
     }
-    if (this.promptHistory[this.promptHistory.length - 1] === trimmed) {
+    // 将多输入的换行替换为空格，避免多行历史调出时破坏终端原始的 redraw 单行渲染逻辑
+    const singleLine = trimmed.replace(/\r?\n/g, "  ");
+    if (this.promptHistory[this.promptHistory.length - 1] === singleLine) {
       return;
     }
-    this.promptHistory.push(trimmed);
+    this.promptHistory.push(singleLine);
     if (this.promptHistory.length > 50) {
       this.promptHistory.splice(0, this.promptHistory.length - 50);
     }
   }
 
-  private async promptLine(question: string): Promise<string> {
+  private async promptLine(
+    question: string,
+    options?: { allowBack?: boolean; initialValue?: string }
+  ): Promise<{ value: string; back?: boolean }> {
     if (!input.isTTY || !output.isTTY) {
-      return "";
+      return { value: "" };
     }
 
     const ttyInput = input as NodeJS.ReadStream;
@@ -245,12 +319,13 @@ class InteractiveChatSession {
       ttyInput.setRawMode(true);
     }
 
-    let line = "";
-    let cursor = 0;
+    let line = options?.initialValue ?? "";
+    let cursor = line.length;
     let historyIndex = this.promptHistory.length;
     let finished = false;
+    let lastCursorRow = 0;
 
-    return await new Promise<string>((resolve) => {
+    return await new Promise<{ value: string; back?: boolean }>((resolve) => {
       const restoreInputMode = (): void => {
         if (supportsRaw && !previousRawMode) {
           ttyInput.setRawMode(false);
@@ -266,22 +341,132 @@ class InteractiveChatSession {
         restoreInputMode();
       };
 
-      const finalize = (value: string): void => {
+      const finalize = (result: { value: string; back?: boolean }): void => {
         if (finished) {
           return;
         }
         finished = true;
         cleanup();
-        output.write("\n");
-        resolve(value);
+
+        if (lastCursorRow > 0) {
+          output.write(`\x1b[${lastCursorRow}A`);
+        }
+        output.write("\r\x1b[J");
+
+        if (!result.back) {
+          const cols = (output as NodeJS.WriteStream).columns || 80;
+          const questionLen = getStringVisibleWidth(question.replace(/\x1b\[[0-9;]*m/g, ""));
+          const textWidth = Math.max(1, cols - questionLen - 1);
+
+          const chunks: string[] = [];
+          let currentChunk = "";
+          let currentWidth = 0;
+
+          for (const char of line) {
+            const cp = char.codePointAt(0) || 0;
+            const w = getCharWidth(cp);
+
+            if (currentWidth + w > textWidth) {
+              chunks.push(currentChunk);
+              currentChunk = char;
+              currentWidth = w;
+            } else {
+              currentChunk += char;
+              currentWidth += w;
+            }
+          }
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk);
+          }
+          if (chunks.length === 0) chunks.push("");
+
+          output.write(question + chunks[0]);
+          for (let i = 1; i < chunks.length; i++) {
+            output.write("\n" + " ".repeat(questionLen) + chunks[i]);
+          }
+          output.write("\n");
+        }
+        resolve(result);
       };
 
       const redraw = (): void => {
-        output.write(`\r\x1b[2K${question}${line}`);
-        const moveLeft = line.length - cursor;
-        if (moveLeft > 0) {
-          output.write(`\x1b[${moveLeft}D`);
+        const cols = (output as NodeJS.WriteStream).columns || 80;
+        const boxWidth = cols;
+        const borderStyle = "\x1b[38;2;85;95;110m";
+        const reset = "\x1b[0m";
+
+        const questionLen = getStringVisibleWidth(question.replace(/\x1b\[[0-9;]*m/g, ""));
+        const textWidth = Math.max(1, cols - questionLen - 1);
+
+        const chunks: string[] = [];
+        let currentChunk = "";
+        let currentWidth = 0;
+        let cursorChunk = 0;
+        let cursorColInChunk = 0;
+
+        let charIdx = 0;
+        let foundCursor = false;
+
+        for (const char of line) {
+          if (!foundCursor && charIdx >= cursor) {
+            cursorChunk = chunks.length;
+            cursorColInChunk = currentWidth;
+            foundCursor = true;
+          }
+
+          const cp = char.codePointAt(0) || 0;
+          const w = getCharWidth(cp);
+
+          if (currentWidth + w > textWidth) {
+            chunks.push(currentChunk);
+            currentChunk = char;
+            currentWidth = w;
+          } else {
+            currentChunk += char;
+            currentWidth += w;
+          }
+          charIdx += char.length;
         }
+
+        if (!foundCursor) {
+          cursorChunk = chunks.length;
+          cursorColInChunk = currentWidth;
+        }
+
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk);
+        }
+        if (chunks.length === 0) chunks.push("");
+
+        while (chunks.length <= cursorChunk) {
+          chunks.push("");
+        }
+
+        if (lastCursorRow > 0) {
+          output.write(`\x1b[${lastCursorRow}A`);
+        }
+        output.write("\r\x1b[J");
+
+        output.write(question + chunks[0]);
+        for (let i = 1; i < chunks.length; i++) {
+          output.write("\n" + " ".repeat(questionLen) + chunks[i]);
+        }
+
+        const bottomBorder = `${borderStyle}${'─'.repeat(boxWidth)}${reset}`;
+        output.write(`\n${bottomBorder}`);
+
+        const moveUp = chunks.length - cursorChunk;
+        if (moveUp > 0) {
+          output.write(`\x1b[${moveUp}A`);
+        }
+        output.write("\r");
+
+        const targetCol = questionLen + cursorColInChunk;
+        if (targetCol > 0) {
+          output.write(`\x1b[${targetCol}C`);
+        }
+
+        lastCursorRow = cursorChunk;
       };
 
       const setFromHistory = (value: string): void => {
@@ -296,7 +481,8 @@ class InteractiveChatSession {
         }
         finished = true;
         cleanup();
-        resolve("");
+        output.write("\n");
+        resolve({ value: "" });
       };
 
       const onKeypress = (chunk: string, key: readline.Key): void => {
@@ -305,14 +491,14 @@ class InteractiveChatSession {
         }
         const name = key?.name ?? "";
         if (name === "return" || name === "enter") {
-          finalize(line);
+          finalize({ value: line });
           return;
         }
 
         if (key?.ctrl && name === "c") {
           this.onSigint();
           if (this.exitRequested) {
-            finalize("");
+            finalize({ value: "" });
             return;
           }
           redraw();
@@ -335,10 +521,15 @@ class InteractiveChatSession {
 
         if (name === "backspace") {
           if (cursor <= 0) {
+            if (options?.allowBack && line.length === 0) {
+              finalize({ value: "", back: true });
+            }
             return;
           }
-          line = `${line.slice(0, cursor - 1)}${line.slice(cursor)}`;
-          cursor -= 1;
+          let step = 1;
+          if (cursor >= 2 && line.codePointAt(cursor - 2)! > 0xffff) step = 2;
+          line = `${line.slice(0, cursor - step)}${line.slice(cursor)}`;
+          cursor -= step;
           redraw();
           return;
         }
@@ -347,40 +538,46 @@ class InteractiveChatSession {
           if (cursor >= line.length) {
             return;
           }
-          line = `${line.slice(0, cursor)}${line.slice(cursor + 1)}`;
+          const cp = line.codePointAt(cursor);
+          const step = (cp && cp > 0xffff) ? 2 : 1;
+          line = `${line.slice(0, cursor)}${line.slice(cursor + step)}`;
           redraw();
           return;
         }
 
         if (name === "left") {
           if (cursor > 0) {
-            cursor -= 1;
-            output.write("\x1b[1D");
+            // Find previous character length (1 or 2 code units)
+            let step = 1;
+            if (cursor >= 2 && line.codePointAt(cursor - 2)! > 0xffff) step = 2;
+            cursor = Math.max(0, cursor - step);
+            redraw();
           }
           return;
         }
 
         if (name === "right") {
           if (cursor < line.length) {
-            cursor += 1;
-            output.write("\x1b[1C");
+            const cp = line.codePointAt(cursor);
+            const step = (cp && cp > 0xffff) ? 2 : 1;
+            cursor = Math.min(line.length, cursor + step);
+            redraw();
           }
           return;
         }
 
         if (name === "home") {
           if (cursor > 0) {
-            output.write(`\x1b[${cursor}D`);
             cursor = 0;
+            redraw();
           }
           return;
         }
 
         if (name === "end") {
           if (cursor < line.length) {
-            const move = line.length - cursor;
-            output.write(`\x1b[${move}C`);
             cursor = line.length;
+            redraw();
           }
           return;
         }
@@ -416,7 +613,7 @@ class InteractiveChatSession {
         redraw();
       };
 
-      output.write(question);
+      redraw();
       ttyInput.on("keypress", onKeypress);
     });
   }
@@ -738,9 +935,7 @@ class InteractiveChatSession {
   }
 
   private renderPhase(phase: OrchestratorPhase): void {
-    if (phase === "running") {
-      console.log("\n🤖 正在执行...");
-    }
+    // 保持界面极简，移除了执行进度提示词
   }
 
   private async renderAssistantSummary(result: OrchestrationResult): Promise<void> {
@@ -840,7 +1035,6 @@ class InteractiveChatSession {
       return;
     }
     this.projectContextMissingNotified = true;
-    console.log(`提示: 未检测到 ${PROJECT_CONTEXT_FILE}，将按默认行为执行。`);
   }
 
   private async attachReferencedFiles(userMessage: string): Promise<string> {
