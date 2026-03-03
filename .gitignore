@@ -9,6 +9,7 @@ dist/
 .pnpm-store/
 
 # Application config
+.tuanzi/
 .mycoderagent/
 
 # Logs
@@ -20,7 +21,11 @@ yarn-error.log*
 # Documentation files
 *.md
 !README.md
-AGENTS.md
+!CHANGELOG.md
+
+# Scratch / Temporary scripts
+update_ui.js
+test_greeting.js
 
 # Hidden files (except .gitignore)
 .*

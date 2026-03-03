@@ -63,10 +63,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.options.apiKey}`
-        },
+        headers: this.buildHeaders(),
         body: JSON.stringify({
           model: input.model,
           messages: input.messages,
@@ -116,10 +113,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.options.apiKey}`
-        },
+        headers: this.buildHeaders(),
         body: JSON.stringify({
           model: input.model,
           messages: input.messages,
@@ -186,6 +180,14 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  private buildHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${this.options.apiKey}`,
+      "X-DashScope-Api-Key": this.options.apiKey
+    };
   }
 }
 

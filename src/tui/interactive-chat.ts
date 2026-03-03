@@ -11,6 +11,13 @@ import type {
 } from "../agents/orchestrator";
 import { loadRuntimeConfig } from "../config";
 import type { ApprovalMode } from "../core/approval-gate";
+import {
+  findCustomModelConfig,
+  getCustomModelStorePath,
+  loadCustomModelStore,
+  saveCustomModelStore,
+  type CustomModelConfig
+} from "../core/custom-model-store";
 import { assertInsideWorkspace, relativeFromWorkspace } from "../core/path-utils";
 import type { Logger, ToolCallRecord, ToolExecutionResult } from "../core/types";
 import { createOrchestrator, createToolRuntime } from "../runtime";
@@ -632,7 +639,7 @@ class InteractiveChatSession {
         this.compactHistory();
         return false;
       case "model":
-        this.handleModelCommand(command.args);
+        await this.handleModelCommand(command.args);
         return false;
       case "tools":
         this.handleToolsCommand();
@@ -662,8 +669,11 @@ class InteractiveChatSession {
         "  /help                         显示帮助",
         "  /clear                        清空对话历史",
         "  /compact                      压缩历史（仅保留最近 4 轮）",
-        "  /model                        查看当前模型",
-        "  /model <name>                 切换本会话模型（planner/search/coder 同步）",
+        "  /model                        查看当前模型与模型仓库状态",
+        "  /model list                   列出已保存模型别名",
+        "  /model add [name baseUrl modelId apiKey]  添加或更新模型",
+        "  /model use <name>             设为全局默认并立即应用到当前会话",
+        "  /model rm <name>              删除模型别名",
         "  /checkpoint save [name]       保存会话检查点",
         "  /checkpoint load <name>       加载会话检查点",
         "  /checkpoint list              列出会话检查点",
@@ -692,19 +702,198 @@ class InteractiveChatSession {
     console.log(`已压缩历史，保留最近 ${keep} 轮对话。`);
   }
 
-  private handleModelCommand(args: string[]): void {
+  private async handleModelCommand(args: string[]): Promise<void> {
+    try {
+      if (args.length === 0) {
+        this.printModelSummary();
+        return;
+      }
+
+      const action = (args[0] ?? "").toLowerCase();
+      if (action === "list") {
+        this.printCustomModelList();
+        return;
+      }
+      if (action === "add") {
+        await this.handleModelAddCommand(args.slice(1));
+        return;
+      }
+      if (action === "use") {
+        await this.handleModelUseCommand(args[1]);
+        return;
+      }
+      if (action === "rm" || action === "remove" || action === "delete") {
+        await this.handleModelRemoveCommand(args[1]);
+        return;
+      }
+
+      if (args.length === 1) {
+        // Backward-compatible shortcut.
+        await this.handleModelUseCommand(args[0]);
+        return;
+      }
+
+      console.log("用法: /model [list|add|use|rm]");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`model 操作失败: ${message}`);
+    }
+  }
+
+  private printModelSummary(): void {
+    const { runtimeConfig } = this.createRuntime();
+    const store = loadCustomModelStore();
+    const activeAlias = this.modelOverride ?? store.defaultModel;
+    const activeModel = findCustomModelConfig(store, activeAlias);
+    console.log(`当前模型: ${this.currentModelDisplay(runtimeConfig)}`);
+    console.log(`模型仓库: ${getCustomModelStorePath()}`);
+    console.log(`全局默认别名: ${store.defaultModel || "<unset>"}`);
+    console.log(`会话覆盖别名: ${this.modelOverride || "<none>"}`);
+    if (activeModel) {
+      console.log(`当前别名配置: ${activeModel.name} (${activeModel.baseUrl}) -> ${activeModel.modelId}`);
+    }
+  }
+
+  private printCustomModelList(): void {
+    const store = loadCustomModelStore();
+    const activeAlias = this.modelOverride ?? store.defaultModel;
+    if (store.models.length === 0) {
+      console.log("模型库为空。可用 /model add 添加。");
+      return;
+    }
+    console.log("TuanZi 模型库:");
+    for (const model of store.models) {
+      const marker = activeAlias && model.name.toLowerCase() === activeAlias.toLowerCase() ? "*" : " ";
+      console.log(`${marker} - ${model.name} (${model.baseUrl}) -> ${model.modelId}`);
+    }
+  }
+
+  private async handleModelAddCommand(args: string[]): Promise<void> {
+    let rawName = args[0] ?? "";
+    let rawBaseUrl = args[1] ?? "";
+    let rawModelId = args[2] ?? "";
+    let rawApiKey = args[3] ?? "";
+
     if (args.length === 0) {
-      const { runtimeConfig } = this.createRuntime();
-      console.log(`当前模型: ${this.currentModelDisplay(runtimeConfig)}`);
+      const prompted = await this.promptCustomModelConfig();
+      if (!prompted) {
+        return;
+      }
+      rawName = prompted.name;
+      rawBaseUrl = prompted.baseUrl;
+      rawModelId = prompted.modelId;
+      rawApiKey = prompted.apiKey;
+    } else if (args.length < 4) {
+      console.log("用法: /model add <name> <baseUrl> <modelId> <apiKey>");
       return;
     }
-    const nextModel = normalizeModelName(args[0]);
-    if (!nextModel) {
-      console.log("模型名不能为空。");
+
+    const normalized = normalizeCustomModelInput({
+      name: rawName,
+      baseUrl: rawBaseUrl,
+      modelId: rawModelId,
+      apiKey: rawApiKey
+    });
+    if (!normalized.ok) {
+      console.log(normalized.error);
       return;
     }
-    this.modelOverride = nextModel;
-    console.log(`已切换会话模型为: ${nextModel}`);
+
+    const store = loadCustomModelStore();
+    const next = normalized.model;
+    const foundIndex = store.models.findIndex((item) => item.name.toLowerCase() === next.name.toLowerCase());
+    if (foundIndex >= 0) {
+      store.models[foundIndex] = next;
+    } else {
+      store.models.push(next);
+    }
+    if (!store.defaultModel) {
+      store.defaultModel = next.name;
+    }
+
+    await saveCustomModelStore(store);
+    if (foundIndex >= 0) {
+      console.log(`已更新模型 [${next.name}]。`);
+    } else {
+      console.log(`已添加并保存新模型 [${next.name}]。`);
+    }
+  }
+
+  private async promptCustomModelConfig(): Promise<CustomModelConfig | null> {
+    const nameResult = await this.promptLine("model name > ");
+    if (this.exitRequested) {
+      return null;
+    }
+    const baseUrlResult = await this.promptLine("base url > ");
+    if (this.exitRequested) {
+      return null;
+    }
+    const modelIdResult = await this.promptLine("model id > ");
+    if (this.exitRequested) {
+      return null;
+    }
+    const apiKeyResult = await this.promptLine("api key (or none) > ");
+    if (this.exitRequested) {
+      return null;
+    }
+
+    const normalized = normalizeCustomModelInput({
+      name: nameResult.value,
+      baseUrl: baseUrlResult.value,
+      modelId: modelIdResult.value,
+      apiKey: apiKeyResult.value
+    });
+    if (!normalized.ok) {
+      console.log(normalized.error);
+      return null;
+    }
+    return normalized.model;
+  }
+
+  private async handleModelUseCommand(nameArg: string | undefined): Promise<void> {
+    const name = normalizeModelName(nameArg ?? null);
+    if (!name) {
+      console.log("用法: /model use <name>");
+      return;
+    }
+
+    const store = loadCustomModelStore();
+    const target = findCustomModelConfig(store, name);
+    if (!target) {
+      console.log(`模型别名不存在: ${name}`);
+      return;
+    }
+    store.defaultModel = target.name;
+    await saveCustomModelStore(store);
+
+    this.modelOverride = target.name;
+    console.log(`已切换默认模型为: ${target.name}`);
+  }
+
+  private async handleModelRemoveCommand(nameArg: string | undefined): Promise<void> {
+    const name = normalizeModelName(nameArg ?? null);
+    if (!name) {
+      console.log("用法: /model rm <name>");
+      return;
+    }
+
+    const store = loadCustomModelStore();
+    const index = store.models.findIndex((item) => item.name.toLowerCase() === name.toLowerCase());
+    if (index < 0) {
+      console.log(`模型别名不存在: ${name}`);
+      return;
+    }
+
+    const removed = store.models.splice(index, 1)[0];
+    if (store.defaultModel && store.defaultModel.toLowerCase() === removed.name.toLowerCase()) {
+      store.defaultModel = store.models[0]?.name ?? "";
+    }
+    await saveCustomModelStore(store);
+
+    if (this.modelOverride && this.modelOverride.toLowerCase() === removed.name.toLowerCase()) {
+      this.modelOverride = null;
+    }
+    console.log(`已删除模型 [${removed.name}]。`);
   }
 
   private handleToolsCommand(): void {
@@ -978,14 +1167,9 @@ class InteractiveChatSession {
   private createRuntime(): RuntimePair {
     const runtimeConfig = loadRuntimeConfig({
       workspaceRoot: this.workspaceRoot,
-      approvalMode: this.approvalMode
+      approvalMode: this.approvalMode,
+      modelOverride: this.modelOverride
     });
-
-    if (this.modelOverride) {
-      runtimeConfig.model.plannerModel = this.modelOverride;
-      runtimeConfig.model.searchModel = this.modelOverride;
-      runtimeConfig.model.coderModel = this.modelOverride;
-    }
 
     const logger = new InteractiveLogger();
     const runtime = createToolRuntime(runtimeConfig, { logger });
@@ -1155,6 +1339,91 @@ function normalizeModelName(inputModel: string | null): string | null {
   }
   const trimmed = inputModel.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeCustomModelInput(inputModel: {
+  name: string;
+  baseUrl: string;
+  modelId: string;
+  apiKey: string;
+}): { ok: true; model: CustomModelConfig } | { ok: false; error: string } {
+  const name = normalizeModelName(inputModel.name);
+  if (!name) {
+    return {
+      ok: false,
+      error: "模型别名不能为空。"
+    };
+  }
+  if (/\s/.test(name)) {
+    return {
+      ok: false,
+      error: "模型别名不能包含空白字符。"
+    };
+  }
+
+  const baseUrlText = (inputModel.baseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!baseUrlText) {
+    return {
+      ok: false,
+      error: "baseUrl 不能为空。"
+    };
+  }
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(baseUrlText);
+  } catch {
+    return {
+      ok: false,
+      error: "baseUrl 格式不合法。示例: http://127.0.0.1:11434/v1"
+    };
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return {
+      ok: false,
+      error: "baseUrl 仅支持 http 或 https。"
+    };
+  }
+
+  const modelId = (inputModel.modelId ?? "").trim();
+  if (!modelId) {
+    return {
+      ok: false,
+      error: "modelId 不能为空。"
+    };
+  }
+
+  const apiKey = normalizeApiKeyText(inputModel.apiKey ?? "");
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "apiKey 不能为空，可填 none。"
+    };
+  }
+
+  return {
+    ok: true,
+    model: {
+      name,
+      baseUrl: baseUrlText,
+      modelId,
+      apiKey
+    }
+  };
+}
+
+function normalizeApiKeyText(rawApiKey: string): string {
+  const trimmed = rawApiKey.trim();
+  if (!trimmed) {
+    return "";
+  }
+  const withoutInvisible = trimmed.replace(/[\u200B-\u200D\uFEFF]/g, "");
+  if (
+    (withoutInvisible.startsWith("\"") && withoutInvisible.endsWith("\"")) ||
+    (withoutInvisible.startsWith("'") && withoutInvisible.endsWith("'"))
+  ) {
+    return withoutInvisible.slice(1, -1).trim();
+  }
+  return withoutInvisible;
 }
 
 function renderToolCalls(toolCalls: ToolCallRecord[]): void {

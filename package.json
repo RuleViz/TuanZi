@@ -1,17 +1,32 @@
 {
-  "name": "mycoderagent",
+  "name": "tuanzi-cli",
   "version": "0.1.0",
-  "description": "MyCoderAgent MVP: local coding agent with safe file tools and Plan/Search/Code orchestration.",
-  "private": true,
+  "description": "🍡 TuanZi: A minimalist, high-efficiency autonomous coding agent CLI with Plan-Search-Code orchestration.",
   "main": "dist/index.js",
   "bin": {
     "tuanzi": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "test": "npm run build && node --test dist/tests"
   },
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "cli",
+    "tuanzi",
+    "autonomous"
+  ],
+  "author": "",
+  "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
   },

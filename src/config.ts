@@ -1,5 +1,6 @@
 ﻿import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { findCustomModelConfig, loadCustomModelStore } from "./core/custom-model-store";
 import type { ApprovalMode } from "./core/approval-gate";
 import type { AgentSettings, JsonObject, PolicyDecision } from "./core/types";
 
@@ -8,7 +9,7 @@ export interface RuntimeConfig {
   approvalMode: ApprovalMode;
   agentSettings: AgentSettings;
   model: {
-    keySource: "mycoder" | "qwen" | "deepseek" | "none";
+    keySource: "openai" | "none";
     baseUrl: string;
     apiKey: string | null;
     plannerModel: string | null;
@@ -20,37 +21,43 @@ export interface RuntimeConfig {
 export function loadRuntimeConfig(input: {
   workspaceRoot?: string;
   approvalMode?: ApprovalMode;
+  modelOverride?: string | null;
 }): RuntimeConfig {
   const workspaceRoot = path.resolve(input.workspaceRoot ?? process.cwd());
   const approvalMode = input.approvalMode ?? "manual";
   const agentSettings = loadAgentSettings(workspaceRoot);
+  const modelOverride = normalizeOptionalString(input.modelOverride ?? null);
+  const customStore = loadCustomModelStore();
+  const overrideCustomModel = modelOverride ? findCustomModelConfig(customStore, modelOverride) : null;
+  const defaultCustomModel = modelOverride ? null : findCustomModelConfig(customStore, customStore.defaultModel);
+  const selectedCustomModel = overrideCustomModel ?? defaultCustomModel;
 
-  const qwenApiKey = process.env.QWEN_API_KEY?.trim() || null;
-  const deepseekApiKey = process.env.DEEPSEEK_API_KEY?.trim() || null;
-  const mycoderApiKey = process.env.MYCODER_API_KEY?.trim() || null;
-  const keySource: RuntimeConfig["model"]["keySource"] = mycoderApiKey
-    ? "mycoder"
-    : qwenApiKey
-      ? "qwen"
-      : deepseekApiKey
-        ? "deepseek"
-        : "none";
-  const apiKey = mycoderApiKey || qwenApiKey || deepseekApiKey;
+  let keySource: RuntimeConfig["model"]["keySource"];
+  let baseUrl: string;
+  let apiKey: string | null;
+  let plannerModel: string | null;
+  let searchModel: string | null;
+  let coderModel: string | null;
 
-  const explicitBaseUrl = process.env.MYCODER_API_BASE_URL?.trim() || null;
-  const baseUrl =
-    explicitBaseUrl ||
-    (keySource === "qwen"
-      ? "https://coding.dashscope.aliyuncs.com/v1"
-      : keySource === "deepseek"
-        ? "https://api.deepseek.com/v1"
-        : "https://api.openai.com/v1");
-  const sharedModel =
-    process.env.MYCODER_MODEL?.trim() || (keySource === "qwen" ? "qwen3.5-plus" : keySource === "deepseek" ? "deepseek-chat" : null);
+  if (selectedCustomModel) {
+    keySource = "openai";
+    baseUrl = selectedCustomModel.baseUrl;
+    apiKey = selectedCustomModel.apiKey;
+    plannerModel = selectedCustomModel.modelId;
+    searchModel = selectedCustomModel.modelId;
+    coderModel = selectedCustomModel.modelId;
+  } else {
+    keySource = "none";
+    baseUrl = "https://api.openai.com/v1";
+    apiKey = null;
+    plannerModel = null;
+    searchModel = null;
+    coderModel = null;
 
-  const plannerModel = process.env.MYCODER_PLANNER_MODEL?.trim() || sharedModel;
-  const searchModel = process.env.MYCODER_SEARCH_MODEL?.trim() || sharedModel;
-  const coderModel = process.env.MYCODER_CODER_MODEL?.trim() || sharedModel;
+    if (modelOverride && !overrideCustomModel) {
+      console.warn(`[WARN] model override alias not found in custom model store: ${modelOverride}`);
+    }
+  }
 
   return {
     workspaceRoot,
@@ -66,7 +73,6 @@ export function loadRuntimeConfig(input: {
     }
   };
 }
-
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   routing: {
     enableDirectMode: true,
@@ -125,8 +131,7 @@ export function loadAgentSettings(workspaceRoot: string): AgentSettings {
     parsed = content ? (JSON.parse(content) as unknown) : {};
   } catch (error) {
     console.warn(
-      `[WARN] Failed to parse agent.config.json, fallback to defaults: ${
-        error instanceof Error ? error.message : String(error)
+      `[WARN] Failed to parse agent.config.json, fallback to defaults: ${error instanceof Error ? error.message : String(error)
       }`
     );
     return cloneDefaultSettings();
@@ -349,6 +354,11 @@ function asWebSearchProvider(value: unknown): "mcp" | "http" | null {
   }
   return null;
 }
-
-
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
 

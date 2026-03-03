@@ -6,7 +6,6 @@ import { loadRuntimeConfig } from "./config";
 import type { ApprovalMode } from "./core/approval-gate";
 import type { JsonObject } from "./core/types";
 import { createOrchestrator, createToolRuntime } from "./runtime";
-import { startWebServer } from "./web/server";
 import { getGreetingResponse } from "./greeting";
 import { startInteractiveChat } from "./tui/interactive-chat";
 
@@ -40,9 +39,6 @@ export async function runCli(argv: string[]): Promise<number> {
   }
   if (mainCommand === "agent" && subCommand === "run") {
     return handleAgentRun(parsed.flags);
-  }
-  if (mainCommand === "web" && subCommand === "start") {
-    return handleWebStart(parsed.flags);
   }
 
   if (mainCommand === "greet" || mainCommand === "hello") {
@@ -144,38 +140,6 @@ async function handleAgentRun(flags: Record<string, string | boolean>): Promise<
   return 0;
 }
 
-async function handleWebStart(flags: Record<string, string | boolean>): Promise<number> {
-  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
-  const approvalMode = parseApprovalMode(flags.approval);
-  const host = typeof flags.host === "string" && flags.host.trim() ? flags.host.trim() : "127.0.0.1";
-  const port = parsePort(flags.port);
-  const runtimeConfig = loadRuntimeConfig({ workspaceRoot, approvalMode });
-  printModelRuntime(runtimeConfig);
-
-  const server = await startWebServer({
-    workspaceRoot,
-    approvalMode,
-    host,
-    port
-  });
-
-  console.log(`TuanZi Web UI started: ${server.url}`);
-  console.log("Press Ctrl+C to stop.");
-
-  await new Promise<void>((resolve) => {
-    const shutdown = async () => {
-      process.off("SIGINT", shutdown);
-      process.off("SIGTERM", shutdown);
-      await server.close().catch(() => {});
-      resolve();
-    };
-    process.on("SIGINT", shutdown);
-    process.on("SIGTERM", shutdown);
-  });
-
-  return 0;
-}
-
 function parseArgs(argv: string[]): { positionals: string[]; flags: Record<string, string | boolean> } {
   const positionals: string[] = [];
   const flags: Record<string, string | boolean> = {};
@@ -209,21 +173,6 @@ function parseApprovalMode(inputMode: string | boolean | undefined): ApprovalMod
   return "manual";
 }
 
-function parsePort(rawPort: string | boolean | undefined): number {
-  if (typeof rawPort !== "string") {
-    return 3000;
-  }
-  const parsed = Number(rawPort);
-  if (!Number.isFinite(parsed)) {
-    return 3000;
-  }
-  const intValue = Math.floor(parsed);
-  if (intValue < 1 || intValue > 65535) {
-    return 3000;
-  }
-  return intValue;
-}
-
 function resolveWorkspace(rawWorkspace: string | undefined): string {
   return path.resolve(rawWorkspace ?? process.cwd());
 }
@@ -252,20 +201,14 @@ function printHelp(): void {
       "  hello [--time-based]                   显示中文问候语",
       "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny]",
       "  agent chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>]",
-      "  web start [--workspace <abs-path>] [--approval manual|auto|deny] [--host 127.0.0.1] [--port 3000]",
       "  tools list [--workspace <abs-path>]",
       "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny]",
       "  tools run <toolName> --args-file <json-file> [--workspace <abs-path>] [--approval manual|auto|deny]",
       "",
-      "Model env vars (OpenAI-compatible):",
-      "  MYCODER_API_BASE_URL   optional override; defaults follow API key source",
-      "  MYCODER_API_KEY",
-      "  QWEN_API_KEY          fallback if MYCODER_API_KEY is not set (default base/model: DashScope + qwen3.5-plus)",
-      "  DEEPSEEK_API_KEY      fallback after QWEN_API_KEY (default base/model: DeepSeek + deepseek-chat)",
-      "  MYCODER_MODEL          shared model for all agents (optional override)",
-      "  MYCODER_PLANNER_MODEL  optional override",
-      "  MYCODER_SEARCH_MODEL   optional override",
-      "  MYCODER_CODER_MODEL    optional override",
+      "Model config:",
+      "  Use chat /model commands to manage models",
+      "  Store path: ~/.tuanzi/models.json",
+      "  Runtime no longer falls back to env model keys",
       "",
       "Project config file:",
       "  agent.config.json      routing/policy/webSearch/toolLoop/mcp settings"

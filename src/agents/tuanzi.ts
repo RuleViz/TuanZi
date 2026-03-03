@@ -149,11 +149,11 @@ function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: 
 function fallbackCoderResult(): CoderResult {
   return {
     summary:
-      "未配置模型（MYCODER_API_KEY / QWEN_API_KEY 或模型名缺失），团子进入降级模式。工具仍可使用，可通过 tools run 或补充模型配置后运行 agent。",
+      "未配置模型（未命中 ~/.tuanzi/models.json 的 defaultModel 或会话别名），团子进入降级模式。工具仍可使用，可通过 tools run 或补充 /model 配置后运行 agent。",
     changedFiles: [],
     executedCommands: [],
     followUp: [
-      "设置 MYCODER_API_KEY 或 QWEN_API_KEY 与模型变量后重试 agent run。"
+      "在 chat 里使用 /model add 和 /model use 设置模型后重试 agent run。"
     ]
   };
 }
