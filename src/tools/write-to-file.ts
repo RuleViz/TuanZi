@@ -1,19 +1,19 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asString } from "../core/json-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 import { atomicWriteTextFile } from "../core/file-utils";
 import { createLineDiffPreview } from "../core/diff-preview";
 
 export class WriteToFileTool implements Tool {
   readonly definition = {
     name: "write_to_file",
-    description: "Write full file content to an absolute path. Creates parent directories automatically.",
+    description: "Write full file content to a path. Creates parent directories automatically.",
     destructive: true,
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute file path to write." },
+        path: { type: "string", description: "File path to write (relative to workspace root or absolute)." },
         content: { type: "string", description: "Full content to overwrite with." }
       },
       required: ["path", "content"],
@@ -29,7 +29,7 @@ export class WriteToFileTool implements Tool {
       return { ok: false, error: "path and content are required and must be strings." };
     }
 
-    const absolutePath = ensureAbsolutePath(pathValue);
+    const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
     const previousContent = await fs.readFile(absolutePath, "utf8").catch(() => "");

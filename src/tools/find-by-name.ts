@@ -3,7 +3,7 @@ import path from "node:path";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString } from "../core/json-utils";
 import { globToRegExp } from "../core/file-utils";
-import { assertInsideWorkspace, ensureAbsolutePath, relativeFromWorkspace, toUnixPath } from "../core/path-utils";
+import { assertInsideWorkspace, relativeFromWorkspace, resolveSafePath, toUnixPath } from "../core/path-utils";
 
 interface FindMatch {
   absolutePath: string;
@@ -26,12 +26,12 @@ const SKIP_DIR_NAMES = new Set([
 export class FindByNameTool implements Tool {
   readonly definition = {
     name: "find_by_name",
-    description: "Recursively find files/directories by glob pattern from an absolute search path.",
+    description: "Recursively find files/directories by glob pattern from a search path.",
     readOnly: true,
     parameters: {
       type: "object",
       properties: {
-        search_path: { type: "string", description: "Absolute root directory to search." },
+        search_path: { type: "string", description: "Root directory to search (relative to workspace root or absolute)." },
         pattern: { type: "string", description: "Glob-like pattern, e.g. *.ts or *service*" },
         max_results: { type: "number", description: "Maximum number of results (1-200)." },
         max_depth: { type: "number", description: "Maximum recursion depth from root." }
@@ -48,7 +48,7 @@ export class FindByNameTool implements Tool {
       return { ok: false, error: "search_path and pattern are required and must be strings." };
     }
 
-    const rootPath = ensureAbsolutePath(searchPathValue, "search_path");
+    const rootPath = resolveSafePath(searchPathValue, context.workspaceRoot, "search_path");
     assertInsideWorkspace(rootPath, context.workspaceRoot);
 
     const maxResults = clampInt(asNumber(input.max_results) ?? 80, 1, 200);

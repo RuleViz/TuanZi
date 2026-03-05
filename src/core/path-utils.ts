@@ -10,6 +10,21 @@ export function ensureAbsolutePath(inputPath: string, fieldName = "path"): strin
   return path.resolve(inputPath);
 }
 
+export function resolveSafePath(inputPath: string, workspaceRoot: string, fieldName = "path"): string {
+  if (!inputPath || typeof inputPath !== "string") {
+    throw new Error(`${fieldName} must be a non-empty string.`);
+  }
+  if (!workspaceRoot || typeof workspaceRoot !== "string") {
+    throw new Error("workspaceRoot must be a non-empty string.");
+  }
+
+  if (path.isAbsolute(inputPath)) {
+    return path.resolve(inputPath);
+  }
+
+  return path.resolve(workspaceRoot, inputPath);
+}
+
 export function assertInsideWorkspace(absolutePath: string, workspaceRoot: string): void {
   const normalizedRoot = stripTrailingSeparator(path.resolve(workspaceRoot));
   const normalizedTarget = stripTrailingSeparator(path.resolve(absolutePath));
@@ -19,7 +34,10 @@ export function assertInsideWorkspace(absolutePath: string, workspaceRoot: strin
   const startsWithRoot = targetLower === rootLower || targetLower.startsWith(`${rootLower}${path.sep}`);
 
   if (!startsWithRoot) {
-    throw new Error(`Path is outside workspace root: ${absolutePath}`);
+    throw new Error(
+      `Access denied: path [${absolutePath}] is outside workspace root [${workspaceRoot}]. ` +
+        "Use a relative path like '.' or './src', or an absolute path within the current workspace."
+    );
   }
 }
 

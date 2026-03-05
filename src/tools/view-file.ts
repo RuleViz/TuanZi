@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString, asStringArray } from "../core/json-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 const DEFAULT_WINDOW_SIZE = 800;
 const MAX_WINDOW_LINES = 2000;
@@ -15,8 +15,8 @@ export class ViewFileTool implements Tool {
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute file path (legacy single-file field)." },
-        paths: { type: "array", items: { type: "string" }, description: "Absolute file paths." },
+        path: { type: "string", description: "File path (relative to workspace root or absolute)." },
+        paths: { type: "array", items: { type: "string" }, description: "File paths (relative or absolute)." },
         start_line: { type: "number", description: "1-indexed start line (inclusive)." },
         end_line: { type: "number", description: "1-indexed end line (inclusive)." }
       },
@@ -28,7 +28,7 @@ export class ViewFileTool implements Tool {
   async execute(input: JsonObject, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const pathValues = normalizePaths(input);
     if (pathValues.length === 0) {
-      return { ok: false, error: "paths is required and must include at least one absolute file path." };
+      return { ok: false, error: "paths is required and must include at least one file path." };
     }
 
     const startLine = Math.max(1, Math.floor(asNumber(input.start_line) ?? 1));
@@ -43,7 +43,7 @@ export class ViewFileTool implements Tool {
 
     const blocks = await Promise.all(
       pathValues.map(async (pathValue) => {
-        const absolutePath = ensureAbsolutePath(pathValue);
+        const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
         assertInsideWorkspace(absolutePath, context.workspaceRoot);
         const stat = await fs.stat(absolutePath).catch(() => null);
         if (!stat || !stat.isFile()) {

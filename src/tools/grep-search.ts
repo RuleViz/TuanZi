@@ -3,7 +3,7 @@ import path from "node:path";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asBoolean, asNumber, asString, asStringArray } from "../core/json-utils";
 import { escapeRegExp, globToRegExp, looksLikeTextFile } from "../core/file-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 interface GrepHit {
   file: string;
@@ -38,7 +38,7 @@ export class GrepSearchTool implements Tool {
     parameters: {
       type: "object",
       properties: {
-        search_path: { type: "string", description: "Absolute file or directory path to search." },
+        search_path: { type: "string", description: "File or directory path to search (relative to workspace root or absolute)." },
         query: { type: "string", description: "Plain text or regex pattern." },
         is_regex: { type: "boolean", description: "Whether query should be treated as regex." },
         case_sensitive: { type: "boolean", description: "Whether match should be case-sensitive." },
@@ -62,7 +62,7 @@ export class GrepSearchTool implements Tool {
       return { ok: false, error: "search_path and query are required and must be strings." };
     }
 
-    const searchPath = ensureAbsolutePath(searchPathValue, "search_path");
+    const searchPath = resolveSafePath(searchPathValue, context.workspaceRoot, "search_path");
     assertInsideWorkspace(searchPath, context.workspaceRoot);
 
     const maxResults = clampInt(asNumber(input.max_results) ?? 100, 1, 200);

@@ -1,7 +1,7 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString } from "../core/json-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 import { atomicWriteTextFile } from "../core/file-utils";
 import { createLineDiffPreview } from "../core/diff-preview";
 
@@ -26,7 +26,7 @@ export class DiffApplyTool implements Tool {
     parameters: {
       type: "object",
       properties: {
-        targetFile: { type: "string", description: "Absolute path of target file." },
+        targetFile: { type: "string", description: "Target file path (relative to workspace root or absolute)." },
         diff: { type: "string", description: "Unified diff content." },
         fuzz: { type: "number", description: "Optional fuzzy line matching distance (0-5)." }
       },
@@ -42,7 +42,7 @@ export class DiffApplyTool implements Tool {
       return { ok: false, error: "targetFile and diff are required and must be strings." };
     }
 
-    const targetFile = ensureAbsolutePath(targetFileValue, "targetFile");
+    const targetFile = resolveSafePath(targetFileValue, context.workspaceRoot, "targetFile");
     assertInsideWorkspace(targetFile, context.workspaceRoot);
 
     const originalContent = await fs.readFile(targetFile, "utf8").catch(() => null);

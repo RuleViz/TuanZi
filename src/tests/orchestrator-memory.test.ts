@@ -8,9 +8,9 @@ test("buildConversationContext should include user and assistant memory", () => 
     { user: "Use npm test after patch.", assistant: "Understood, I will run tests." }
   ]);
 
-  assert.match(context, /User: Where is config\?/);
-  assert.match(context, /Assistant: Check agent\.config\.json/);
-  assert.match(context, /User: Use npm test after patch\./);
+  assert.match(context, /User:\nWhere is config\?/);
+  assert.match(context, /Assistant:\nCheck agent\.config\.json/);
+  assert.match(context, /User:\nUse npm test after patch\./);
 });
 
 test("buildConversationContext should keep recent turns when maxTurns is limited", () => {

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString } from "../core/json-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT = 3_000;
@@ -17,7 +17,10 @@ export class RunCommandTool implements Tool {
       type: "object",
       properties: {
         command: { type: "string", description: "Command to execute." },
-        cwd: { type: "string", description: "Absolute working directory. Defaults to workspace root." },
+        cwd: {
+          type: "string",
+          description: "Working directory (relative to workspace root or absolute). Defaults to workspace root."
+        },
         timeout_ms: { type: "number", description: "Timeout in milliseconds." },
         max_output_chars: { type: "number", description: "Max stdout/stderr characters to keep." },
         parse_json_output: { type: "boolean", description: "Attempt to parse stdout as JSON." },
@@ -41,7 +44,7 @@ export class RunCommandTool implements Tool {
     let cwd = context.workspaceRoot;
     const cwdInput = asString(input.cwd);
     if (cwdInput) {
-      const absoluteCwd = ensureAbsolutePath(cwdInput, "cwd");
+      const absoluteCwd = resolveSafePath(cwdInput, context.workspaceRoot, "cwd");
       assertInsideWorkspace(absoluteCwd, context.workspaceRoot);
       cwd = absoluteCwd;
     }

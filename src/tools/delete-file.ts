@@ -1,17 +1,17 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asString } from "../core/json-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 export class DeleteFileTool implements Tool {
   readonly definition = {
     name: "delete_file",
-    description: "Delete a file or an empty directory by absolute path.",
+    description: "Delete a file or an empty directory by path.",
     destructive: true,
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string", description: "Absolute path to file or empty directory." }
+        path: { type: "string", description: "Path to file or empty directory (relative to workspace root or absolute)." }
       },
       required: ["path"],
       additionalProperties: false
@@ -24,7 +24,7 @@ export class DeleteFileTool implements Tool {
       return { ok: false, error: "path is required and must be a string." };
     }
 
-    const absolutePath = ensureAbsolutePath(pathValue);
+    const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
     const stat = await fs.stat(absolutePath).catch(() => null);

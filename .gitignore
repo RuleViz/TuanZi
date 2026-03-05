@@ -61,3 +61,8 @@ coverage/
 
 # TypeScript build info
 *.tsbuildinfo
+
+前端设计原型/
+
+# Electron app directory
+app/

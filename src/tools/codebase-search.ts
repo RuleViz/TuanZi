@@ -3,7 +3,7 @@ import path from "node:path";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString, asStringArray } from "../core/json-utils";
 import { looksLikeTextFile } from "../core/file-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 type CodeSymbolType = "function" | "class" | "interface" | "type" | "variable" | "export" | "import";
 
@@ -69,7 +69,7 @@ export class CodebaseSearchTool implements Tool {
           items: { type: "string" },
           description: "Optional symbol type filters."
         },
-        scope: { type: "string", description: "Optional subdirectory scope (relative to workspace) or absolute path." },
+        scope: { type: "string", description: "Optional scope path (relative to workspace root or absolute)." },
         max_results: { type: "number", description: "Maximum matches to return (1-100)." }
       },
       required: ["query"],
@@ -197,10 +197,7 @@ function resolveScope(scope: string, workspaceRoot: string): string {
   if (!scope) {
     return workspaceRoot;
   }
-  if (path.isAbsolute(scope)) {
-    return ensureAbsolutePath(scope, "scope");
-  }
-  return path.resolve(workspaceRoot, scope);
+  return resolveSafePath(scope, workspaceRoot, "scope");
 }
 
 function compareSymbolRank(left: CodeSymbol, right: CodeSymbol, queryLower: string): number {

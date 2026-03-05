@@ -3,7 +3,7 @@ import path from "node:path";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asBoolean, asNumber, asString } from "../core/json-utils";
 import { globToRegExp } from "../core/file-utils";
-import { assertInsideWorkspace, ensureAbsolutePath } from "../core/path-utils";
+import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 export class ListDirTool implements Tool {
   readonly definition = {
@@ -15,7 +15,7 @@ export class ListDirTool implements Tool {
       properties: {
         path: {
           type: "string",
-          description: "Absolute directory path."
+          description: "Directory path (relative to workspace root or absolute)."
         },
         recursive: {
           type: "boolean",
@@ -45,7 +45,7 @@ export class ListDirTool implements Tool {
       return { ok: false, error: "path is required and must be a string." };
     }
 
-    const absolutePath = ensureAbsolutePath(pathValue);
+    const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
     const recursive = asBoolean(input.recursive) ?? false;
