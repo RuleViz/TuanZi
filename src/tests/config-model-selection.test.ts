@@ -1,9 +1,11 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { loadRuntimeConfig } from "../config";
+
+const TEST_AGENT_HOME = path.join(process.cwd(), ".tmp", "test-agent-home");
 
 function withEnv(overrides: Record<string, string | null>, fn: () => void): void {
   const backup: Record<string, string | undefined> = {};
@@ -40,6 +42,7 @@ test("should not fallback to env vars when no custom model exists", () => {
       MYCODER_SEARCH_MODEL: null,
       MYCODER_CODER_MODEL: null,
       TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+      MYCODERAGENT_HOME: TEST_AGENT_HOME,
       QWEN_API_KEY: "qwen-demo-key",
       DEEPSEEK_API_KEY: null
     },
@@ -62,6 +65,7 @@ test("should still not fallback to env vars when modelOverride misses", () => {
       MYCODER_API_BASE_URL: null,
       MYCODER_MODEL: null,
       TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+      MYCODERAGENT_HOME: TEST_AGENT_HOME,
       QWEN_API_KEY: "qwen-demo-key",
       DEEPSEEK_API_KEY: "deepseek-demo-key"
     },
@@ -114,6 +118,7 @@ test("should load default model from custom store", () => {
     withEnv(
       {
         TUANZI_MODELS_PATH: storePath,
+        MYCODERAGENT_HOME: TEST_AGENT_HOME,
         MYCODER_API_KEY: null,
         MYCODER_API_BASE_URL: null,
         MYCODER_MODEL: null,
@@ -171,6 +176,7 @@ test("modelOverride should take priority over store default model", () => {
     withEnv(
       {
         TUANZI_MODELS_PATH: storePath,
+        MYCODERAGENT_HOME: TEST_AGENT_HOME,
         MYCODER_API_KEY: null,
         MYCODER_API_BASE_URL: null,
         MYCODER_MODEL: null,
@@ -196,5 +202,56 @@ test("modelOverride should take priority over store default model", () => {
     );
   } finally {
     rmSync(storeDir, { recursive: true, force: true });
+  }
+});
+
+test("should load provider model from ~/.mycoderagent/config.json when custom model store is empty", () => {
+  const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    writeFileSync(
+      path.join(agentHome, "config.json"),
+      JSON.stringify(
+        {
+          provider: {
+            type: "openai",
+            apiKey: "sk-provider",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4o"
+          },
+          global_skills: {
+            file_system: true,
+            execute_command: true,
+            web_search: true
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    withEnv(
+      {
+        TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+        MYCODERAGENT_HOME: agentHome,
+        MYCODER_API_KEY: null,
+        MYCODER_API_BASE_URL: null,
+        MYCODER_MODEL: null,
+        MYCODER_PLANNER_MODEL: null,
+        MYCODER_SEARCH_MODEL: null,
+        MYCODER_CODER_MODEL: null,
+        QWEN_API_KEY: null,
+        DEEPSEEK_API_KEY: null
+      },
+      () => {
+        const config = loadRuntimeConfig({ workspaceRoot: process.cwd(), approvalMode: "manual" });
+        assert.equal(config.model.keySource, "openai");
+        assert.equal(config.model.apiKey, "sk-provider");
+        assert.equal(config.model.baseUrl, "https://api.openai.com/v1");
+        assert.equal(config.model.coderModel, "gpt-4o");
+      }
+    );
+  } finally {
+    rmSync(agentHome, { recursive: true, force: true });
   }
 });

@@ -1,4 +1,4 @@
-export function plannerSystemPrompt(): string {
+﻿export function plannerSystemPrompt(): string {
   return [
     "You are TuanZi (团子), a general-purpose AI assistant.",
     "Style constraints:",
@@ -33,42 +33,49 @@ export function searcherSystemPrompt(workspaceRoot: string): string {
   ].join("\n");
 }
 
-export function coderSystemPrompt(workspaceRoot: string): string {
-  return [
-    "You are TuanZi (团子), a unified autonomous AI assistant.",
-    `Workspace root: ${workspaceRoot}`,
-    "Style constraints:",
-    "- Use professional plain text.",
-    "- Avoid unnecessary emoji or decorative symbols (for example: 🤖, 📝, 🌐) unless the user explicitly asks for that style.",
-    "- Avoid role banners or icon-based section prefixes unless the user explicitly asks for that style.",
-    "You own the full workflow end-to-end: investigate context, read files, reason, edit when needed, and verify.",
-    "You are not limited to coding tasks; handle general assistant requests directly when possible.",
-    "You can use read/search/write/replace/run tools when needed.",
-    "If conversation memory already includes recent tool results (directory listings, file snippets, search hits), reuse them first and avoid duplicate read/search calls unless freshness is required.",
-    "Do not call tools unless they are necessary for correctness.",
-    "Before any risky change or command, rely on tool feedback/approval result and adapt.",
-    "Anti-hallucination protocol:",
-    "If dependency versions, framework behavior, or uncommon errors are uncertain, do not guess.",
-    "You must fetch latest docs or references via search_web/fetch_url/read_url_content before writing code.",
-    "CRITICAL RULE ON FAILURE & HALLUCINATION:",
-    "1. You MUST carefully read the 'ok' boolean and the 'error' field of EVERY tool invocation response.",
-    "2. If a tool fails (e.g. 'ok: false', 'denied by policy', 'file not found', or non-zero exit code), YOU MUST NEVER invent or hallucinate a successful task completion. You must acknowledge the specific failure clearly in your final response to the user.",
-    "3. NEVER fabricate outputs (like fictitious git hashes, random success logs, or false file paths) just to satisfy the user request. A truthful error report is infinitely better than a fabricated success.",
-    "If code was changed, run a reasonable verification command via run_command when possible.",
-    "Tool usage guidelines:",
-    "- You may use relative paths like '.' or './src'; tools resolve them safely against the workspace root.",
-    "- Use codebase_search to find symbols (functions/classes/interfaces/types) before opening many files.",
-    "- For multi-line edits, use diff_apply to patch precise hunks efficiently.",
-    "- Before risky refactors, create checkpoint snapshots and restore if verification fails.",
-    "- Use browser_action for UI verification on running dev servers.",
-    "Response format:",
-    "- When you finish processing, reply to the user with natural language directly.",
-    "- You may use Markdown formatting (headers, lists, code blocks, etc.) freely.",
-    "- Do NOT wrap your response in JSON or any structured format.",
-    "- Do NOT include keys like 'summary', 'changedFiles', or 'executedCommands' in your response; the system collects these automatically from tool call records.",
-    "- Speak directly to the user.",
-    "- Do NOT narrate internal process or meta commentary such as '用户发送了...'、'用户询问了...'、'我已...'.",
-    "- Do NOT describe yourself in third-person workflow logs.",
-    "- Be concise for simple tasks; be thorough when the user requests details."
-  ].join("\n");
+export function coderSystemPrompt(input: {
+  workspaceRoot: string;
+  agentName: string;
+  agentPrompt: string;
+  toolInstructions: Array<{ name: string; prompt: string }>;
+}): string {
+  const toolInstructionsXml =
+    input.toolInstructions.length === 0
+      ? "    <tool_instructions>no tools are enabled for this agent in current runtime.</tool_instructions>"
+      : [
+          "    <tool_instructions>",
+          ...input.toolInstructions.map(
+            (tool) => `      <tool name=\"${escapeXml(tool.name)}\">${escapeXml(tool.prompt)}</tool>`
+          ),
+          "    </tool_instructions>"
+        ].join("\n");
+
+  const sections = [
+    "<system_prompt>",
+    "  <agent_identity>",
+    `    <name>${escapeXml(input.agentName)}</name>`,
+    `    <workspace_root>${escapeXml(input.workspaceRoot)}</workspace_root>`,
+    "  </agent_identity>",
+    "  <agent_prompt>",
+    `    ${escapeXml(input.agentPrompt || "You are a helpful and pragmatic assistant.")}`,
+    "  </agent_prompt>",
+    toolInstructionsXml,
+    "  <global_rules>",
+    "    <rule>Never fabricate tool outputs. If a tool failed, report it honestly.</rule>",
+    "    <rule>Use tools only when needed for correctness or verification.</rule>",
+    "    <rule>When uncertain about external facts, use enabled web tools before concluding.</rule>",
+    "    <rule>Respond directly to the user in natural language; no JSON wrapper is required.</rule>",
+    "  </global_rules>",
+    "</system_prompt>"
+  ];
+  return sections.join("\n");
+}
+
+function escapeXml(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }

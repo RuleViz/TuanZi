@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ test("ChatSessionStore should save/load/list/drop snapshots", async () => {
     {
       workspaceRoot,
       modelOverride: "deepseek-chat",
+      agentOverride: "default.md",
       history: [
         {
           id: "1",
@@ -39,6 +40,7 @@ test("ChatSessionStore should save/load/list/drop snapshots", async () => {
 
   const loaded = await store.load("demo checkpoint");
   assert.equal(loaded.modelOverride, "deepseek-chat");
+  assert.equal(loaded.agentOverride, "default.md");
   assert.equal(loaded.history.length, 1);
   assert.equal(loaded.history[0].assistantMessage, "world");
 

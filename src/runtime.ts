@@ -1,4 +1,4 @@
-import { TuanZiAgent } from "./agents/tuanzi";
+﻿import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
@@ -48,6 +48,13 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
         })
       : null;
 
-  const coder = new TuanZiAgent(client, runtimeConfig.model.coderModel, toolRuntime.registry, toolRuntime.toolContext);
+  const coder = new TuanZiAgent(
+    client,
+    runtimeConfig.model.coderModel,
+    toolRuntime.registry,
+    toolRuntime.toolContext,
+    runtimeConfig.agentBackend.activeAgent,
+    runtimeConfig.agentBackend.config.global_skills
+  );
   return new PlanToDoOrchestrator(coder, toolRuntime.toolContext);
 }

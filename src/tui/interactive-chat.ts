@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+﻿import { promises as fs } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { stdin as input, stdout as output } from "node:process";
@@ -18,6 +18,7 @@ import {
   saveCustomModelStore,
   type CustomModelConfig
 } from "../core/custom-model-store";
+import { getStoredAgentSync, listStoredAgentsSync } from "../core/agent-store";
 import { assertInsideWorkspace, relativeFromWorkspace } from "../core/path-utils";
 import type { Logger, ToolCallRecord, ToolExecutionResult } from "../core/types";
 import { createOrchestrator, createToolRuntime } from "../runtime";
@@ -58,6 +59,7 @@ export interface InteractiveChatOptions {
   workspaceRoot: string;
   approvalMode: ApprovalMode;
   modelOverride?: string | null;
+  agentOverride?: string | null;
 }
 
 interface SessionTurn {
@@ -93,6 +95,7 @@ class InteractiveChatSession {
   private readonly workspaceRoot: string;
   private readonly approvalMode: ApprovalMode;
   private modelOverride: string | null;
+  private agentOverride: string | null;
   private readonly history: SessionTurn[] = [];
   private readonly usage: UsageStats = {
     inputChars: 0,
@@ -112,6 +115,7 @@ class InteractiveChatSession {
     this.workspaceRoot = options.workspaceRoot;
     this.approvalMode = options.approvalMode;
     this.modelOverride = normalizeModelName(options.modelOverride ?? null);
+    this.agentOverride = normalizeAgentName(options.agentOverride ?? null);
     this.sessionStore = new ChatSessionStore(this.workspaceRoot);
   }
 
@@ -197,6 +201,7 @@ class InteractiveChatSession {
 
     console.log(`${dim}工作区: ${runtimeConfig.workspaceRoot}`);
     console.log(`模型: ${modelDisplay}`);
+    console.log(`Agent: ${runtimeConfig.agentBackend.activeAgent.name} (${runtimeConfig.agentBackend.activeAgent.filename})`);
     console.log(`上下文: ${contextInfo ? `${PROJECT_CONTEXT_FILE} (${formatSize(contextInfo.size)})` : `未找到 ${PROJECT_CONTEXT_FILE}`}`);
     console.log(`提示: 输入 /help 获取帮助，行尾添加 \\ 多行输入${reset}\n`);
   }
@@ -641,6 +646,9 @@ class InteractiveChatSession {
       case "model":
         await this.handleModelCommand(command.args);
         return false;
+      case "agent":
+        await this.handleAgentCommand(command.args);
+        return false;
       case "tools":
         this.handleToolsCommand();
         return false;
@@ -674,6 +682,10 @@ class InteractiveChatSession {
         "  /model add [name baseUrl modelId apiKey]  添加或更新模型",
         "  /model use <name>             设为全局默认并立即应用到当前会话",
         "  /model rm <name>              删除模型别名",
+        "  /agent                        查看当前 Agent 与可用列表",
+        "  /agent list                   列出本地 Agent",
+        "  /agent use <id|filename>      切换当前会话 Agent",
+        "  /agent show <id|filename>     查看 Agent 详情",
         "  /checkpoint save [name]       保存会话检查点",
         "  /checkpoint load <name>       加载会话检查点",
         "  /checkpoint list              列出会话检查点",
@@ -741,7 +753,7 @@ class InteractiveChatSession {
   }
 
   private printModelSummary(): void {
-    const { runtimeConfig } = this.createRuntime();
+    const { runtimeConfig, runtime } = this.createRuntime();
     const store = loadCustomModelStore();
     const activeAlias = this.modelOverride ?? store.defaultModel;
     const activeModel = findCustomModelConfig(store, activeAlias);
@@ -896,6 +908,81 @@ class InteractiveChatSession {
     console.log(`已删除模型 [${removed.name}]。`);
   }
 
+
+  private async handleAgentCommand(args: string[]): Promise<void> {
+    try {
+      if (args.length === 0) {
+        this.printAgentSummary();
+        return;
+      }
+
+      const action = (args[0] ?? "").toLowerCase();
+      if (action === "list") {
+        this.printAgentList();
+        return;
+      }
+      if (action === "use") {
+        await this.handleAgentUseCommand(args[1]);
+        return;
+      }
+      if (action === "show") {
+        this.handleAgentShowCommand(args[1]);
+        return;
+      }
+
+      if (args.length === 1) {
+        await this.handleAgentUseCommand(args[0]);
+        return;
+      }
+
+      console.log("用法: /agent [list|use|show]");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`agent 操作失败: ${message}`);
+    }
+  }
+
+  private printAgentSummary(): void {
+    const { runtimeConfig, runtime } = this.createRuntime();
+    const active = runtimeConfig.agentBackend.activeAgent;
+    console.log(`当前 Agent: ${active.name} (${active.filename})`);
+    console.log(`描述: ${active.description || "<none>"}`);
+    console.log(`工具数量: ${active.tools.length}`);
+  }
+
+  private printAgentList(): void {
+    const list = listStoredAgentsSync();
+    if (list.length === 0) {
+      console.log("暂无 Agent。可使用 `agents save` 命令创建。");
+      return;
+    }
+
+    const { runtimeConfig, runtime } = this.createRuntime();
+    const activeFile = runtimeConfig.agentBackend.activeAgent.filename.toLowerCase();
+    console.log("Agent 列表:");
+    for (const agent of list) {
+      const marker = agent.filename.toLowerCase() === activeFile ? "*" : " ";
+      console.log(`${marker} - ${agent.id} (${agent.filename}) ${agent.name}`);
+    }
+  }
+
+  private async handleAgentUseCommand(nameArg: string | undefined): Promise<void> {
+    const name = normalizeAgentName(nameArg ?? null);
+    if (!name) {
+      console.log("用法: /agent use <id|filename>");
+      return;
+    }
+
+    const target = getStoredAgentSync(name);
+    this.agentOverride = target.filename;
+    console.log(`已切换当前会话 Agent: ${target.name} (${target.filename})`);
+  }
+
+  private handleAgentShowCommand(nameArg: string | undefined): void {
+    const name = normalizeAgentName(nameArg ?? null) ?? this.agentOverride ?? "default";
+    const target = getStoredAgentSync(name);
+    console.log(JSON.stringify(target, null, 2));
+  }
   private handleToolsCommand(): void {
     const { runtime } = this.createRuntime();
     const names = runtime.registry.getToolNames();
@@ -906,7 +993,7 @@ class InteractiveChatSession {
   }
 
   private handleConfigCommand(): void {
-    const { runtimeConfig } = this.createRuntime();
+    const { runtimeConfig, runtime } = this.createRuntime();
     console.log(JSON.stringify(runtimeConfig, null, 2));
   }
 
@@ -937,6 +1024,7 @@ class InteractiveChatSession {
           {
             workspaceRoot: this.workspaceRoot,
             modelOverride: this.modelOverride,
+            agentOverride: this.agentOverride,
             history: this.history,
             usage: this.usage
           },
@@ -959,6 +1047,7 @@ class InteractiveChatSession {
         this.usage.outputChars = loaded.usage.outputChars;
         this.usage.toolCalls = loaded.usage.toolCalls;
         this.modelOverride = normalizeModelName(loaded.modelOverride);
+        this.agentOverride = normalizeAgentName(loaded.agentOverride);
         console.log(`已加载会话检查点: ${loaded.name} (${loaded.history.length} 轮)`);
         return;
       }
@@ -1168,7 +1257,8 @@ class InteractiveChatSession {
     const runtimeConfig = loadRuntimeConfig({
       workspaceRoot: this.workspaceRoot,
       approvalMode: this.approvalMode,
-      modelOverride: this.modelOverride
+      modelOverride: this.modelOverride,
+      agentOverride: this.agentOverride
     });
 
     const logger = new InteractiveLogger();
@@ -1340,6 +1430,15 @@ function normalizeModelName(inputModel: string | null): string | null {
   const trimmed = inputModel.trim();
   return trimmed ? trimmed : null;
 }
+
+function normalizeAgentName(inputAgent: string | null): string | null {
+  if (!inputAgent) {
+    return null;
+  }
+  const trimmed = inputAgent.trim();
+  return trimmed ? trimmed : null;
+}
+
 
 function normalizeCustomModelInput(inputModel: {
   name: string;
@@ -1647,3 +1746,25 @@ function printWelcomeBanner(): void {
     console.log("TUANZI");
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

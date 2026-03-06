@@ -1,9 +1,17 @@
-import { promises as fs } from "node:fs";
+﻿import { promises as fs } from "node:fs";
 import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadRuntimeConfig } from "./config";
 import type { ApprovalMode } from "./core/approval-gate";
+import {
+  deleteStoredAgentSync,
+  getStoredAgentSync,
+  listStoredAgentsSync,
+  loadAgentBackendConfigSync,
+  saveAgentBackendConfigSync,
+  saveStoredAgentSync
+} from "./core/agent-store";
 import type { JsonObject } from "./core/types";
 import { createOrchestrator, createToolRuntime } from "./runtime";
 import { getGreetingResponse } from "./greeting";
@@ -41,6 +49,26 @@ export async function runCli(argv: string[]): Promise<number> {
     return handleAgentRun(parsed.flags);
   }
 
+  if (mainCommand === "agents" && subCommand === "list") {
+    return handleAgentsList();
+  }
+  if (mainCommand === "agents" && subCommand === "get") {
+    return handleAgentsGet(restPositionals, parsed.flags);
+  }
+  if (mainCommand === "agents" && subCommand === "save") {
+    return handleAgentsSave(parsed.flags);
+  }
+  if (mainCommand === "agents" && subCommand === "delete") {
+    return handleAgentsDelete(restPositionals, parsed.flags);
+  }
+
+  if (mainCommand === "agent-config" && subCommand === "get") {
+    return handleAgentConfigGet();
+  }
+  if (mainCommand === "agent-config" && subCommand === "save") {
+    return handleAgentConfigSave(parsed.flags);
+  }
+
   if (mainCommand === "greet" || mainCommand === "hello") {
     return handleGreet(parsed.flags);
   }
@@ -54,7 +82,8 @@ async function handleToolsList(flags: Record<string, string | boolean>): Promise
   const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
   const runtimeConfig = loadRuntimeConfig({
     workspaceRoot,
-    approvalMode: parseApprovalMode(flags.approval)
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
   });
   const runtime = createToolRuntime(runtimeConfig);
   const toolNames = runtime.registry.getToolNames();
@@ -66,12 +95,14 @@ async function handleToolsList(flags: Record<string, string | boolean>): Promise
 async function handleInteractiveChat(flags: Record<string, string | boolean>): Promise<number> {
   const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
   const approvalMode = parseApprovalMode(flags.approval);
-  const modelOverride = typeof flags.model === "string" && flags.model.trim() ? flags.model.trim() : null;
+  const modelOverride = parseOptionalFlag(flags.model);
+  const agentOverride = parseOptionalFlag(flags.agent);
 
   return startInteractiveChat({
     workspaceRoot,
     approvalMode,
-    modelOverride
+    modelOverride,
+    agentOverride
   });
 }
 
@@ -85,7 +116,8 @@ async function handleToolsRun(positionals: string[], flags: Record<string, strin
   const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
   const runtimeConfig = loadRuntimeConfig({
     workspaceRoot,
-    approvalMode: parseApprovalMode(flags.approval)
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
   });
   const runtime = createToolRuntime(runtimeConfig);
 
@@ -118,9 +150,15 @@ async function handleToolsRun(positionals: string[], flags: Record<string, strin
 async function handleAgentRun(flags: Record<string, string | boolean>): Promise<number> {
   const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
   const approvalMode = parseApprovalMode(flags.approval);
-  const runtimeConfig = loadRuntimeConfig({ workspaceRoot, approvalMode });
+  const runtimeConfig = loadRuntimeConfig({
+    workspaceRoot,
+    approvalMode,
+    modelOverride: parseOptionalFlag(flags.model),
+    agentOverride: parseOptionalFlag(flags.agent)
+  });
   const runtime = createToolRuntime(runtimeConfig);
   printModelRuntime(runtimeConfig);
+  printAgentRuntime(runtimeConfig);
 
   let task = typeof flags.task === "string" ? flags.task.trim() : "";
   if (!task) {
@@ -138,6 +176,149 @@ async function handleAgentRun(flags: Record<string, string | boolean>): Promise<
   });
   console.log(JSON.stringify(result, null, 2));
   return 0;
+}
+
+async function handleAgentsList(): Promise<number> {
+  const agents = listStoredAgentsSync();
+  const payload = agents.map((agent) => ({
+    id: agent.id,
+    filename: agent.filename,
+    name: agent.name,
+    avatar: agent.avatar,
+    description: agent.description,
+    tags: agent.tags,
+    tools: agent.tools
+  }));
+  console.log(JSON.stringify(payload, null, 2));
+  return 0;
+}
+
+async function handleAgentsGet(positionals: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const target =
+    positionals[0] ||
+    (typeof flags.id === "string" ? flags.id : "") ||
+    (typeof flags.filename === "string" ? flags.filename : "") ||
+    "default";
+  try {
+    const agent = getStoredAgentSync(target);
+    console.log(JSON.stringify(agent, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function handleAgentsSave(flags: Record<string, string | boolean>): Promise<number> {
+  let payload: unknown | null;
+  try {
+    payload = await readJsonPayloadFromFlags(flags);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    console.error("agents save requires a JSON object payload.");
+    return 1;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const name = typeof record.name === "string" ? record.name : "";
+  const prompt = typeof record.prompt === "string" ? record.prompt : "";
+  if (!name.trim()) {
+    console.error("agents save requires non-empty field: name");
+    return 1;
+  }
+  if (!prompt.trim()) {
+    console.error("agents save requires non-empty field: prompt");
+    return 1;
+  }
+
+  try {
+    const saved = saveStoredAgentSync({
+      filename: typeof record.filename === "string" ? record.filename : null,
+      name,
+      avatar: typeof record.avatar === "string" ? record.avatar : null,
+      description: typeof record.description === "string" ? record.description : null,
+      tags: asStringArray(record.tags),
+      tools: asStringArray(record.tools),
+      prompt
+    });
+    console.log(JSON.stringify(saved, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function handleAgentsDelete(positionals: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const target =
+    positionals[0] ||
+    (typeof flags.id === "string" ? flags.id : "") ||
+    (typeof flags.filename === "string" ? flags.filename : "");
+  if (!target.trim()) {
+    console.error("agents delete requires an id or filename.");
+    return 1;
+  }
+
+  try {
+    deleteStoredAgentSync(target);
+    console.log(JSON.stringify({ ok: true, deleted: target }, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function handleAgentConfigGet(): Promise<number> {
+  const config = loadAgentBackendConfigSync();
+  console.log(JSON.stringify(config, null, 2));
+  return 0;
+}
+
+async function handleAgentConfigSave(flags: Record<string, string | boolean>): Promise<number> {
+  let payload: unknown | null;
+  try {
+    payload = await readJsonPayloadFromFlags(flags);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  if (payload === null) {
+    console.error("agent-config save requires --args or --args-file JSON payload.");
+    return 1;
+  }
+  try {
+    const saved = saveAgentBackendConfigSync(payload);
+    console.log(JSON.stringify(saved, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function readJsonPayloadFromFlags(flags: Record<string, string | boolean>): Promise<unknown | null> {
+  let argsRaw = "";
+  if (typeof flags["args-file"] === "string") {
+    argsRaw = await fs.readFile(path.resolve(flags["args-file"]), "utf8");
+  } else if (typeof flags.args === "string") {
+    argsRaw = flags.args;
+  }
+  argsRaw = argsRaw.replace(/^\uFEFF/, "").trim();
+  if (!argsRaw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(argsRaw) as unknown;
+  } catch (error) {
+    throw new Error(`Invalid JSON payload: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function parseArgs(argv: string[]): { positionals: string[]; flags: Record<string, string | boolean> } {
@@ -177,6 +358,21 @@ function resolveWorkspace(rawWorkspace: string | undefined): string {
   return path.resolve(rawWorkspace ?? process.cwd());
 }
 
+function parseOptionalFlag(value: string | boolean | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+}
+
 async function promptTask(): Promise<string> {
   if (!input.isTTY || !output.isTTY) {
     return "";
@@ -195,20 +391,26 @@ function printHelp(): void {
       "TuanZi (团子) CLI",
       "",
       "Commands:",
-      "  chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>]",
+      "  chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>] [--agent <id|filename>]",
       "  (no command)                           等同于 chat，默认进入交互模式",
       "  greet [--time-based]                   显示中文问候语",
       "  hello [--time-based]                   显示中文问候语",
-      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny]",
-      "  agent chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>]",
-      "  tools list [--workspace <abs-path>]",
-      "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny]",
-      "  tools run <toolName> --args-file <json-file> [--workspace <abs-path>] [--approval manual|auto|deny]",
+      "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>] [--agent <id|filename>]",
+      "  agent chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>] [--agent <id|filename>]",
+      "  tools list [--workspace <abs-path>] [--agent <id|filename>]",
+      "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny] [--agent <id|filename>]",
+      "  tools run <toolName> --args-file <json-file> [--workspace <abs-path>] [--approval manual|auto|deny] [--agent <id|filename>]",
+      "  agents list",
+      "  agents get <id|filename>",
+      "  agents save --args '{\"name\":\"...\",\"prompt\":\"...\",\"tools\":[\"view_file\"]}'",
+      "  agents delete <id|filename>",
+      "  agent-config get",
+      "  agent-config save --args '{\"global_skills\":{...},\"provider\":{...}}'",
       "",
       "Model config:",
       "  Use chat /model commands to manage models",
-      "  Store path: ~/.tuanzi/models.json",
-      "  Runtime no longer falls back to env model keys",
+      "  Legacy store path: ~/.tuanzi/models.json",
+      "  New provider path: ~/.mycoderagent/config.json -> provider",
       "",
       "Project config file:",
       "  agent.config.json      routing/policy/webSearch/toolLoop/mcp settings"
@@ -227,9 +429,19 @@ function printModelRuntime(runtimeConfig: ReturnType<typeof loadRuntimeConfig>):
   );
 }
 
+function printAgentRuntime(runtimeConfig: ReturnType<typeof loadRuntimeConfig>): void {
+  const active = runtimeConfig.agentBackend.activeAgent;
+  console.log(
+    `[agent] active=${active.filename} name=${active.name} tools=${active.tools.length} globalSkills=${JSON.stringify(
+      runtimeConfig.agentBackend.config.global_skills
+    )}`
+  );
+}
+
 async function handleGreet(flags: Record<string, string | boolean>): Promise<number> {
   const timeBased = flags["time-based"] === true;
   const greeting = getGreetingResponse(timeBased);
   console.log(greeting);
   return 0;
 }
+

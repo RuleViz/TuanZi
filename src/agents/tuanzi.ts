@@ -1,4 +1,4 @@
-import type { ToolRegistry } from "../core/tool-registry";
+﻿import type { ToolRegistry } from "../core/tool-registry";
 import { parseJsonObject } from "../core/json-utils";
 import type {
   CoderResult,
@@ -6,33 +6,20 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult
 } from "../core/types";
+import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
+import { resolveActiveTools } from "../core/agent-tooling";
 import type { ChatCompletionClient } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
 import { ReactToolAgent } from "./react-tool-agent";
-
-const ALL_CODER_TOOLS = [
-  "list_dir",
-  "find_by_name",
-  "grep_search",
-  "view_file",
-  "write_to_file",
-  "diff_apply",
-  "delete_file",
-  "codebase_search",
-  "search_web",
-  "fetch_url",
-  "read_url_content",
-  "run_command",
-  "browser_action",
-  "checkpoint"
-];
 
 export class TuanZiAgent {
   constructor(
     private readonly client: ChatCompletionClient | null,
     private readonly model: string | null,
     private readonly toolRegistry: ToolRegistry,
-    private readonly toolContext: ToolExecutionContext
+    private readonly toolContext: ToolExecutionContext,
+    private readonly activeAgent: StoredAgent,
+    private readonly globalSkills: GlobalSkillsConfig
   ) { }
 
   async execute(
@@ -50,11 +37,21 @@ export class TuanZiAgent {
       };
     }
 
+    const availableToolNames = this.toolRegistry.getToolNames();
+    const activeTools = resolveActiveTools(this.activeAgent.tools, this.globalSkills, availableToolNames);
+    this.toolContext.logger.info(
+      `[agent] profile=${this.activeAgent.filename} activeTools=${activeTools.activeToolNames.length}`
+    );
+
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
     const userPromptSections = [
       "Task:",
-      task
-    ];
+      task,
+      "",
+      `Active agent: ${this.activeAgent.name}`,
+      this.activeAgent.description ? `Agent description: ${this.activeAgent.description}` : ""
+    ].filter((line) => line !== "");
+
     if (conversationContext) {
       userPromptSections.push(
         "",
@@ -64,15 +61,23 @@ export class TuanZiAgent {
     }
     userPromptSections.push(
       "",
-      "You are TuanZi (团子). Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language.",
+      "Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language.",
       "Output style requirement: keep wording professional and avoid unnecessary decorative symbols unless the user explicitly requests that style."
     );
     const userPrompt = userPromptSections.join("\n");
 
     const output = await agent.run({
-      systemPrompt: coderSystemPrompt(this.toolContext.workspaceRoot),
+      systemPrompt: coderSystemPrompt({
+        workspaceRoot: this.toolContext.workspaceRoot,
+        agentName: this.activeAgent.name,
+        agentPrompt: this.activeAgent.prompt,
+        toolInstructions: activeTools.activeTools.map((tool) => ({
+          name: tool.name,
+          prompt: tool.prompt
+        }))
+      }),
       userPrompt,
-      allowedTools: ALL_CODER_TOOLS,
+      allowedTools: activeTools.activeToolNames,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,
       temperature: 0.15,
       onAssistantTextDelta: hooks?.onAssistantTextDelta
@@ -149,11 +154,11 @@ function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: 
 function fallbackCoderResult(): CoderResult {
   return {
     summary:
-      "未配置模型（未命中 ~/.tuanzi/models.json 的 defaultModel 或会话别名），团子进入降级模式。工具仍可使用，可通过 tools run 或补充 /model 配置后运行 agent。",
+      "未配置模型（未命中 ~/.tuanzi/models.json 的 defaultModel 或会话别名，且 ~/.mycoderagent/config.json provider 未配置），团子进入降级模式。",
     changedFiles: [],
     executedCommands: [],
     followUp: [
-      "在 chat 里使用 /model add 和 /model use 设置模型后重试 agent run。"
+      "在 chat 里使用 /model add 和 /model use 设置模型，或配置 ~/.mycoderagent/config.json 的 provider 后重试。"
     ]
   };
 }

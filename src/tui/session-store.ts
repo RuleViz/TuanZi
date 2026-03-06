@@ -1,4 +1,4 @@
-import { promises as fs } from "node:fs";
+﻿import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { ToolCallRecord } from "../core/types";
 import { assertInsideWorkspace } from "../core/path-utils";
@@ -23,6 +23,7 @@ export interface ChatSessionSnapshot {
   createdAt: string;
   workspaceRoot: string;
   modelOverride: string | null;
+  agentOverride: string | null;
   history: SessionTurnSnapshot[];
   usage: UsageSnapshot;
 }
@@ -52,6 +53,7 @@ export class ChatSessionStore {
       createdAt,
       workspaceRoot: snapshot.workspaceRoot,
       modelOverride: snapshot.modelOverride,
+      agentOverride: snapshot.agentOverride,
       history: snapshot.history,
       usage: snapshot.usage
     };
@@ -139,6 +141,9 @@ function parseSnapshot(value: unknown): ChatSessionSnapshot | null {
   if (record.modelOverride !== null && typeof record.modelOverride !== "string") {
     return null;
   }
+  if (record.agentOverride !== undefined && record.agentOverride !== null && typeof record.agentOverride !== "string") {
+    return null;
+  }
   if (!Array.isArray(record.history)) {
     return null;
   }
@@ -162,6 +167,7 @@ function parseSnapshot(value: unknown): ChatSessionSnapshot | null {
     createdAt: record.createdAt,
     workspaceRoot: record.workspaceRoot,
     modelOverride: record.modelOverride ?? null,
+    agentOverride: record.agentOverride ?? null,
     history,
     usage
   };

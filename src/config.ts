@@ -1,6 +1,12 @@
 ﻿import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { findCustomModelConfig, loadCustomModelStore } from "./core/custom-model-store";
+import {
+  loadActiveAgentSync,
+  loadAgentBackendConfigSync,
+  type AgentBackendConfig,
+  type StoredAgent
+} from "./core/agent-store";
 import type { ApprovalMode } from "./core/approval-gate";
 import type { AgentSettings, JsonObject, PolicyDecision } from "./core/types";
 
@@ -16,21 +22,32 @@ export interface RuntimeConfig {
     searchModel: string | null;
     coderModel: string | null;
   };
+  agentBackend: {
+    config: AgentBackendConfig;
+    activeAgent: StoredAgent;
+  };
 }
 
 export function loadRuntimeConfig(input: {
   workspaceRoot?: string;
   approvalMode?: ApprovalMode;
   modelOverride?: string | null;
+  agentOverride?: string | null;
 }): RuntimeConfig {
   const workspaceRoot = path.resolve(input.workspaceRoot ?? process.cwd());
   const approvalMode = input.approvalMode ?? "manual";
   const agentSettings = loadAgentSettings(workspaceRoot);
   const modelOverride = normalizeOptionalString(input.modelOverride ?? null);
+  const agentOverride = normalizeOptionalString(input.agentOverride ?? null);
+
+  const agentBackendConfig = loadAgentBackendConfigSync();
+  const activeAgent = loadActiveAgentSync(agentOverride);
+
   const customStore = loadCustomModelStore();
   const overrideCustomModel = modelOverride ? findCustomModelConfig(customStore, modelOverride) : null;
   const defaultCustomModel = modelOverride ? null : findCustomModelConfig(customStore, customStore.defaultModel);
   const selectedCustomModel = overrideCustomModel ?? defaultCustomModel;
+  const providerModel = normalizeProviderModel(agentBackendConfig);
 
   let keySource: RuntimeConfig["model"]["keySource"];
   let baseUrl: string;
@@ -46,6 +63,13 @@ export function loadRuntimeConfig(input: {
     plannerModel = selectedCustomModel.modelId;
     searchModel = selectedCustomModel.modelId;
     coderModel = selectedCustomModel.modelId;
+  } else if (providerModel) {
+    keySource = "openai";
+    baseUrl = providerModel.baseUrl;
+    apiKey = providerModel.apiKey;
+    plannerModel = providerModel.model;
+    searchModel = providerModel.model;
+    coderModel = providerModel.model;
   } else {
     keySource = "none";
     baseUrl = "https://api.openai.com/v1";
@@ -70,9 +94,14 @@ export function loadRuntimeConfig(input: {
       plannerModel,
       searchModel,
       coderModel
+    },
+    agentBackend: {
+      config: agentBackendConfig,
+      activeAgent
     }
   };
 }
+
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   routing: {
     enableDirectMode: true,
@@ -354,11 +383,26 @@ function asWebSearchProvider(value: unknown): "mcp" | "http" | null {
   }
   return null;
 }
-function normalizeOptionalString(value: string | null | undefined): string | null {
+
+function normalizeOptionalString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeProviderModel(config: AgentBackendConfig): { baseUrl: string; apiKey: string; model: string } | null {
+  const baseUrl = normalizeOptionalString(config.provider.baseUrl);
+  const apiKey = normalizeOptionalString(config.provider.apiKey);
+  const model = normalizeOptionalString(config.provider.model);
+  if (!baseUrl || !apiKey || !model) {
+    return null;
+  }
+  return {
+    baseUrl,
+    apiKey,
+    model
+  };
 }
 

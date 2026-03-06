@@ -1,4 +1,4 @@
-import type { ToolRegistry } from "../core/tool-registry";
+﻿import type { ToolRegistry } from "../core/tool-registry";
 import type { JsonObject, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import type { ChatCompletionClient, ChatMessage, ToolCall } from "./model-types";
 
@@ -39,6 +39,7 @@ export class ReactToolAgent {
     ];
     const toolCalls: Array<{ name: string; args: JsonObject; result: ToolExecutionResult }> = [];
     const toolDefinitions = this.toolRegistry.getToolDefinitions(input.allowedTools);
+    const requestTools = toolDefinitions.length > 0 ? toolDefinitions : undefined;
     let previousRequestedCalls: string[] | null = null;
     let repeatedNoProgressTurns = 0;
 
@@ -46,7 +47,7 @@ export class ReactToolAgent {
       const completion = await this.client.complete({
         model: this.model,
         messages,
-        tools: toolDefinitions,
+        tools: requestTools,
         temperature: input.temperature ?? 0.2
       }, {
         onContentDelta: input.onAssistantTextDelta
@@ -273,3 +274,4 @@ function arraysEqual(left: string[], right: string[]): boolean {
   }
   return true;
 }
+
