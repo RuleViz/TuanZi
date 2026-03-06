@@ -81,7 +81,6 @@ const DEFAULT_AGENT_METADATA: AgentMetadata = {
     "codebase_search",
     "search_web",
     "fetch_url",
-    "read_url_content",
     "run_command",
     "browser_action",
     "checkpoint"
@@ -144,8 +143,7 @@ export function loadAgentBackendConfigSync(): AgentBackendConfig {
     return normalizeBackendConfig(parsed);
   } catch (error) {
     console.warn(
-      `[WARN] Failed to parse ${AGENT_CONFIG_FILE_NAME}, fallback to defaults: ${
-        error instanceof Error ? error.message : String(error)
+      `[WARN] Failed to parse ${AGENT_CONFIG_FILE_NAME}, fallback to defaults: ${error instanceof Error ? error.message : String(error)
       }`
     );
     return cloneDefaultBackendConfig();
@@ -214,8 +212,7 @@ export function loadActiveAgentSync(agentOverride?: string | null): StoredAgent 
       return getStoredAgentSync(preferred);
     } catch (error) {
       console.warn(
-        `[WARN] agent override not found (${preferred}), fallback to default: ${
-          error instanceof Error ? error.message : String(error)
+        `[WARN] agent override not found (${preferred}), fallback to default: ${error instanceof Error ? error.message : String(error)
         }`
       );
     }

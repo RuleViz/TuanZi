@@ -8,7 +8,6 @@ import { FetchUrlTool } from "./fetch-url";
 import { FindByNameTool } from "./find-by-name";
 import { GrepSearchTool } from "./grep-search";
 import { ListDirTool } from "./list-dir";
-import { ReadUrlContentTool } from "./read-url-content";
 import { RunCommandTool } from "./run-command";
 import { SearchWebTool } from "./search-web";
 import { ViewFileTool } from "./view-file";
@@ -23,7 +22,6 @@ export function createDefaultTools(): Tool[] {
     new FindByNameTool(),
     new GrepSearchTool(),
     new FetchUrlTool(),
-    new ReadUrlContentTool(),
     new SearchWebTool(),
     new RunCommandTool(),
     new DiffApplyTool(),

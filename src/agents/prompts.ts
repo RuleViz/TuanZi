@@ -29,7 +29,7 @@ export function searcherSystemPrompt(workspaceRoot: string): string {
     "Output strictly JSON with keys: summary, references, webReferences.",
     "references item must include path, reason, confidence(low|medium|high).",
     "webReferences item must include url and reason.",
-    "When third-party versions, APIs or unknown errors are involved, use search_web + fetch_url/read_url_content first instead of guessing."
+    "When third-party versions, APIs or unknown errors are involved, use search_web + fetch_url first instead of guessing."
   ].join("\n");
 }
 
@@ -43,12 +43,12 @@ export function coderSystemPrompt(input: {
     input.toolInstructions.length === 0
       ? "    <tool_instructions>no tools are enabled for this agent in current runtime.</tool_instructions>"
       : [
-          "    <tool_instructions>",
-          ...input.toolInstructions.map(
-            (tool) => `      <tool name=\"${escapeXml(tool.name)}\">${escapeXml(tool.prompt)}</tool>`
-          ),
-          "    </tool_instructions>"
-        ].join("\n");
+        "    <tool_instructions>",
+        ...input.toolInstructions.map(
+          (tool) => `      <tool name=\"${escapeXml(tool.name)}\">${escapeXml(tool.prompt)}</tool>`
+        ),
+        "    </tool_instructions>"
+      ].join("\n");
 
   const sections = [
     "<system_prompt>",

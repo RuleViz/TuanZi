@@ -18,8 +18,7 @@ const SEARCH_TOOLS = [
   "grep_search",
   "view_file",
   "search_web",
-  "fetch_url",
-  "read_url_content"
+  "fetch_url"
 ];
 
 export interface SearcherOutput {

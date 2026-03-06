@@ -76,11 +76,6 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     name: "fetch_url",
     category: "web_search",
     prompt: "Use fetch_url to retrieve full page content from trustworthy sources after search."
-  },
-  read_url_content: {
-    name: "read_url_content",
-    category: "web_search",
-    prompt: "Use read_url_content for structured extraction from pages already discovered."
   }
 };
 
