@@ -13,6 +13,8 @@ import {
   saveStoredAgentSync
 } from "./core/agent-store";
 import type { JsonObject } from "./core/types";
+import { loadMcpConfigSync, saveMcpConfigSync } from "./mcp/config-store";
+import { McpManager } from "./mcp/manager";
 import { createOrchestrator, createToolRuntime } from "./runtime";
 import { getGreetingResponse } from "./greeting";
 import { startInteractiveChat } from "./tui/interactive-chat";
@@ -67,6 +69,18 @@ export async function runCli(argv: string[]): Promise<number> {
   }
   if (mainCommand === "agent-config" && subCommand === "save") {
     return handleAgentConfigSave(parsed.flags);
+  }
+  if (mainCommand === "mcp" && subCommand === "config" && restPositionals[0] === "get") {
+    return handleMcpConfigGet();
+  }
+  if (mainCommand === "mcp" && subCommand === "config" && restPositionals[0] === "save") {
+    return handleMcpConfigSave(parsed.flags);
+  }
+  if (mainCommand === "mcp" && subCommand === "tools" && restPositionals[0] === "list") {
+    return handleMcpToolsList(parsed.flags);
+  }
+  if (mainCommand === "mcp" && subCommand === "tools" && restPositionals[0] === "call") {
+    return handleMcpToolsCall(restPositionals.slice(1), parsed.flags);
   }
 
   if (mainCommand === "greet" || mainCommand === "hello") {
@@ -302,6 +316,98 @@ async function handleAgentConfigSave(flags: Record<string, string | boolean>): P
   }
 }
 
+async function handleMcpConfigGet(): Promise<number> {
+  const config = loadMcpConfigSync();
+  console.log(JSON.stringify(config, null, 2));
+  return 0;
+}
+
+async function handleMcpConfigSave(flags: Record<string, string | boolean>): Promise<number> {
+  let payload: unknown | null;
+  try {
+    payload = await readJsonPayloadFromFlags(flags);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+
+  if (payload === null) {
+    console.error("mcp config save requires --args or --args-file JSON payload.");
+    return 1;
+  }
+
+  try {
+    const saved = saveMcpConfigSync(payload);
+    console.log(JSON.stringify(saved, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+async function handleMcpToolsList(flags: Record<string, string | boolean>): Promise<number> {
+  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
+  const runtimeConfig = loadRuntimeConfig({
+    workspaceRoot,
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
+  });
+  const runtime = createToolRuntime(runtimeConfig);
+  const manager = new McpManager(runtimeConfig.agentSettings.mcp, runtime.logger);
+  try {
+    const tools = await manager.listNamespacedTools();
+    const payload = tools.map((item) => ({
+      name: item.namespacedName,
+      description: item.description,
+      inputSchema: item.inputSchema
+    }));
+    console.log(JSON.stringify(payload, null, 2));
+    return 0;
+  } finally {
+    await manager.stopAll();
+  }
+}
+
+async function handleMcpToolsCall(positionals: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const namespacedName = positionals[0] || (typeof flags.name === "string" ? flags.name : "");
+  if (!namespacedName) {
+    console.error(
+      "mcp tools call requires namespaced tool name. Example: mcp tools call mcp__sequentialthinking__sequentialthinking --args '{\"thought\":\"...\"}'"
+    );
+    return 1;
+  }
+
+  let payload: unknown | null;
+  try {
+    payload = await readJsonPayloadFromFlags(flags);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+  const args =
+    payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as JsonObject) : ({} as JsonObject);
+
+  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
+  const runtimeConfig = loadRuntimeConfig({
+    workspaceRoot,
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
+  });
+  const runtime = createToolRuntime(runtimeConfig);
+  const manager = new McpManager(runtimeConfig.agentSettings.mcp, runtime.logger);
+  try {
+    const result = await manager.callNamespacedTool(namespacedName, args);
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  } finally {
+    await manager.stopAll();
+  }
+}
+
 async function readJsonPayloadFromFlags(flags: Record<string, string | boolean>): Promise<unknown | null> {
   let argsRaw = "";
   if (typeof flags["args-file"] === "string") {
@@ -406,6 +512,10 @@ function printHelp(): void {
       "  agents delete <id|filename>",
       "  agent-config get",
       "  agent-config save --args '{\"global_skills\":{...},\"provider\":{...}}'",
+      "  mcp config get",
+      "  mcp config save --args '{\"mcpServers\":{\"serverId\":{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"E:/project\"]}}}'",
+      "  mcp tools list",
+      "  mcp tools call <mcp__serverId__toolName> --args '{\"key\":\"value\"}'",
       "",
       "Model config:",
       "  Use chat /model commands to manage models",

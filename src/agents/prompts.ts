@@ -28,8 +28,7 @@ export function searcherSystemPrompt(workspaceRoot: string): string {
     "When a tool needs a path, you may use relative paths like '.' or './src'; they are resolved against the workspace root safely.",
     "Output strictly JSON with keys: summary, references, webReferences.",
     "references item must include path, reason, confidence(low|medium|high).",
-    "webReferences item must include url and reason.",
-    "When third-party versions, APIs or unknown errors are involved, use search_web + fetch_url first instead of guessing."
+    "webReferences item must include url and reason."
   ].join("\n");
 }
 

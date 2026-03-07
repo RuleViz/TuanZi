@@ -16,9 +16,7 @@ const SEARCH_TOOLS = [
   "list_dir",
   "find_by_name",
   "grep_search",
-  "view_file",
-  "search_web",
-  "fetch_url"
+  "view_file"
 ];
 
 export interface SearcherOutput {

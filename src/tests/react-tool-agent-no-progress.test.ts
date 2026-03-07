@@ -68,10 +68,6 @@ const minimalSettings: AgentSettings = {
     command: "",
     args: [],
     env: {},
-    tools: {
-      webSearch: "web_search",
-      fetchUrl: "fetch_url"
-    },
     startupTimeoutMs: 15000,
     requestTimeoutMs: 30000
   }

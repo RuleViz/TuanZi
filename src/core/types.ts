@@ -19,7 +19,7 @@ export interface PolicySettings {
 
 export interface WebSearchSettings {
   enabled: boolean;
-  provider: "mcp" | "http";
+  provider: "mcp";
   maxUsesPerTask: number;
   maxResultsPerUse: number;
   maxCharsPerPage: number;
@@ -54,10 +54,6 @@ export interface McpSettings {
   command: string;
   args: string[];
   env: Record<string, string>;
-  tools: {
-    webSearch: string;
-    fetchUrl: string;
-  };
   startupTimeoutMs: number;
   requestTimeoutMs: number;
 }

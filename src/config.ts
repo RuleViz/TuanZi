@@ -139,10 +139,6 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
     command: "",
     args: [],
     env: {},
-    tools: {
-      webSearch: "web_search",
-      fetchUrl: "fetch_url"
-    },
     startupTimeoutMs: 15000,
     requestTimeoutMs: 30000
   }
@@ -295,18 +291,6 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
       base.mcp.env = env;
     }
 
-    const tools = asObject(mcpRaw.tools);
-    if (tools) {
-      const webSearch = asString(tools.webSearch);
-      if (webSearch) {
-        base.mcp.tools.webSearch = webSearch;
-      }
-      const fetchUrl = asString(tools.fetchUrl);
-      if (fetchUrl) {
-        base.mcp.tools.fetchUrl = fetchUrl;
-      }
-    }
-
     const startupTimeoutMs = asPositiveInt(mcpRaw.startupTimeoutMs);
     if (startupTimeoutMs !== null) {
       base.mcp.startupTimeoutMs = clamp(startupTimeoutMs, 1000, 120000);
@@ -377,8 +361,8 @@ function asPolicyDecision(value: unknown): PolicyDecision | null {
   return null;
 }
 
-function asWebSearchProvider(value: unknown): "mcp" | "http" | null {
-  if (value === "mcp" || value === "http") {
+function asWebSearchProvider(value: unknown): "mcp" | null {
+  if (value === "mcp") {
     return value;
   }
   return null;

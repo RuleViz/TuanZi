@@ -14,6 +14,17 @@ interface JsonRpcResponse {
   params?: unknown;
 }
 
+interface ToolsListResult {
+  tools?: unknown;
+  nextCursor?: unknown;
+}
+
+export interface McpListedTool {
+  name: string;
+  description: string;
+  inputSchema: JsonObject;
+}
+
 export class StdioMcpClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private started = false;
@@ -31,9 +42,10 @@ export class StdioMcpClient {
       throw new Error("MCP command is empty. Configure mcp.command in agent.config.json.");
     }
 
+    const useShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(this.settings.command);
     this.process = spawn(this.settings.command, this.settings.args, {
       stdio: "pipe",
-      shell: false,
+      shell: useShell,
       env: {
         ...process.env,
         ...this.settings.env
@@ -43,6 +55,11 @@ export class StdioMcpClient {
     this.process.stdout.on("data", (chunk: Buffer) => this.onStdoutData(chunk));
     this.process.stderr.on("data", () => {
       // Keep stderr for debugging visibility in the host process.
+    });
+    this.process.on("error", (error) => {
+      this.rejectAllPending(error instanceof Error ? error : new Error(String(error)));
+      this.started = false;
+      this.process = null;
     });
     this.process.on("exit", () => {
       const error = new Error("MCP process exited.");
@@ -86,6 +103,36 @@ export class StdioMcpClient {
       throw new Error("MCP tools/call response is invalid.");
     }
     return result as McpToolCallResult;
+  }
+
+  async listTools(): Promise<McpListedTool[]> {
+    if (!this.started) {
+      await this.start();
+    }
+
+    const output: McpListedTool[] = [];
+    let cursor: string | undefined;
+    while (true) {
+      const result = (await this.request(
+        "tools/list",
+        cursor ? { cursor } : {},
+        this.settings.requestTimeoutMs
+      )) as ToolsListResult;
+
+      if (!result || typeof result !== "object" || Array.isArray(result)) {
+        break;
+      }
+      const tools = normalizeTools((result as ToolsListResult).tools);
+      output.push(...tools);
+
+      const nextCursorRaw = (result as ToolsListResult).nextCursor;
+      const nextCursor = typeof nextCursorRaw === "string" ? nextCursorRaw.trim() : "";
+      if (!nextCursor) {
+        break;
+      }
+      cursor = nextCursor;
+    }
+    return output;
   }
 
   async stop(): Promise<void> {
@@ -208,3 +255,38 @@ export class StdioMcpClient {
   }
 }
 
+function normalizeTools(input: unknown): McpListedTool[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const tools: McpListedTool[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!name) {
+      continue;
+    }
+    const description = typeof record.description === "string" ? record.description : "";
+    const inputSchema = toJsonObject(record.inputSchema);
+    tools.push({
+      name,
+      description,
+      inputSchema
+    });
+  }
+  return tools;
+}
+
+function toJsonObject(input: unknown): JsonObject {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: true
+    };
+  }
+  return input as JsonObject;
+}

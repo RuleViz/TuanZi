@@ -11,13 +11,13 @@ const allEnabled: GlobalSkillsConfig = {
 
 test("resolveActiveTools should apply global and agent intersections", () => {
   const selection = resolveActiveTools(
-    ["list_dir", "run_command", "search_web", "unknown_tool"],
+    ["list_dir", "run_command", "unknown_tool"],
     {
       file_system: true,
       execute_command: false,
       web_search: false
     },
-    ["list_dir", "run_command", "search_web"]
+    ["list_dir", "run_command"]
   );
 
   assert.deepEqual(selection.activeToolNames, ["list_dir"]);
@@ -27,11 +27,11 @@ test("resolveActiveTools should apply global and agent intersections", () => {
 
 test("resolveActiveTools should keep agent-defined order and remove duplicates", () => {
   const selection = resolveActiveTools(
-    ["search_web", "list_dir", "search_web", "run_command"],
+    ["list_dir", "list_dir", "run_command"],
     allEnabled,
-    ["list_dir", "run_command", "search_web"]
+    ["list_dir", "run_command"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["search_web", "list_dir", "run_command"]);
-  assert.equal(selection.activeTools.map((item) => item.name).join(","), "search_web,list_dir,run_command");
+  assert.deepEqual(selection.activeToolNames, ["list_dir", "run_command"]);
+  assert.equal(selection.activeTools.map((item) => item.name).join(","), "list_dir,run_command");
 });

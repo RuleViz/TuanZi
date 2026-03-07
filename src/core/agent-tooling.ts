@@ -66,16 +66,6 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     name: "browser_action",
     category: "execute_command",
     prompt: "Use browser_action for browser-driven verification only when UI evidence is needed."
-  },
-  search_web: {
-    name: "search_web",
-    category: "web_search",
-    prompt: "Use search_web for latest external facts, versions, and official references."
-  },
-  fetch_url: {
-    name: "fetch_url",
-    category: "web_search",
-    prompt: "Use fetch_url to retrieve full page content from trustworthy sources after search."
   }
 };
 

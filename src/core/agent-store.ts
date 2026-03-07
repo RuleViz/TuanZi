@@ -79,8 +79,6 @@ const DEFAULT_AGENT_METADATA: AgentMetadata = {
     "diff_apply",
     "delete_file",
     "codebase_search",
-    "search_web",
-    "fetch_url",
     "run_command",
     "browser_action",
     "checkpoint"
