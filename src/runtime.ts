@@ -44,7 +44,8 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
     runtimeConfig.model.apiKey !== null
       ? new OpenAICompatibleClient({
           baseUrl: runtimeConfig.model.baseUrl,
-          apiKey: runtimeConfig.model.apiKey
+          apiKey: runtimeConfig.model.apiKey,
+          defaultRequestOptions: runtimeConfig.model.requestOptions ?? undefined
         })
       : null;
 

@@ -16,7 +16,10 @@ export interface McpConfigFile {
 const MCP_CONFIG_FILE_NAME = "mcp_config.json";
 
 export function getMcpConfigPath(): string {
-  const fromEnv = typeof process.env.MYCODER_MCP_CONFIG === "string" ? process.env.MYCODER_MCP_CONFIG.trim() : "";
+  // Prefer new env var, fallback to legacy name.
+  const fromEnv =
+    (typeof process.env.TUANZI_MCP_CONFIG === "string" ? process.env.TUANZI_MCP_CONFIG.trim() : "") ||
+    (typeof process.env.MYCODER_MCP_CONFIG === "string" ? process.env.MYCODER_MCP_CONFIG.trim() : "");
   if (fromEnv) {
     return path.resolve(fromEnv);
   }

@@ -6,6 +6,7 @@ export interface ChatMessage {
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  reasoning_content?: string;
 }
 
 export interface ToolCall {
@@ -25,6 +26,17 @@ export interface ChatCompletionOptions {
   onContentDelta?: (delta: string) => void;
 }
 
+export interface ChatCompletionThinkingConfig {
+  type: "enabled" | "disabled";
+  budget_tokens?: number;
+}
+
+export interface ChatCompletionRequestOptions {
+  reasoningEffort?: "low" | "medium" | "high";
+  thinking?: ChatCompletionThinkingConfig;
+  extraBody?: Record<string, unknown>;
+}
+
 export interface ChatCompletionClient {
   complete(input: {
     model: string;
@@ -38,5 +50,6 @@ export interface ChatCompletionClient {
       };
     }>;
     temperature?: number;
+    requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult>;
 }

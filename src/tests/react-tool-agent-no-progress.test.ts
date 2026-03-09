@@ -70,6 +70,14 @@ const minimalSettings: AgentSettings = {
     env: {},
     startupTimeoutMs: 15000,
     requestTimeoutMs: 30000
+  },
+  modelRequest: {
+    reasoningEffort: null,
+    thinking: {
+      type: null,
+      budgetTokens: null
+    },
+    extraBody: {}
   }
 };
 

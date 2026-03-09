@@ -7,6 +7,7 @@ import {
   type AgentBackendConfig,
   type StoredAgent
 } from "./core/agent-store";
+import type { ChatCompletionRequestOptions } from "./agents/model-types";
 import type { ApprovalMode } from "./core/approval-gate";
 import type { AgentSettings, JsonObject, PolicyDecision } from "./core/types";
 
@@ -21,6 +22,7 @@ export interface RuntimeConfig {
     plannerModel: string | null;
     searchModel: string | null;
     coderModel: string | null;
+    requestOptions: ChatCompletionRequestOptions | null;
   };
   agentBackend: {
     config: AgentBackendConfig;
@@ -93,7 +95,8 @@ export function loadRuntimeConfig(input: {
       apiKey,
       plannerModel,
       searchModel,
-      coderModel
+      coderModel,
+      requestOptions: toChatCompletionRequestOptions(agentSettings)
     },
     agentBackend: {
       config: agentBackendConfig,
@@ -141,6 +144,14 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
     env: {},
     startupTimeoutMs: 15000,
     requestTimeoutMs: 30000
+  },
+  modelRequest: {
+    reasoningEffort: null,
+    thinking: {
+      type: null,
+      budgetTokens: null
+    },
+    extraBody: {}
   }
 };
 
@@ -302,6 +313,31 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
     }
   }
 
+  const modelRequestRaw = asObject(input.modelRequest);
+  if (modelRequestRaw) {
+    const reasoningEffort = asReasoningEffort(modelRequestRaw.reasoningEffort);
+    if (reasoningEffort !== null) {
+      base.modelRequest.reasoningEffort = reasoningEffort;
+    }
+
+    const thinkingRaw = asObject(modelRequestRaw.thinking);
+    if (thinkingRaw) {
+      const thinkingType = asThinkingType(thinkingRaw.type);
+      if (thinkingType !== null) {
+        base.modelRequest.thinking.type = thinkingType;
+      }
+      const budgetTokens = asPositiveInt(thinkingRaw.budgetTokens);
+      if (budgetTokens !== null) {
+        base.modelRequest.thinking.budgetTokens = clamp(budgetTokens, 1, 1_000_000);
+      }
+    }
+
+    const extraBody = asObject(modelRequestRaw.extraBody);
+    if (extraBody) {
+      base.modelRequest.extraBody = extraBody;
+    }
+  }
+
   return base;
 }
 
@@ -368,6 +404,20 @@ function asWebSearchProvider(value: unknown): "mcp" | null {
   return null;
 }
 
+function asReasoningEffort(value: unknown): "low" | "medium" | "high" | null {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  return null;
+}
+
+function asThinkingType(value: unknown): "enabled" | "disabled" | null {
+  if (value === "enabled" || value === "disabled") {
+    return value;
+  }
+  return null;
+}
+
 function normalizeOptionalString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -387,6 +437,30 @@ function normalizeProviderModel(config: AgentBackendConfig): { baseUrl: string; 
     baseUrl,
     apiKey,
     model
+  };
+}
+
+function toChatCompletionRequestOptions(agentSettings: AgentSettings): ChatCompletionRequestOptions | null {
+  const reasoningEffort = agentSettings.modelRequest.reasoningEffort ?? undefined;
+  const thinkingType = agentSettings.modelRequest.thinking.type;
+  const thinkingBudgetTokens = agentSettings.modelRequest.thinking.budgetTokens;
+  const extraBody = agentSettings.modelRequest.extraBody;
+  const hasExtraBody = Object.keys(extraBody).length > 0;
+
+  if (!reasoningEffort && !thinkingType && !hasExtraBody) {
+    return null;
+  }
+
+  return {
+    reasoningEffort,
+    thinking:
+      thinkingType !== null
+        ? {
+            type: thinkingType,
+            ...(thinkingBudgetTokens !== null ? { budget_tokens: thinkingBudgetTokens } : {})
+          }
+        : undefined,
+    extraBody: hasExtraBody ? extraBody : undefined
   };
 }
 

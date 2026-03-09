@@ -38,7 +38,7 @@ export class ChatSessionStore {
   private readonly checkpointDir: string;
 
   constructor(private readonly workspaceRoot: string) {
-    this.checkpointDir = path.join(this.workspaceRoot, ".mycoderagent", "chat-checkpoints");
+    this.checkpointDir = path.join(this.workspaceRoot, ".tuanzi", "chat-checkpoints");
   }
 
   async save(snapshot: Omit<ChatSessionSnapshot, "version" | "name" | "createdAt">, rawName?: string): Promise<SessionListItem> {

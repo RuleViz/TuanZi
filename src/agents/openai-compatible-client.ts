@@ -1,6 +1,7 @@
 import type {
   ChatCompletionClient,
   ChatCompletionOptions,
+  ChatCompletionRequestOptions,
   ChatCompletionResult,
   ChatMessage,
   ToolCall
@@ -10,6 +11,7 @@ export interface OpenAICompatibleClientOptions {
   baseUrl: string;
   apiKey: string;
   timeoutMs?: number;
+  defaultRequestOptions?: ChatCompletionRequestOptions;
 }
 
 export class OpenAICompatibleClient implements ChatCompletionClient {
@@ -33,15 +35,20 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
       };
     }>;
     temperature?: number;
+    requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult> {
+    const normalizedInput = {
+      ...input,
+      requestOptions: mergeRequestOptions(this.options.defaultRequestOptions, input.requestOptions)
+    };
     if (options?.onContentDelta) {
       try {
-        return await this.completeWithStream(input, options);
+        return await this.completeWithStream(normalizedInput, options);
       } catch {
         // Fallback to non-stream mode when stream endpoint is unavailable.
       }
     }
-    return this.completeWithoutStream(input);
+    return this.completeWithoutStream(normalizedInput);
   }
 
   private async completeWithoutStream(input: {
@@ -56,6 +63,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
       };
     }>;
     temperature?: number;
+    requestOptions?: ChatCompletionRequestOptions;
   }): Promise<ChatCompletionResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -64,12 +72,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.buildHeaders(),
-        body: JSON.stringify({
-          model: input.model,
-          messages: input.messages,
-          tools: input.tools,
-          temperature: input.temperature ?? 0.2
-        }),
+        body: JSON.stringify(buildChatCompletionsPayload(input, false)),
         signal: controller.signal
       });
 
@@ -104,6 +107,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
         };
       }>;
       temperature?: number;
+      requestOptions?: ChatCompletionRequestOptions;
     },
     options: ChatCompletionOptions
   ): Promise<ChatCompletionResult> {
@@ -114,13 +118,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.buildHeaders(),
-        body: JSON.stringify({
-          model: input.model,
-          messages: input.messages,
-          tools: input.tools,
-          temperature: input.temperature ?? 0.2,
-          stream: true
-        }),
+        body: JSON.stringify(buildChatCompletionsPayload(input, true)),
         signal: controller.signal
       });
 
@@ -219,6 +217,10 @@ function applyStreamChunk(
     onContentDelta?.(delta.content);
   }
 
+  if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+    message.reasoning_content = `${message.reasoning_content ?? ""}${delta.reasoning_content}`;
+  }
+
   if (!Array.isArray(delta.tool_calls)) {
     return;
   }
@@ -255,6 +257,7 @@ interface StreamChunk {
     delta?: {
       role?: "assistant";
       content?: string;
+      reasoning_content?: string;
       tool_calls?: Array<{
         index?: number;
         id?: string;
@@ -265,4 +268,78 @@ interface StreamChunk {
       }>;
     };
   }>;
+}
+
+function buildChatCompletionsPayload(
+  input: {
+    model: string;
+    messages: ChatMessage[];
+    tools?: Array<{
+      type: "function";
+      function: {
+        name: string;
+        description: string;
+        parameters: Record<string, unknown>;
+      };
+    }>;
+    temperature?: number;
+    requestOptions?: ChatCompletionRequestOptions;
+  },
+  stream: boolean
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    model: input.model,
+    messages: input.messages,
+    tools: input.tools,
+    temperature: input.temperature ?? 0.2
+  };
+  if (stream) {
+    payload.stream = true;
+  }
+
+  if (input.requestOptions?.reasoningEffort) {
+    payload.reasoning_effort = input.requestOptions.reasoningEffort;
+  }
+  if (input.requestOptions?.thinking) {
+    payload.thinking = input.requestOptions.thinking;
+  }
+  if (input.requestOptions?.extraBody) {
+    Object.assign(payload, input.requestOptions.extraBody);
+    // Keep core request keys stable even when using provider-specific extension fields.
+    payload.model = input.model;
+    payload.messages = input.messages;
+    payload.tools = input.tools;
+    payload.temperature = input.temperature ?? 0.2;
+    if (stream) {
+      payload.stream = true;
+    } else {
+      delete payload.stream;
+    }
+  }
+
+  return payload;
+}
+
+function mergeRequestOptions(
+  defaults?: ChatCompletionRequestOptions,
+  overrides?: ChatCompletionRequestOptions
+): ChatCompletionRequestOptions | undefined {
+  const reasoningEffort = overrides?.reasoningEffort ?? defaults?.reasoningEffort;
+  const thinking = overrides?.thinking ?? defaults?.thinking;
+  const extraBody =
+    defaults?.extraBody || overrides?.extraBody
+      ? {
+          ...(defaults?.extraBody ?? {}),
+          ...(overrides?.extraBody ?? {})
+        }
+      : undefined;
+
+  if (!reasoningEffort && !thinking && !extraBody) {
+    return undefined;
+  }
+  return {
+    reasoningEffort,
+    thinking,
+    extraBody
+  };
 }

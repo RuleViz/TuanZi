@@ -171,3 +171,108 @@ test("OpenAICompatibleClient should fallback to non-stream on stream failure", a
     globalThis.fetch = originalFetch;
   }
 });
+
+test("OpenAICompatibleClient should assemble streamed reasoning_content", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"step-1 "}}]}\n\n'));
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"step-2"}}]}\n\n'));
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"done"}}]}\n\n'));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        }
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream"
+        }
+      });
+    };
+
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://example.com/v1",
+      apiKey: "demo-key"
+    });
+
+    const result = await client.complete(
+      {
+        model: "demo-model",
+        messages: [{ role: "user", content: "hi" }]
+      },
+      {
+        onContentDelta: () => {
+          // ignore
+        }
+      }
+    );
+
+    assert.equal(result.message.content, "done");
+    assert.equal(result.message.reasoning_content, "step-1 step-2");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("OpenAICompatibleClient should send default reasoning and thinking options", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody: Record<string, unknown> | null = null;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      capturedBody =
+        init && typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "ok"
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    };
+
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://example.com/v1",
+      apiKey: "demo-key",
+      defaultRequestOptions: {
+        reasoningEffort: "medium",
+        thinking: {
+          type: "enabled",
+          budget_tokens: 4096
+        },
+        extraBody: {
+          enable_thinking: true
+        }
+      }
+    });
+
+    await client.complete({
+      model: "demo-model",
+      messages: [{ role: "user", content: "hi" }]
+    });
+
+    assert.equal(capturedBody?.["reasoning_effort"], "medium");
+    assert.deepEqual(capturedBody?.["thinking"], {
+      type: "enabled",
+      budget_tokens: 4096
+    });
+    assert.equal(capturedBody?.["enable_thinking"], true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -520,7 +520,7 @@ function printHelp(): void {
       "Model config:",
       "  Use chat /model commands to manage models",
       "  Legacy store path: ~/.tuanzi/models.json",
-      "  New provider path: ~/.mycoderagent/config.json -> provider",
+      "  New provider path: ~/.tuanzi/config.json -> provider",
       "",
       "Project config file:",
       "  agent.config.json      routing/policy/webSearch/toolLoop/mcp settings"

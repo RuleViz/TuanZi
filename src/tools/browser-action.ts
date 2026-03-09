@@ -99,7 +99,7 @@ export class BrowserActionTool implements Tool {
     }
 
     if (action === "screenshot") {
-      const screenshotDir = path.join(context.workspaceRoot, ".mycoderagent", "screenshots");
+      const screenshotDir = path.join(context.workspaceRoot, ".tuanzi", "screenshots");
       await fs.mkdir(screenshotDir, { recursive: true });
       const fileName = `screenshot-${Date.now()}.png`;
       const screenshotPath = path.join(screenshotDir, fileName);
@@ -125,7 +125,7 @@ export class BrowserActionTool implements Tool {
       if (!selector || text === null) {
         return { ok: false, error: "selector and text are required for type." };
       }
-      await page.click(selector, { clickCount: 3 }).catch(() => {});
+      await page.click(selector, { clickCount: 3 }).catch(() => { });
       await page.type(selector, text);
       if (waitMs > 0) {
         await sleep(waitMs);
@@ -269,11 +269,11 @@ function findChromePath(): string | null {
 
 async function closeBrowser(): Promise<void> {
   if (pageInstance) {
-    await pageInstance.close().catch(() => {});
+    await pageInstance.close().catch(() => { });
     pageInstance = null;
   }
   if (browserInstance) {
-    await browserInstance.close().catch(() => {});
+    await browserInstance.close().catch(() => { });
     browserInstance = null;
   }
 }

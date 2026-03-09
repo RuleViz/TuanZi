@@ -70,6 +70,29 @@ You can also manage models in chat:
 
 Optional: set `TUANZI_MODELS_PATH` to use a custom model store path.
 
+### Thinking Mode (OpenAI-Compatible)
+Configure request-level reasoning/thinking options in `agent.config.json`:
+
+```json
+{
+  "modelRequest": {
+    "reasoningEffort": "medium",
+    "thinking": {
+      "type": "enabled",
+      "budgetTokens": 4096
+    },
+    "extraBody": {
+      "enable_thinking": true
+    }
+  }
+}
+```
+
+Notes:
+- `reasoningEffort` maps to request field `reasoning_effort` (OpenAI-compatible).
+- `thinking` maps to request field `thinking` (for providers like DeepSeek).
+- `extraBody` passes through provider-specific extension fields.
+
 ### Project Layout
 - `src/agents/`: orchestration and model clients
 - `src/core/`: policy, approvals, safety, shared runtime types

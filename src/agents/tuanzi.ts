@@ -154,11 +154,11 @@ function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: 
 function fallbackCoderResult(): CoderResult {
   return {
     summary:
-      "未配置模型（未命中 ~/.tuanzi/models.json 的 defaultModel 或会话别名，且 ~/.mycoderagent/config.json provider 未配置），团子进入降级模式。",
+      "未配置模型（未命中 ~/.tuanzi/models.json 的 defaultModel 或会话别名，且 ~/.tuanzi/config.json provider 未配置），团子进入降级模式。",
     changedFiles: [],
     executedCommands: [],
     followUp: [
-      "在 chat 里使用 /model add 和 /model use 设置模型，或配置 ~/.mycoderagent/config.json 的 provider 后重试。"
+      "在 chat 里使用 /model add 和 /model use 设置模型，或配置 ~/.tuanzi/config.json 的 provider 后重试。"
     ]
   };
 }

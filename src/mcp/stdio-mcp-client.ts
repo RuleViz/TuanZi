@@ -31,8 +31,9 @@ export class StdioMcpClient {
   private nextId = 1;
   private readBuffer = Buffer.alloc(0);
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private stderrChunks: string[] = [];
 
-  constructor(private readonly settings: McpSettings) {}
+  constructor(private readonly settings: McpSettings) { }
 
   async start(): Promise<void> {
     if (this.started) {
@@ -42,19 +43,36 @@ export class StdioMcpClient {
       throw new Error("MCP command is empty. Configure mcp.command in agent.config.json.");
     }
 
-    const useShell = process.platform === "win32" && /\.(cmd|bat)$/i.test(this.settings.command);
+    // On Windows, always use shell so that .cmd/.bat wrappers (npx, uvx, etc.)
+    // and PATH resolution work correctly inside Electron's child_process.spawn.
+    const useShell = process.platform === "win32";
     this.process = spawn(this.settings.command, this.settings.args, {
       stdio: "pipe",
       shell: useShell,
       env: {
         ...process.env,
+        // Force non-interactive mode for npx/npm so they never show
+        // "Ok to proceed? (y)" prompts, which would stall the child process
+        // indefinitely when spawned without a real terminal (tty).
+        // CI=1 is the standard signal understood by npm, npx, and most CLIs.
+        CI: "1",
+        NPM_CONFIG_YES: "true",
+        // Allow user-defined env overrides to take effect on top.
         ...this.settings.env
-      }
+      },
+      // Prevent the child window from appearing on Windows
+      windowsHide: true
     });
 
     this.process.stdout.on("data", (chunk: Buffer) => this.onStdoutData(chunk));
-    this.process.stderr.on("data", () => {
-      // Keep stderr for debugging visibility in the host process.
+    this.process.stderr.on("data", (chunk: Buffer) => {
+      // Capture stderr for diagnostics.
+      const text = chunk.toString("utf8");
+      this.stderrChunks.push(text);
+      // Cap to 50 chunks to avoid unbounded memory growth.
+      if (this.stderrChunks.length > 50) {
+        this.stderrChunks.shift();
+      }
     });
     this.process.on("error", (error) => {
       this.rejectAllPending(error instanceof Error ? error : new Error(String(error)));
@@ -74,7 +92,7 @@ export class StdioMcpClient {
         protocolVersion: "2024-11-05",
         capabilities: {},
         clientInfo: {
-          name: "mycoderagent",
+          name: "tuanzi",
           version: "0.2.0"
         }
       },
@@ -147,32 +165,27 @@ export class StdioMcpClient {
   private onStdoutData(chunk: Buffer): void {
     this.readBuffer = Buffer.concat([this.readBuffer, chunk]);
 
+    // MCP stdio transport uses newline-delimited JSON-RPC (one JSON object per line).
     while (true) {
-      const headerEnd = this.readBuffer.indexOf("\r\n\r\n");
-      if (headerEnd < 0) {
+      const newlineIdx = this.readBuffer.indexOf("\n");
+      if (newlineIdx < 0) {
+        // Wait for a complete line.
         return;
       }
 
-      const headerText = this.readBuffer.slice(0, headerEnd).toString("utf8");
-      const contentLengthMatch = /Content-Length:\s*(\d+)/i.exec(headerText);
-      if (!contentLengthMatch) {
-        this.readBuffer = this.readBuffer.slice(headerEnd + 4);
+      const lineBytes = this.readBuffer.slice(0, newlineIdx);
+      this.readBuffer = this.readBuffer.slice(newlineIdx + 1);
+
+      const line = lineBytes.toString("utf8").trim();
+      if (!line) {
         continue;
       }
 
-      const contentLength = Number(contentLengthMatch[1]);
-      const frameLength = headerEnd + 4 + contentLength;
-      if (this.readBuffer.length < frameLength) {
-        return;
-      }
-
-      const bodyText = this.readBuffer.slice(headerEnd + 4, frameLength).toString("utf8");
-      this.readBuffer = this.readBuffer.slice(frameLength);
-
       let payload: JsonRpcResponse;
       try {
-        payload = JSON.parse(bodyText) as JsonRpcResponse;
+        payload = JSON.parse(line) as JsonRpcResponse;
       } catch {
+        // Skip non-JSON lines (e.g. startup banner written by some servers).
         continue;
       }
       this.handleRpcPayload(payload);
@@ -213,7 +226,11 @@ export class StdioMcpClient {
     return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`MCP request timed out: ${method}`));
+        const stderrTail = this.stderrChunks.slice(-5).join("").trim();
+        const hint = stderrTail
+          ? ` | stderr: ${stderrTail.slice(0, 500)}`
+          : "";
+        reject(new Error(`MCP request timed out: ${method} (waited ${timeoutMs}ms)${hint}`));
       }, timeoutMs);
 
       this.pending.set(id, {
@@ -242,9 +259,9 @@ export class StdioMcpClient {
     if (!this.process) {
       throw new Error("MCP process is not running.");
     }
-    const body = Buffer.from(JSON.stringify(message), "utf8");
-    const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8");
-    this.process.stdin.write(Buffer.concat([header, body]));
+    // MCP stdio transport: each message is a single-line JSON followed by newline.
+    const line = JSON.stringify(message) + "\n";
+    this.process.stdin.write(line, "utf8");
   }
 
   private rejectAllPending(error: Error): void {

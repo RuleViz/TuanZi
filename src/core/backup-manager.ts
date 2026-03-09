@@ -7,7 +7,7 @@ export class LocalBackupManager implements BackupManager {
   private readonly backupRoot: string;
 
   constructor(private readonly workspaceRoot: string) {
-    this.backupRoot = path.join(this.workspaceRoot, ".mycoderagent", "backups");
+    this.backupRoot = path.join(this.workspaceRoot, ".tuanzi", "backups");
   }
 
   async backupFile(absoluteFilePath: string): Promise<string | null> {

@@ -205,7 +205,7 @@ test("modelOverride should take priority over store default model", () => {
   }
 });
 
-test("should load provider model from ~/.mycoderagent/config.json when custom model store is empty", () => {
+test("should load provider model from ~/.tuanzi/config.json when custom model store is empty", () => {
   const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
   try {
     writeFileSync(
@@ -252,6 +252,78 @@ test("should load provider model from ~/.mycoderagent/config.json when custom mo
       }
     );
   } finally {
+    rmSync(agentHome, { recursive: true, force: true });
+  }
+});
+
+test("should map agent.config.json modelRequest into runtime model request options", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "tuanzi-workspace-"));
+  const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    writeFileSync(
+      path.join(workspace, "agent.config.json"),
+      JSON.stringify(
+        {
+          modelRequest: {
+            reasoningEffort: "high",
+            thinking: {
+              type: "enabled",
+              budgetTokens: 2048
+            },
+            extraBody: {
+              enable_thinking: true
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    writeFileSync(
+      path.join(agentHome, "config.json"),
+      JSON.stringify(
+        {
+          provider: {
+            type: "openai",
+            apiKey: "sk-provider",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4o"
+          },
+          global_skills: {
+            file_system: true,
+            execute_command: true,
+            web_search: true
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    withEnv(
+      {
+        TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+        MYCODERAGENT_HOME: agentHome
+      },
+      () => {
+        const config = loadRuntimeConfig({ workspaceRoot: workspace, approvalMode: "manual" });
+        assert.deepEqual(config.model.requestOptions, {
+          reasoningEffort: "high",
+          thinking: {
+            type: "enabled",
+            budget_tokens: 2048
+          },
+          extraBody: {
+            enable_thinking: true
+          }
+        });
+      }
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
     rmSync(agentHome, { recursive: true, force: true });
   }
 });

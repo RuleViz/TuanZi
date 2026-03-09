@@ -46,7 +46,7 @@ export interface SaveStoredAgentInput {
   prompt: string;
 }
 
-const AGENT_HOME_DIR_NAME = ".mycoderagent";
+const AGENT_HOME_DIR_NAME = ".tuanzi";
 const AGENT_CONFIG_FILE_NAME = "config.json";
 const AGENTS_DIR_NAME = "agents";
 const DEFAULT_AGENT_FILE_NAME = "default.md";
@@ -92,7 +92,10 @@ const DEFAULT_AGENT_PROMPT = [
 ].join("\n");
 
 export function getAgentHomePath(): string {
-  const override = normalizeOptionalString(process.env.MYCODERAGENT_HOME);
+  // Prefer new env var, fallback to legacy name for backward compatibility.
+  const override =
+    normalizeOptionalString(process.env.TUANZI_HOME) ??
+    normalizeOptionalString(process.env.MYCODERAGENT_HOME);
   if (override) {
     return path.resolve(override);
   }

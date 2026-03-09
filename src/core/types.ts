@@ -32,12 +32,22 @@ export interface ToolLoopSettings {
   noProgressRepeatTurns: number;
 }
 
+export interface ModelRequestSettings {
+  reasoningEffort: "low" | "medium" | "high" | null;
+  thinking: {
+    type: "enabled" | "disabled" | null;
+    budgetTokens: number | null;
+  };
+  extraBody: JsonObject;
+}
+
 export interface AgentSettings {
   routing: RoutingSettings;
   policy: PolicySettings;
   webSearch: WebSearchSettings;
   toolLoop: ToolLoopSettings;
   mcp: McpSettings;
+  modelRequest: ModelRequestSettings;
 }
 
 export interface PolicyEvaluation {
