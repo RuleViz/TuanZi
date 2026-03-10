@@ -27,6 +27,7 @@ export class ReactToolAgent {
     temperature?: number;
     maxTurns?: number;
     onAssistantTextDelta?: (delta: string) => void;
+    onAssistantThinkingDelta?: (delta: string) => void;
   }): Promise<ToolLoopOutput> {
     const maxTurns = input.maxTurns ?? 12;
     this.toolContext.logger.info(
@@ -48,9 +49,18 @@ export class ReactToolAgent {
         model: this.model,
         messages,
         tools: requestTools,
-        temperature: input.temperature ?? 0.2
+        temperature: input.temperature ?? 0.2,
+        requestOptions: this.toolContext.agentSettings?.modelRequest ? {
+          reasoningEffort: this.toolContext.agentSettings.modelRequest.reasoningEffort ?? undefined,
+          thinking: this.toolContext.agentSettings.modelRequest.thinking.type ? {
+            type: this.toolContext.agentSettings.modelRequest.thinking.type as 'enabled' | 'disabled',
+            budget_tokens: this.toolContext.agentSettings.modelRequest.thinking.budgetTokens ?? undefined
+          } : undefined,
+          extraBody: this.toolContext.agentSettings.modelRequest.extraBody
+        } : undefined
       }, {
-        onContentDelta: input.onAssistantTextDelta
+        onContentDelta: input.onAssistantTextDelta,
+        onThinkingDelta: input.onAssistantThinkingDelta
       });
 
       const assistantMessage = completion.message;

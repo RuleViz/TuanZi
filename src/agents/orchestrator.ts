@@ -26,6 +26,7 @@ export type OrchestratorPhase = "running";
 export interface OrchestratorRunHooks {
   onPhaseChange?: (phase: OrchestratorPhase) => void;
   onAssistantTextDelta?: (delta: string) => void;
+  onAssistantThinkingDelta?: (delta: string) => void;
 }
 
 export class PlanToDoOrchestrator {
@@ -40,7 +41,8 @@ export class PlanToDoOrchestrator {
     this.toolContext.taskId = randomUUID();
     hooks?.onPhaseChange?.("running");
     const coderOutput = await this.coder.execute(task, conversationContext, {
-      onAssistantTextDelta: hooks?.onAssistantTextDelta
+      onAssistantTextDelta: hooks?.onAssistantTextDelta,
+      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta
     });
 
     return {

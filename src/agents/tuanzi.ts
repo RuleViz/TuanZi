@@ -25,7 +25,10 @@ export class TuanZiAgent {
   async execute(
     task: string,
     conversationContext = "",
-    hooks?: { onAssistantTextDelta?: (delta: string) => void }
+    hooks?: {
+      onAssistantTextDelta?: (delta: string) => void;
+      onAssistantThinkingDelta?: (delta: string) => void;
+    }
   ): Promise<{
     result: CoderResult;
     toolCalls: ToolCallRecord[];
@@ -80,7 +83,8 @@ export class TuanZiAgent {
       allowedTools: activeTools.activeToolNames,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,
       temperature: 0.15,
-      onAssistantTextDelta: hooks?.onAssistantTextDelta
+      onAssistantTextDelta: hooks?.onAssistantTextDelta,
+      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta
     });
 
     const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({

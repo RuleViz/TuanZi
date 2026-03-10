@@ -165,7 +165,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
           if (!chunk) {
             continue;
           }
-          applyStreamChunk(chunk, message, toolCallsByIndex, options.onContentDelta);
+          applyStreamChunk(chunk, message, toolCallsByIndex, options.onContentDelta, options.onThinkingDelta);
         }
       }
 
@@ -201,7 +201,8 @@ function applyStreamChunk(
   chunk: StreamChunk,
   message: ChatMessage,
   toolCallsByIndex: Map<number, ToolCall>,
-  onContentDelta?: (delta: string) => void
+  onContentDelta?: (delta: string) => void,
+  onThinkingDelta?: (delta: string) => void
 ): void {
   const delta = chunk.choices?.[0]?.delta;
   if (!delta) {
@@ -219,6 +220,7 @@ function applyStreamChunk(
 
   if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
     message.reasoning_content = `${message.reasoning_content ?? ""}${delta.reasoning_content}`;
+    onThinkingDelta?.(delta.reasoning_content);
   }
 
   if (!Array.isArray(delta.tool_calls)) {
@@ -329,9 +331,9 @@ function mergeRequestOptions(
   const extraBody =
     defaults?.extraBody || overrides?.extraBody
       ? {
-          ...(defaults?.extraBody ?? {}),
-          ...(overrides?.extraBody ?? {})
-        }
+        ...(defaults?.extraBody ?? {}),
+        ...(overrides?.extraBody ?? {})
+      }
       : undefined;
 
   if (!reasoningEffort && !thinking && !extraBody) {

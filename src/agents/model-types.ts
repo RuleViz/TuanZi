@@ -24,6 +24,7 @@ export interface ChatCompletionResult {
 
 export interface ChatCompletionOptions {
   onContentDelta?: (delta: string) => void;
+  onThinkingDelta?: (delta: string) => void;
 }
 
 export interface ChatCompletionThinkingConfig {
