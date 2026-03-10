@@ -50,3 +50,62 @@ test("ChatSessionStore should save/load/list/drop snapshots", async () => {
 
   await rm(workspaceRoot, { recursive: true, force: true });
 });
+
+
+test("ChatSessionStore should persist active turn snapshots", async () => {
+  const workspaceRoot = await mkdtemp(path.join(tmpdir(), "tuanzi-active-turn-test-"));
+  const store = new ChatSessionStore(workspaceRoot);
+
+  const saved = await store.saveActiveTurn({
+    status: "interrupted",
+    workspaceRoot,
+    modelOverride: "deepseek-chat",
+    agentOverride: "default.md",
+    userMessage: "continue editing",
+    preparedTask: "Task:\ncontinue editing",
+    history: [],
+    usage: {
+      inputChars: 16,
+      outputChars: 8,
+      toolCalls: 1
+    },
+    resumeState: {
+      version: 1,
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "continue editing" }
+      ],
+      toolCalls: [
+        {
+          name: "view_file",
+          args: { path: "README.md" },
+          result: { ok: true, data: { path: "README.md" } }
+        }
+      ],
+      allowedTools: ["view_file"],
+      temperature: 0.15,
+      maxTurns: 8,
+      nextTurn: 1,
+      partialAssistantMessage: {
+        role: "assistant",
+        content: "partial answer"
+      }
+    }
+  });
+
+  assert.equal(saved.status, "interrupted");
+  assert.match(saved.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+  const loaded = await store.loadActiveTurn();
+  assert(loaded);
+  assert.equal(loaded.status, "interrupted");
+  assert.equal(loaded.userMessage, "continue editing");
+  assert.equal(loaded.resumeState?.toolCalls.length, 1);
+  assert.equal(loaded.resumeState?.partialAssistantMessage?.content, "partial answer");
+
+  await store.clearActiveTurn();
+  const cleared = await store.loadActiveTurn();
+  assert.equal(cleared, null);
+
+  await rm(workspaceRoot, { recursive: true, force: true });
+});

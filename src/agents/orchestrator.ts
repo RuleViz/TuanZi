@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ToolCallRecord, ToolExecutionContext } from "../core/types";
+import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "./react-tool-agent";
 import { TuanZiAgent } from "./tuanzi";
 
 export interface OrchestrationResult {
@@ -19,6 +20,7 @@ export interface ConversationMemoryTurn {
 export interface OrchestratorRunInput {
   task: string;
   memoryTurns?: ConversationMemoryTurn[];
+  resumeState?: ToolLoopResumeState;
 }
 
 export type OrchestratorPhase = "running";
@@ -27,6 +29,9 @@ export interface OrchestratorRunHooks {
   onPhaseChange?: (phase: OrchestratorPhase) => void;
   onAssistantTextDelta?: (delta: string) => void;
   onAssistantThinkingDelta?: (delta: string) => void;
+  onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+  onStateChange?: (state: ToolLoopResumeState) => void;
+  signal?: AbortSignal;
 }
 
 export class PlanToDoOrchestrator {
@@ -36,13 +41,18 @@ export class PlanToDoOrchestrator {
   ) { }
 
   async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
-    const { task, memoryTurns } = normalizeRunInput(input);
+    const { task, memoryTurns, resumeState } = normalizeRunInput(input);
     const conversationContext = buildConversationContext(memoryTurns);
     this.toolContext.taskId = randomUUID();
     hooks?.onPhaseChange?.("running");
+    this.toolContext.signal = hooks?.signal;
     const coderOutput = await this.coder.execute(task, conversationContext, {
       onAssistantTextDelta: hooks?.onAssistantTextDelta,
-      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta
+      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
+      onToolCallCompleted: hooks?.onToolCallCompleted,
+      onStateChange: hooks?.onStateChange,
+      resumeState,
+      signal: hooks?.signal
     });
 
     return {
@@ -61,7 +71,8 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   }
   return {
     task: input.task,
-    memoryTurns: input.memoryTurns
+    memoryTurns: input.memoryTurns,
+    resumeState: input.resumeState
   };
 }
 

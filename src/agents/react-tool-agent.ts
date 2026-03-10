@@ -1,14 +1,32 @@
 ﻿import type { ToolRegistry } from "../core/tool-registry";
 import type { JsonObject, ToolExecutionContext, ToolExecutionResult } from "../core/types";
-import type { ChatCompletionClient, ChatMessage, ToolCall } from "./model-types";
+import {
+  isInterruptedAssistantMessageError,
+  type ChatCompletionClient,
+  type ChatMessage,
+  type ToolCall
+} from "./model-types";
+
+export interface ToolLoopToolCallSnapshot {
+  name: string;
+  args: JsonObject;
+  result: ToolExecutionResult;
+}
+
+export interface ToolLoopResumeState {
+  version: 1;
+  messages: ChatMessage[];
+  toolCalls: ToolLoopToolCallSnapshot[];
+  allowedTools: string[];
+  temperature: number;
+  maxTurns: number;
+  nextTurn: number;
+  partialAssistantMessage: ChatMessage | null;
+}
 
 export interface ToolLoopOutput {
   finalText: string;
-  toolCalls: Array<{
-    name: string;
-    args: JsonObject;
-    result: ToolExecutionResult;
-  }>;
+  toolCalls: ToolLoopToolCallSnapshot[];
   messages: ChatMessage[];
 }
 
@@ -28,43 +46,107 @@ export class ReactToolAgent {
     maxTurns?: number;
     onAssistantTextDelta?: (delta: string) => void;
     onAssistantThinkingDelta?: (delta: string) => void;
+    onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+    onStateChange?: (state: ToolLoopResumeState) => void;
+    resumeState?: ToolLoopResumeState | null;
+    signal?: AbortSignal;
   }): Promise<ToolLoopOutput> {
-    const maxTurns = input.maxTurns ?? 12;
+    const temperature = input.resumeState?.temperature ?? input.temperature ?? 0.2;
+    const maxTurns = input.resumeState?.maxTurns ?? input.maxTurns ?? 12;
     this.toolContext.logger.info(
       `[agent] start tool-loop model=${this.model} allowedTools=${input.allowedTools.length} maxTurns=${maxTurns}`
     );
     const noProgressRepeatTurns = this.toolContext.agentSettings?.toolLoop.noProgressRepeatTurns ?? 2;
-    const messages: ChatMessage[] = [
-      { role: "system", content: input.systemPrompt },
-      { role: "user", content: input.userPrompt }
-    ];
-    const toolCalls: Array<{ name: string; args: JsonObject; result: ToolExecutionResult }> = [];
+    const messages = cloneMessages(
+      input.resumeState?.messages ?? [
+        { role: "system", content: input.systemPrompt },
+        { role: "user", content: input.userPrompt }
+      ]
+    );
+    const toolCalls = cloneToolCallSnapshots(input.resumeState?.toolCalls ?? []);
     const toolDefinitions = this.toolRegistry.getToolDefinitions(input.allowedTools);
     const requestTools = toolDefinitions.length > 0 ? toolDefinitions : undefined;
     let previousRequestedCalls: string[] | null = null;
     let repeatedNoProgressTurns = 0;
+    let nextTurn = clampTurnIndex(input.resumeState?.nextTurn ?? 0);
 
-    for (let turn = 0; turn < maxTurns; turn += 1) {
-      const completion = await this.client.complete({
-        model: this.model,
-        messages,
-        tools: requestTools,
-        temperature: input.temperature ?? 0.2,
-        requestOptions: this.toolContext.agentSettings?.modelRequest ? {
-          reasoningEffort: this.toolContext.agentSettings.modelRequest.reasoningEffort ?? undefined,
-          thinking: this.toolContext.agentSettings.modelRequest.thinking.type ? {
-            type: this.toolContext.agentSettings.modelRequest.thinking.type as 'enabled' | 'disabled',
-            budget_tokens: this.toolContext.agentSettings.modelRequest.thinking.budgetTokens ?? undefined
-          } : undefined,
-          extraBody: this.toolContext.agentSettings.modelRequest.extraBody
-        } : undefined
-      }, {
-        onContentDelta: input.onAssistantTextDelta,
-        onThinkingDelta: input.onAssistantThinkingDelta
+    if (hasCarryForwardAssistantText(input.resumeState?.partialAssistantMessage ?? null)) {
+      messages.push(stripPartialAssistantMessage(input.resumeState!.partialAssistantMessage!));
+      messages.push({
+        role: "user",
+        content: "Your previous response was interrupted. Continue from where you left off without repeating text. Continue using tools if needed."
       });
+    }
+
+    const emitState = (partialAssistantMessage: ChatMessage | null): void => {
+      input.onStateChange?.({
+        version: 1,
+        messages: cloneMessages(messages),
+        toolCalls: cloneToolCallSnapshots(toolCalls),
+        allowedTools: [...input.allowedTools],
+        temperature,
+        maxTurns,
+        nextTurn,
+        partialAssistantMessage: partialAssistantMessage ? cloneMessage(partialAssistantMessage) : null
+      });
+    };
+
+    emitState(null);
+
+    for (let turn = nextTurn; turn < maxTurns; turn += 1) {
+      if (this.toolContext.signal?.aborted) {
+        emitState(null);
+        throw new Error("Interrupted by user");
+      }
+
+      let partialAssistantMessage: ChatMessage | null = null;
+      let completion;
+      try {
+        completion = await this.client.complete({
+          model: this.model,
+          messages,
+          tools: requestTools,
+          temperature,
+          requestOptions: this.toolContext.agentSettings?.modelRequest ? {
+            reasoningEffort: this.toolContext.agentSettings.modelRequest.reasoningEffort ?? undefined,
+            thinking: this.toolContext.agentSettings.modelRequest.thinking.type ? {
+              type: this.toolContext.agentSettings.modelRequest.thinking.type as "enabled" | "disabled",
+              budget_tokens: this.toolContext.agentSettings.modelRequest.thinking.budgetTokens ?? undefined
+            } : undefined,
+            extraBody: this.toolContext.agentSettings.modelRequest.extraBody
+          } : undefined
+        }, {
+          onContentDelta: (delta) => {
+            if (!delta) {
+              return;
+            }
+            partialAssistantMessage = appendAssistantText(partialAssistantMessage, delta);
+            emitState(partialAssistantMessage);
+            input.onAssistantTextDelta?.(delta);
+          },
+          onThinkingDelta: (delta) => {
+            if (!delta) {
+              return;
+            }
+            partialAssistantMessage = appendAssistantThinking(partialAssistantMessage, delta);
+            emitState(partialAssistantMessage);
+            input.onAssistantThinkingDelta?.(delta);
+          },
+          signal: input.signal
+        });
+      } catch (error) {
+        if (isInterruptedAssistantMessageError(error)) {
+          emitState(error.partialMessage);
+        } else {
+          emitState(partialAssistantMessage);
+        }
+        throw error;
+      }
 
       const assistantMessage = completion.message;
-      messages.push(assistantMessage);
+      messages.push(cloneMessage(assistantMessage));
+      nextTurn = turn + 1;
+      emitState(null);
 
       const calls = assistantMessage.tool_calls ?? [];
       if (calls.length === 0) {
@@ -88,6 +170,7 @@ export class ReactToolAgent {
         this.toolContext.logger.warn(
           `[agent] no-progress breaker triggered at turn=${turn + 1} repeatedTurns=${repeatedNoProgressTurns}`
         );
+        emitState(null);
         return {
           finalText: "Tool loop stopped due to repeated no-progress tool calls.",
           toolCalls,
@@ -97,21 +180,29 @@ export class ReactToolAgent {
 
       this.toolContext.logger.info(`[agent] turn=${turn + 1} toolCalls=${calls.length}`);
       for (const call of calls) {
+        if (this.toolContext.signal?.aborted) {
+          emitState(null);
+          throw new Error("Interrupted by user");
+        }
         const toolResponse = await this.invokeTool(call, input.allowedTools);
-        toolCalls.push({
+        const toolCallSnapshot: ToolLoopToolCallSnapshot = {
           name: call.function.name,
           args: toolResponse.args,
           result: toolResponse.result
-        });
+        };
+        toolCalls.push(toolCallSnapshot);
+        input.onToolCallCompleted?.(cloneToolCallSnapshot(toolCallSnapshot));
         messages.push({
           role: "tool",
           tool_call_id: call.id,
           name: call.function.name,
           content: JSON.stringify(toolResponse.result)
         });
+        emitState(null);
       }
     }
 
+    emitState(null);
     return {
       finalText: "Tool loop reached max turns without final assistant output.",
       toolCalls,
@@ -152,6 +243,109 @@ export class ReactToolAgent {
     this.toolContext.logger.info(`[tool] done ${call.function.name} ok=${result.ok}`);
     return { args, result };
   }
+}
+
+function appendAssistantText(message: ChatMessage | null, delta: string): ChatMessage {
+  if (message) {
+    return {
+      ...message,
+      content: `${message.content}${delta}`
+    };
+  }
+  return {
+    role: "assistant",
+    content: delta
+  };
+}
+
+function appendAssistantThinking(message: ChatMessage | null, delta: string): ChatMessage {
+  if (message) {
+    return {
+      ...message,
+      content: message.content,
+      reasoning_content: `${message.reasoning_content ?? ""}${delta}`
+    };
+  }
+  return {
+    role: "assistant",
+    content: "",
+    reasoning_content: delta
+  };
+}
+
+function hasCarryForwardAssistantText(message: ChatMessage | null): boolean {
+  if (!message) {
+    return false;
+  }
+  return Boolean(message.content || message.reasoning_content);
+}
+
+function stripPartialAssistantMessage(message: ChatMessage): ChatMessage {
+  return {
+    role: "assistant",
+    content: message.content,
+    reasoning_content: message.reasoning_content
+  };
+}
+
+function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => cloneMessage(message));
+}
+
+function cloneMessage(message: ChatMessage): ChatMessage {
+  return {
+    role: message.role,
+    content: message.content,
+    name: message.name,
+    tool_call_id: message.tool_call_id,
+    reasoning_content: message.reasoning_content,
+    tool_calls: message.tool_calls?.map((call) => ({
+      id: call.id,
+      type: call.type,
+      function: {
+        name: call.function.name,
+        arguments: call.function.arguments
+      }
+    }))
+  };
+}
+
+function cloneToolCallSnapshots(toolCalls: ToolLoopToolCallSnapshot[]): ToolLoopToolCallSnapshot[] {
+  return toolCalls.map((call) => cloneToolCallSnapshot(call));
+}
+
+function cloneToolCallSnapshot(call: ToolLoopToolCallSnapshot): ToolLoopToolCallSnapshot {
+  return {
+    name: call.name,
+    args: cloneJsonObject(call.args),
+    result: cloneToolExecutionResult(call.result)
+  };
+}
+
+function cloneToolExecutionResult(result: ToolExecutionResult): ToolExecutionResult {
+  return {
+    ok: result.ok,
+    data: cloneJsonLike(result.data),
+    error: result.error
+  };
+}
+
+function cloneJsonObject(value: JsonObject): JsonObject {
+  return (cloneJsonLike(value) ?? {}) as JsonObject;
+}
+
+function cloneJsonLike<T>(value: T): T {
+  if (value === undefined) {
+    return value;
+  }
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function clampTurnIndex(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }
 
 function parseToolArgs(rawArguments: string): JsonObject {
@@ -284,4 +478,3 @@ function arraysEqual(left: string[], right: string[]): boolean {
   }
   return true;
 }
-

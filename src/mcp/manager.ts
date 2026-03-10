@@ -1,6 +1,7 @@
 import type { JsonObject, Logger, McpBridge, McpSettings, McpToolCallResult } from "../core/types";
 import { loadMcpConfigSync, type McpServerConfigEntry } from "./config-store";
 import { StdioMcpClient, type McpListedTool } from "./stdio-mcp-client";
+import { RemoteMcpClient } from "./remote-mcp-client";
 
 export interface NamespacedMcpTool {
   serverId: string;
@@ -11,7 +12,7 @@ export interface NamespacedMcpTool {
 }
 
 interface ManagedClient {
-  clientPromise: Promise<StdioMcpClient>;
+  clientPromise: Promise<StdioMcpClient | RemoteMcpClient>;
   lastUsedAt: number;
 }
 
@@ -122,7 +123,7 @@ export class McpManager implements McpBridge {
     return {};
   }
 
-  private async getClient(serverId: string, server: McpServerConfigEntry): Promise<StdioMcpClient> {
+  private async getClient(serverId: string, server: McpServerConfigEntry): Promise<StdioMcpClient | RemoteMcpClient> {
     const existing = this.clients.get(serverId);
     if (existing) {
       existing.lastUsedAt = Date.now();
@@ -130,17 +131,28 @@ export class McpManager implements McpBridge {
     }
 
     const clientPromise = (async () => {
-      const client = new StdioMcpClient({
-        enabled: true,
-        command: server.command,
-        args: server.args,
-        env: server.env ?? {},
-        startupTimeoutMs: this.settings.startupTimeoutMs,
-        requestTimeoutMs: this.settings.requestTimeoutMs
-      });
-      await client.start();
-      this.logger.info(`[mcp] connected server=${serverId} command=${server.command} args=${server.args.join(" ")}`);
-      return client;
+      if (server.type === "remote" && server.url) {
+        const client = new RemoteMcpClient({
+          url: server.url,
+          headers: server.headers,
+          requestTimeoutMs: this.settings.requestTimeoutMs
+        });
+        await client.start();
+        this.logger.info(`[mcp] connected remote server=${serverId} url=${server.url}`);
+        return client;
+      } else {
+        const client = new StdioMcpClient({
+          enabled: true,
+          command: server.command || "",
+          args: server.args || [],
+          env: server.env ?? {},
+          startupTimeoutMs: this.settings.startupTimeoutMs,
+          requestTimeoutMs: this.settings.requestTimeoutMs
+        });
+        await client.start();
+        this.logger.info(`[mcp] connected stdio server=${serverId} command=${server.command} args=${server.args?.join(" ")}`);
+        return client;
+      }
     })();
 
     this.clients.set(serverId, {

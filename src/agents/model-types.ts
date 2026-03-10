@@ -25,6 +25,7 @@ export interface ChatCompletionResult {
 export interface ChatCompletionOptions {
   onContentDelta?: (delta: string) => void;
   onThinkingDelta?: (delta: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface ChatCompletionThinkingConfig {
@@ -53,4 +54,18 @@ export interface ChatCompletionClient {
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult>;
+}
+
+export class InterruptedAssistantMessageError extends Error {
+  constructor(
+    message: string,
+    readonly partialMessage: ChatMessage
+  ) {
+    super(message);
+    this.name = "InterruptedAssistantMessageError";
+  }
+}
+
+export function isInterruptedAssistantMessageError(error: unknown): error is InterruptedAssistantMessageError {
+  return error instanceof InterruptedAssistantMessageError;
 }

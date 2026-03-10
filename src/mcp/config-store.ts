@@ -4,8 +4,11 @@ import { getAgentHomePath } from "../core/agent-store";
 
 export interface McpServerConfigEntry {
   enabled?: boolean;
-  command: string;
-  args: string[];
+  type?: "stdio" | "remote";
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
   env?: Record<string, string>;
 }
 
@@ -71,19 +74,34 @@ export function normalizeMcpConfig(input: unknown): McpConfigFile {
       continue;
     }
     const serverRecord = serverValue as Record<string, unknown>;
-    const command = asString(serverRecord.command);
-    if (!command) {
-      continue;
-    }
-    const args = asStringArray(serverRecord.args);
-    const env = asStringMap(serverRecord.env);
+    const type = (asString(serverRecord.type) as "stdio" | "remote") || "stdio";
     const enabled = asBoolean(serverRecord.enabled);
-    normalizedServers[serverId] = {
-      ...(enabled === null ? {} : { enabled }),
-      command,
-      args,
-      ...(env ? { env } : {})
-    };
+
+    if (type === "remote") {
+      const url = asString(serverRecord.url);
+      if (!url) continue;
+
+      normalizedServers[serverId] = {
+        type: "remote",
+        url,
+        enabled: enabled ?? true,
+        headers: asStringMap(serverRecord.headers) ?? {}
+      };
+    } else {
+      const command = asString(serverRecord.command);
+      if (!command) continue;
+
+      const args = asStringArray(serverRecord.args);
+      const env = asStringMap(serverRecord.env);
+
+      normalizedServers[serverId] = {
+        type: "stdio",
+        command,
+        args,
+        enabled: enabled ?? true,
+        ...(env ? { env } : {})
+      };
+    }
   }
 
   return { mcpServers: normalizedServers };

@@ -2,8 +2,10 @@
 import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "./agents/react-tool-agent";
 import { loadRuntimeConfig } from "./config";
 import type { ApprovalMode } from "./core/approval-gate";
+import { AgentRunStore } from "./core/agent-run-store";
 import {
   deleteStoredAgentSync,
   getStoredAgentSync,
@@ -12,7 +14,7 @@ import {
   saveAgentBackendConfigSync,
   saveStoredAgentSync
 } from "./core/agent-store";
-import type { JsonObject } from "./core/types";
+import type { JsonObject, ToolCallRecord, ToolExecutionResult } from "./core/types";
 import { loadMcpConfigSync, saveMcpConfigSync } from "./mcp/config-store";
 import { McpManager } from "./mcp/manager";
 import { createOrchestrator, createToolRuntime } from "./runtime";
@@ -164,32 +166,171 @@ async function handleToolsRun(positionals: string[], flags: Record<string, strin
 async function handleAgentRun(flags: Record<string, string | boolean>): Promise<number> {
   const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
   const approvalMode = parseApprovalMode(flags.approval);
+  const modelOverride = parseOptionalFlag(flags.model);
+  const agentOverride = parseOptionalFlag(flags.agent);
   const runtimeConfig = loadRuntimeConfig({
     workspaceRoot,
     approvalMode,
-    modelOverride: parseOptionalFlag(flags.model),
-    agentOverride: parseOptionalFlag(flags.agent)
+    modelOverride,
+    agentOverride
   });
   const runtime = createToolRuntime(runtimeConfig);
+  const runStore = new AgentRunStore(workspaceRoot);
   printModelRuntime(runtimeConfig);
   printAgentRuntime(runtimeConfig);
 
+  const resumeRequested = flags.resume === true || typeof flags.resume === "string";
+  const activeSnapshot = resumeRequested ? await runStore.loadActiveRun() : null;
   let task = typeof flags.task === "string" ? flags.task.trim() : "";
-  if (!task) {
+  if (!task && activeSnapshot) {
+    task = activeSnapshot.task;
+  }
+  if (!task && !resumeRequested) {
     task = await promptTask();
   }
   if (!task) {
-    console.error("Task cannot be empty.");
+    console.error(resumeRequested ? "No interrupted agent run snapshot found." : "Task cannot be empty.");
     return 1;
   }
 
+  if (activeSnapshot) {
+    printAgentRunSnapshotNotice(activeSnapshot);
+    if (activeSnapshot.streamedResponse) {
+      console.log("\nPartial assistant output:\n");
+      output.write(activeSnapshot.streamedResponse);
+      if (!activeSnapshot.streamedResponse.endsWith("\n")) {
+        output.write("\n");
+      }
+      output.write("\n");
+    }
+    renderAgentRunToolCalls(activeSnapshot.toolCalls);
+  }
+
   const orchestrator = createOrchestrator(runtimeConfig, runtime);
-  runtime.logger.info("Running TuanZi loop ...");
-  const result = await orchestrator.run({
-    task
+  const controller = new AbortController();
+  let lastSigintAt = 0;
+  let streamedResponse = activeSnapshot?.streamedResponse ?? "";
+  let renderedToolCalls = 0;
+  let latestResumeState = activeSnapshot?.resumeState ?? null;
+  const createdAt = activeSnapshot?.createdAt ?? new Date().toISOString();
+  let persistChain: Promise<void> = runStore.saveActiveRun({
+    ...(activeSnapshot?.createdAt ? { createdAt: activeSnapshot.createdAt } : {}),
+    status: "running",
+    workspaceRoot,
+    modelOverride,
+    agentOverride,
+    task,
+    preparedTask: activeSnapshot?.preparedTask ?? task,
+    streamedResponse,
+    toolCalls: cloneToolCallRecords(activeSnapshot?.toolCalls ?? []),
+    resumeState: activeSnapshot?.resumeState ?? null
+  }).then((snapshot) => {
+    latestResumeState = snapshot.resumeState;
   });
-  console.log(JSON.stringify(result, null, 2));
-  return 0;
+
+  const queueSnapshotPersist = (snapshot: {
+    status: "running" | "interrupted";
+    preparedTask: string;
+    streamedResponse: string;
+    toolCalls: ToolCallRecord[];
+    resumeState: ToolLoopResumeState | null;
+  }): void => {
+    persistChain = persistChain
+      .catch(() => undefined)
+      .then(() =>
+        runStore.saveActiveRun({
+          createdAt,
+          status: snapshot.status,
+          workspaceRoot,
+          modelOverride,
+          agentOverride,
+          task,
+          preparedTask: snapshot.preparedTask,
+          streamedResponse: snapshot.streamedResponse,
+          toolCalls: cloneToolCallRecords(snapshot.toolCalls),
+          resumeState: snapshot.resumeState ? cloneJson(snapshot.resumeState) : null
+        })
+      )
+      .then((saved) => {
+        latestResumeState = saved.resumeState;
+      });
+  };
+
+  const onSigint = (): void => {
+    const now = Date.now();
+    const isDoublePress = now - lastSigintAt < 1500;
+    lastSigintAt = now;
+    if (!controller.signal.aborted) {
+      controller.abort();
+      console.error(
+        isDoublePress
+          ? "\nInterrupt received. Saving current agent run snapshot before exit."
+          : "\nInterrupt received. Saving current agent run snapshot. Re-run with --resume to continue."
+      );
+      return;
+    }
+    console.error("\nStill waiting for the interrupted run to finish cleanup.");
+  };
+
+  process.on("SIGINT", onSigint);
+  runtime.logger.info("Running TuanZi loop ...");
+  try {
+    const result = await orchestrator.run(
+      {
+        task: activeSnapshot?.preparedTask ?? task,
+        resumeState: activeSnapshot?.resumeState ?? undefined
+      },
+      {
+        onAssistantTextDelta: (delta) => {
+          if (!delta) {
+            return;
+          }
+          streamedResponse += delta;
+          output.write(delta);
+        },
+        onToolCallCompleted: (call) => {
+          const record = toToolCallRecord(call);
+          renderAgentRunToolCall(record);
+          renderedToolCalls += 1;
+        },
+        onStateChange: (state) => {
+          latestResumeState = state;
+          queueSnapshotPersist({
+            status: controller.signal.aborted ? "interrupted" : "running",
+            preparedTask: activeSnapshot?.preparedTask ?? task,
+            streamedResponse,
+            toolCalls: toToolCallRecords(state.toolCalls),
+            resumeState: state
+          });
+        },
+        signal: controller.signal
+      }
+    );
+    await persistChain.catch(() => undefined);
+    await runStore.clearActiveRun();
+    if (streamedResponse && !streamedResponse.endsWith("\n")) {
+      output.write("\n");
+    }
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  } catch (error) {
+    await persistChain.catch(() => undefined);
+    if (controller.signal.aborted || (error instanceof Error && error.message === "Interrupted by user")) {
+      queueSnapshotPersist({
+        status: "interrupted",
+        preparedTask: activeSnapshot?.preparedTask ?? task,
+        streamedResponse,
+        toolCalls: toToolCallRecords(latestResumeState?.toolCalls ?? []),
+        resumeState: latestResumeState
+      });
+      await persistChain.catch(() => undefined);
+      return 130;
+    }
+    await runStore.clearActiveRun();
+    throw error;
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
 }
 
 async function handleAgentsList(): Promise<number> {
@@ -491,6 +632,91 @@ async function promptTask(): Promise<string> {
   }
 }
 
+function printAgentRunSnapshotNotice(snapshot: {
+  updatedAt: string;
+  task: string;
+  toolCalls: ToolCallRecord[];
+}): void {
+  console.log(`Detected interrupted agent run snapshot (${snapshot.updatedAt}).`);
+  console.log(`  Task: ${truncateMiddle(snapshot.task.trim(), 120) || "[empty task]"}`);
+  console.log(`  Completed tool calls: ${snapshot.toolCalls.length}`);
+  console.log("  Use `agent run --resume` to continue.\n");
+}
+
+function renderAgentRunToolCalls(toolCalls: ToolCallRecord[]): void {
+  if (toolCalls.length === 0) {
+    return;
+  }
+  console.log("Recovered tool calls:");
+  for (const call of toolCalls) {
+    renderAgentRunToolCall(call);
+  }
+  console.log("");
+}
+
+function renderAgentRunToolCall(call: ToolCallRecord): void {
+  const argsText = safeOneLineJson(call.args, 180);
+  const status = call.result.ok ? "ok" : "failed";
+  const summary = summarizeToolResult(call.result);
+  console.log(`  - ${call.toolName} (${status})`);
+  console.log(`    args: ${argsText}`);
+  console.log(`    result: ${summary}`);
+}
+
+function summarizeToolResult(result: ToolExecutionResult): string {
+  if (result.ok) {
+    if (result.data === undefined) {
+      return "ok";
+    }
+    return truncateMiddle(safeOneLineJson(result.data, 240), 240);
+  }
+  return truncateMiddle(result.error ?? "unknown error", 240);
+}
+
+function safeOneLineJson(value: unknown, maxChars: number): string {
+  try {
+    const text = JSON.stringify(value);
+    if (!text) {
+      return "{}";
+    }
+    return truncateMiddle(text, maxChars);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function truncateMiddle(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  if (maxChars <= 8) {
+    return text.slice(0, maxChars);
+  }
+  const side = Math.floor((maxChars - 5) / 2);
+  return `${text.slice(0, side)} ... ${text.slice(text.length - side)}`;
+}
+
+function toToolCallRecord(call: ToolLoopToolCallSnapshot): ToolCallRecord {
+  return {
+    toolName: call.name,
+    args: cloneJson(call.args),
+    result: cloneJson(call.result),
+    timestamp: new Date().toISOString()
+  };
+}
+
+function toToolCallRecords(calls: ToolLoopToolCallSnapshot[]): ToolCallRecord[] {
+  return calls.map((call) => toToolCallRecord(call));
+}
+
+function cloneToolCallRecords(calls: ToolCallRecord[]): ToolCallRecord[] {
+  return cloneJson(calls);
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function printHelp(): void {
   console.log(
     [
@@ -502,6 +728,7 @@ function printHelp(): void {
       "  greet [--time-based]                   显示中文问候语",
       "  hello [--time-based]                   显示中文问候语",
       "  agent run --task \"<task>\" [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>] [--agent <id|filename>]",
+      "  agent run --resume                    继续上次被中断的单次执行",
       "  agent chat [--workspace <abs-path>] [--approval manual|auto|deny] [--model <name>] [--agent <id|filename>]",
       "  tools list [--workspace <abs-path>] [--agent <id|filename>]",
       "  tools run <toolName> --args '{\"key\":\"value\"}' [--workspace <abs-path>] [--approval manual|auto|deny] [--agent <id|filename>]",

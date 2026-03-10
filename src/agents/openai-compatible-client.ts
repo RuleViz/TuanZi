@@ -1,10 +1,11 @@
-import type {
-  ChatCompletionClient,
-  ChatCompletionOptions,
-  ChatCompletionRequestOptions,
-  ChatCompletionResult,
-  ChatMessage,
-  ToolCall
+﻿import {
+  InterruptedAssistantMessageError,
+  type ChatCompletionClient,
+  type ChatCompletionOptions,
+  type ChatCompletionRequestOptions,
+  type ChatCompletionResult,
+  type ChatMessage,
+  type ToolCall
 } from "./model-types";
 
 export interface OpenAICompatibleClientOptions {
@@ -44,11 +45,14 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     if (options?.onContentDelta) {
       try {
         return await this.completeWithStream(normalizedInput, options);
-      } catch {
+      } catch (error) {
+        if (isAbortError(error) || error instanceof InterruptedAssistantMessageError) {
+          throw error;
+        }
         // Fallback to non-stream mode when stream endpoint is unavailable.
       }
     }
-    return this.completeWithoutStream(normalizedInput);
+    return this.completeWithoutStream(normalizedInput, options);
   }
 
   private async completeWithoutStream(input: {
@@ -64,9 +68,17 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     }>;
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
-  }): Promise<ChatCompletionResult> {
+  }, options?: ChatCompletionOptions): Promise<ChatCompletionResult> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        controller.abort();
+      } else {
+        options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+    }
 
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -114,6 +126,20 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
 
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        controller.abort();
+      } else {
+        options.signal.addEventListener("abort", () => controller.abort(), { once: true });
+      }
+    }
+
+    const message: ChatMessage = {
+      role: "assistant",
+      content: ""
+    };
+    const toolCallsByIndex = new Map<number, ToolCall>();
+
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: "POST",
@@ -133,11 +159,6 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      const message: ChatMessage = {
-        role: "assistant",
-        content: ""
-      };
-      const toolCallsByIndex = new Map<number, ToolCall>();
 
       while (true) {
         const { done, value } = await reader.read();
@@ -175,6 +196,16 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
           .map((entry) => entry[1]);
       }
       return { message };
+    } catch (error) {
+      if (isAbortError(error)) {
+        if (toolCallsByIndex.size > 0) {
+          message.tool_calls = [...toolCallsByIndex.entries()]
+            .sort((left, right) => left[0] - right[0])
+            .map((entry) => entry[1]);
+        }
+        throw new InterruptedAssistantMessageError("Model stream interrupted by user.", message);
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -195,6 +226,10 @@ function parseJsonChunk(text: string): StreamChunk | null {
   } catch {
     return null;
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function applyStreamChunk(

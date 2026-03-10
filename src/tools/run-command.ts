@@ -83,7 +83,14 @@ export class RunCommandTool implements Tool {
     }
 
     const startedAt = Date.now();
-    const execution = await executeShellCommand(command, cwd, timeoutMs, maxOutputChars, envOverrides.value);
+    const execution = await executeShellCommand(
+      command,
+      cwd,
+      timeoutMs,
+      maxOutputChars,
+      envOverrides.value,
+      context.signal
+    );
     const durationMs = Date.now() - startedAt;
     const stdout = sanitizeOutput(execution.stdout, maxOutputChars);
     const stderr = sanitizeOutput(execution.stderr, maxOutputChars);
@@ -142,7 +149,8 @@ async function executeShellCommand(
   cwd: string,
   timeoutMs: number,
   maxOutputChars: number,
-  envOverrides: Record<string, string>
+  envOverrides: Record<string, string>,
+  signal?: AbortSignal
 ): Promise<{
   exitCode: number | null;
   signal: NodeJS.Signals | null;
@@ -157,12 +165,34 @@ async function executeShellCommand(
       env: {
         ...process.env,
         ...envOverrides
-      }
+      },
+      signal
     });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+
+    child.on("error", (err: Error) => {
+      clearTimeout(timer);
+      if (err.name === "AbortError") {
+        resolve({
+          exitCode: 1,
+          signal: "SIGTERM",
+          timedOut: false,
+          stdout,
+          stderr: stderr + "\n[Process interrupted by user]"
+        });
+      } else {
+        resolve({
+          exitCode: 1,
+          signal: null,
+          timedOut: false,
+          stdout,
+          stderr: stderr + "\n[Process error: " + err.message + "]"
+        });
+      }
+    });
 
     const timer = setTimeout(() => {
       timedOut = true;

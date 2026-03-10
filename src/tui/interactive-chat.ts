@@ -9,6 +9,8 @@ import type {
   OrchestrationResult,
   OrchestratorPhase
 } from "../agents/orchestrator";
+import { isInterruptedAssistantMessageError } from "../agents/model-types";
+import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "../agents/react-tool-agent";
 import { loadRuntimeConfig } from "../config";
 import type { ApprovalMode } from "../core/approval-gate";
 import {
@@ -23,7 +25,7 @@ import { assertInsideWorkspace, relativeFromWorkspace } from "../core/path-utils
 import type { Logger, ToolCallRecord, ToolExecutionResult } from "../core/types";
 import { createOrchestrator, createToolRuntime } from "../runtime";
 import { parseSlashCommand, type SlashCommand } from "./slash-commands";
-import { ChatSessionStore } from "./session-store";
+import { ChatSessionStore, type ActiveTurnSnapshot } from "./session-store";
 
 function getCharWidth(codePoint: number): number {
   if (
@@ -106,6 +108,10 @@ class InteractiveChatSession {
   private exitRequested = false;
   private lastSigintAt = 0;
   private activePromptAbort: (() => void) | null = null;
+  private activeTaskController: AbortController | null = null;
+  private activeTurnSnapshot: ActiveTurnSnapshot | null = null;
+  private activeTurnPersistChain: Promise<void> = Promise.resolve();
+  private renderedToolCalls = 0;
   private readonly promptHistory: string[] = [];
   private projectContextMissingNotified = false;
   private projectContextErrorNotified = false;
@@ -122,7 +128,9 @@ class InteractiveChatSession {
   async run(): Promise<number> {
     this.attachSigintHandler();
     try {
+      await this.restoreActiveTurnIfPresent();
       await this.printWelcome();
+      this.printActiveTurnNotice();
 
       while (!this.exitRequested) {
         const line = await this.promptMultiline("你 > ");
@@ -170,11 +178,19 @@ class InteractiveChatSession {
     this.lastSigintAt = now;
 
     if (this.runningTask) {
-      if (isDoublePress) {
+      if (this.activeTaskController && !this.activeTaskController.signal.aborted) {
+        this.activeTaskController.abort();
+        if (isDoublePress) {
+          this.exitRequested = true;
+          console.log("\n正在中断当前任务，会在保存现场后退出。");
+        } else {
+          console.log("\n正在中断当前任务，并保留当前输出与工具结果。稍后可输入 /resume 继续。");
+        }
+      } else if (isDoublePress) {
         this.exitRequested = true;
-        console.log("\n将在当前任务结束后退出。");
+        console.log("\n正在等待当前任务收尾并退出。");
       } else {
-        console.log("\n当前任务执行中。再次按 Ctrl+C 将在任务结束后退出。");
+        console.log("\n正在等待中断完成。再次按 Ctrl+C 将在保存现场后退出。");
       }
       return;
     }
@@ -188,6 +204,43 @@ class InteractiveChatSession {
 
     console.log("\n再按一次 Ctrl+C 退出。");
   };
+
+  private async restoreActiveTurnIfPresent(): Promise<void> {
+    const snapshot = await this.sessionStore.loadActiveTurn();
+    if (!snapshot) {
+      return;
+    }
+    this.applySessionSnapshot(snapshot);
+    this.activeTurnSnapshot = snapshot;
+  }
+
+  private applySessionSnapshot(snapshot: Pick<ActiveTurnSnapshot, "history" | "usage" | "modelOverride" | "agentOverride">): void {
+    this.history.length = 0;
+    this.history.push(...snapshot.history.map((turn) => ({
+      id: turn.id,
+      userMessage: turn.userMessage,
+      assistantMessage: turn.assistantMessage,
+      toolCalls: turn.toolCalls,
+      createdAt: turn.createdAt
+    })));
+    this.usage.inputChars = snapshot.usage.inputChars;
+    this.usage.outputChars = snapshot.usage.outputChars;
+    this.usage.toolCalls = snapshot.usage.toolCalls;
+    this.modelOverride = normalizeModelName(snapshot.modelOverride);
+    this.agentOverride = normalizeAgentName(snapshot.agentOverride);
+  }
+
+  private printActiveTurnNotice(): void {
+    if (!this.activeTurnSnapshot) {
+      return;
+    }
+    const toolCount = this.activeTurnSnapshot.resumeState?.toolCalls.length ?? 0;
+    const preview = truncateMiddle(this.activeTurnSnapshot.userMessage.trim(), 80) || "[empty task]";
+    console.log(`Detected an unfinished task snapshot (${this.activeTurnSnapshot.updatedAt}).`);
+    console.log(`  Last task: ${preview}`);
+    console.log(`  Completed tool calls: ${toolCount}`);
+    console.log("  Use /resume to continue. Sending a new task will replace this snapshot.\n");
+  }
 
   private async printWelcome(): Promise<void> {
     const { runtimeConfig, runtime } = this.createRuntime();
@@ -660,6 +713,10 @@ class InteractiveChatSession {
         return false;
       case "checkpoint":
         await this.handleCheckpointCommand(command.args);
+        return false;
+      case "resume":
+      case "continue":
+        await this.handleResumeCommand();
         return false;
       case "exit":
       case "quit":
@@ -1158,23 +1215,61 @@ class InteractiveChatSession {
     }
   }
 
-  private async handleUserTask(userMessage: string): Promise<void> {
+  private async handleResumeCommand(): Promise<void> {
+    const snapshot = this.activeTurnSnapshot ?? await this.sessionStore.loadActiveTurn();
+    if (!snapshot) {
+      console.log("没有可恢复的中断任务。");
+      return;
+    }
+    this.applySessionSnapshot(snapshot);
+    this.activeTurnSnapshot = snapshot;
+    await this.handleUserTask(snapshot.userMessage, {
+      preparedTask: snapshot.preparedTask,
+      resumeState: snapshot.resumeState,
+      countInput: false
+    });
+  }
+
+  private async handleUserTask(
+    userMessage: string,
+    options?: {
+      preparedTask?: string;
+      resumeState?: ToolLoopResumeState | null;
+      countInput?: boolean;
+    }
+  ): Promise<void> {
     this.runningTask = true;
-    this.usage.inputChars += userMessage.length;
+    this.renderedToolCalls = 0;
+    this.activeTaskController = new AbortController();
+
+    if (options?.countInput !== false) {
+      this.usage.inputChars += userMessage.length;
+    }
 
     const { runtimeConfig, runtime } = this.createRuntime();
-    const preparedTask = await this.attachReferencedFiles(userMessage);
-    const taskWithProjectContext = await this.injectProjectContext(preparedTask);
+    const taskWithProjectContext =
+      options?.preparedTask ?? await this.injectProjectContext(await this.attachReferencedFiles(userMessage));
     const orchestrator = createOrchestrator(runtimeConfig, runtime);
     const memoryTurns = this.buildMemoryTurns();
     let streamStarted = false;
     let streamedResponse = "";
+    let latestResumeState = options?.resumeState ?? null;
+    const createdAt = this.activeTurnSnapshot?.createdAt ?? new Date().toISOString();
+
+    await this.persistActiveTurnSnapshot({
+      createdAt,
+      status: "running",
+      userMessage,
+      preparedTask: taskWithProjectContext,
+      resumeState: latestResumeState
+    });
 
     try {
       const result = await orchestrator.run(
         {
           task: taskWithProjectContext,
-          memoryTurns
+          memoryTurns,
+          resumeState: options?.resumeState ?? undefined
         },
         {
           onPhaseChange: (phase) => {
@@ -1190,11 +1285,24 @@ class InteractiveChatSession {
             }
             streamedResponse += delta;
             output.write(delta);
-          }
+          },
+          onToolCallCompleted: (call) => {
+            this.renderIncrementalToolCall(call);
+          },
+          onStateChange: (state) => {
+            latestResumeState = state;
+            this.queueActiveTurnSnapshot({
+              createdAt,
+              status: this.activeTaskController?.signal.aborted ? "interrupted" : "running",
+              userMessage,
+              preparedTask: taskWithProjectContext,
+              resumeState: state
+            });
+          },
+          signal: this.activeTaskController.signal
         }
       );
 
-      renderToolCalls(result.toolCalls);
       if (streamStarted) {
         if (!streamedResponse.endsWith("\n")) {
           output.write("\n");
@@ -1204,12 +1312,100 @@ class InteractiveChatSession {
         await this.renderAssistantSummary(result);
       }
       this.recordHistory(userMessage, result);
+      await this.clearActiveTurnSnapshot();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`执行失败: ${message}`);
+      const interrupted =
+        this.activeTaskController.signal.aborted ||
+        isInterruptedAssistantMessageError(error) ||
+        message === "Interrupted by user";
+
+      if (streamStarted && !streamedResponse.endsWith("\n")) {
+        output.write("\n");
+      }
+
+      if (interrupted) {
+        await this.persistActiveTurnSnapshot({
+          createdAt,
+          status: "interrupted",
+          userMessage,
+          preparedTask: taskWithProjectContext,
+          resumeState: latestResumeState
+        });
+        console.log("\n任务已中断，当前现场已保存。输入 /resume 可继续。\n");
+      } else {
+        await this.clearActiveTurnSnapshot();
+        console.error(`执行失败: ${message}`);
+      }
     } finally {
+      await this.waitForActiveTurnPersistence();
       this.runningTask = false;
+      this.activeTaskController = null;
+      this.renderedToolCalls = 0;
     }
+  }
+
+  private renderIncrementalToolCall(call: ToolLoopToolCallSnapshot): void {
+    if (this.renderedToolCalls === 0) {
+      console.log("\n工具调用:");
+    }
+    renderToolCard({
+      toolName: call.name,
+      args: call.args,
+      result: call.result,
+      timestamp: new Date().toISOString()
+    });
+    this.renderedToolCalls += 1;
+  }
+
+  private async persistActiveTurnSnapshot(snapshot: {
+    createdAt?: string;
+    status: "running" | "interrupted";
+    userMessage: string;
+    preparedTask: string;
+    resumeState: ToolLoopResumeState | null;
+  }): Promise<void> {
+    this.activeTurnPersistChain = this.activeTurnPersistChain
+      .catch(() => undefined)
+      .then(async () => {
+        this.activeTurnSnapshot = await this.sessionStore.saveActiveTurn({
+          ...(snapshot.createdAt ? { createdAt: snapshot.createdAt } : {}),
+          status: snapshot.status,
+          workspaceRoot: this.workspaceRoot,
+          modelOverride: this.modelOverride,
+          agentOverride: this.agentOverride,
+          userMessage: snapshot.userMessage,
+          preparedTask: snapshot.preparedTask,
+          history: cloneSessionTurns(this.history),
+          usage: { ...this.usage },
+          resumeState: snapshot.resumeState ? cloneResumeState(snapshot.resumeState) : null
+        });
+      });
+    await this.activeTurnPersistChain;
+  }
+
+  private queueActiveTurnSnapshot(snapshot: {
+    createdAt?: string;
+    status: "running" | "interrupted";
+    userMessage: string;
+    preparedTask: string;
+    resumeState: ToolLoopResumeState | null;
+  }): void {
+    void this.persistActiveTurnSnapshot(snapshot);
+  }
+
+  private async clearActiveTurnSnapshot(): Promise<void> {
+    this.activeTurnPersistChain = this.activeTurnPersistChain
+      .catch(() => undefined)
+      .then(async () => {
+        await this.sessionStore.clearActiveTurn();
+        this.activeTurnSnapshot = null;
+      });
+    await this.activeTurnPersistChain;
+  }
+
+  private async waitForActiveTurnPersistence(): Promise<void> {
+    await this.activeTurnPersistChain.catch(() => undefined);
   }
 
   private renderPhase(phase: OrchestratorPhase): void {
@@ -1423,6 +1619,23 @@ function stripContinuationMarker(line: string): string {
   return line.slice(0, -1);
 }
 
+function cloneSessionTurns(turns: SessionTurn[]): SessionTurn[] {
+  return turns.map((turn) => ({
+    id: turn.id,
+    userMessage: turn.userMessage,
+    assistantMessage: turn.assistantMessage,
+    toolCalls: cloneJsonValue(turn.toolCalls),
+    createdAt: turn.createdAt
+  }));
+}
+
+function cloneResumeState(state: ToolLoopResumeState): ToolLoopResumeState {
+  return cloneJsonValue(state);
+}
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 function normalizeModelName(inputModel: string | null): string | null {
   if (!inputModel) {
     return null;
@@ -1746,6 +1959,11 @@ function printWelcomeBanner(): void {
     console.log("TUANZI");
   }
 }
+
+
+
+
+
 
 
 

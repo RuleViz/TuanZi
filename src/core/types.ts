@@ -127,6 +127,7 @@ export interface ToolExecutionContext {
   agentSettings?: AgentSettings;
   taskId?: string;
   mcpBridge?: McpBridge;
+  signal?: AbortSignal;
 }
 
 export interface Tool {

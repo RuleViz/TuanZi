@@ -10,7 +10,7 @@ import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
 import { resolveActiveTools } from "../core/agent-tooling";
 import type { ChatCompletionClient } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
-import { ReactToolAgent } from "./react-tool-agent";
+import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
 export class TuanZiAgent {
   constructor(
@@ -28,6 +28,10 @@ export class TuanZiAgent {
     hooks?: {
       onAssistantTextDelta?: (delta: string) => void;
       onAssistantThinkingDelta?: (delta: string) => void;
+      onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+      onStateChange?: (state: ToolLoopResumeState) => void;
+      resumeState?: ToolLoopResumeState;
+      signal?: AbortSignal;
     }
   ): Promise<{
     result: CoderResult;
@@ -80,11 +84,15 @@ export class TuanZiAgent {
         }))
       }),
       userPrompt,
-      allowedTools: activeTools.activeToolNames,
+      allowedTools: hooks?.resumeState?.allowedTools ?? activeTools.activeToolNames,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,
       temperature: 0.15,
       onAssistantTextDelta: hooks?.onAssistantTextDelta,
-      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta
+      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
+      onToolCallCompleted: hooks?.onToolCallCompleted,
+      onStateChange: hooks?.onStateChange,
+      resumeState: hooks?.resumeState,
+      signal: hooks?.signal
     });
 
     const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { OpenAICompatibleClient } from "../agents/openai-compatible-client";
+import { InterruptedAssistantMessageError } from "../agents/model-types";
 
 test("OpenAICompatibleClient should emit streaming content deltas", async () => {
   const originalFetch = globalThis.fetch;
@@ -167,6 +168,63 @@ test("OpenAICompatibleClient should fallback to non-stream on stream failure", a
     assert.equal(fetchCount, 2);
     assert.equal(streamDeltaCalled, false);
     assert.equal(result.message.content, "fallback message");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("OpenAICompatibleClient should surface partial streamed content on interruption", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const encoder = new TextEncoder();
+      let readCount = 0;
+      return {
+        ok: true,
+        body: {
+          getReader() {
+            return {
+              async read() {
+                if (readCount === 0) {
+                  readCount += 1;
+                  return {
+                    done: false,
+                    value: encoder.encode('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\ndata: {"choices":[{"delta":{"content":"partial "}}]}\n\n')
+                  };
+                }
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                throw error;
+              }
+            };
+          }
+        }
+      } as unknown as Response;
+    };
+
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://example.com/v1",
+      apiKey: "demo-key"
+    });
+
+    await assert.rejects(
+      () => client.complete(
+        {
+          model: "demo-model",
+          messages: [{ role: "user", content: "hi" }]
+        },
+        {
+          onContentDelta: () => {
+            // ignore
+          }
+        }
+      ),
+      (error) => {
+        assert(error instanceof InterruptedAssistantMessageError);
+        assert.equal(error.partialMessage.content, "partial ");
+        return true;
+      }
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
