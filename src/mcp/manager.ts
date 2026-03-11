@@ -1,15 +1,17 @@
-import type { JsonObject, Logger, McpBridge, McpSettings, McpToolCallResult } from "../core/types";
+import type {
+  JsonObject,
+  Logger,
+  McpBridge,
+  McpDiscoveredTool,
+  McpSettings,
+  McpToolCallResult,
+  ModelFunctionToolDefinition
+} from "../core/types";
 import { loadMcpConfigSync, type McpServerConfigEntry } from "./config-store";
 import { StdioMcpClient, type McpListedTool } from "./stdio-mcp-client";
 import { RemoteMcpClient } from "./remote-mcp-client";
 
-export interface NamespacedMcpTool {
-  serverId: string;
-  toolName: string;
-  namespacedName: string;
-  description: string;
-  inputSchema: JsonObject;
-}
+export type NamespacedMcpTool = McpDiscoveredTool;
 
 interface ManagedClient {
   clientPromise: Promise<StdioMcpClient | RemoteMcpClient>;
@@ -49,6 +51,15 @@ export class McpManager implements McpBridge {
     return output;
   }
 
+  async listTools(): Promise<NamespacedMcpTool[]> {
+    return this.listNamespacedTools();
+  }
+
+  async getModelToolDefinitions(): Promise<ModelFunctionToolDefinition[]> {
+    const tools = await this.listNamespacedTools();
+    return tools.map((tool) => toFunctionToolDefinition(tool));
+  }
+
   async callNamespacedTool(namespacedName: string, args: JsonObject): Promise<McpToolCallResult> {
     const parsed = parseNamespacedToolName(namespacedName);
     if (!parsed) {
@@ -65,6 +76,10 @@ export class McpManager implements McpBridge {
     const client = await this.getClient(parsed.serverId, server);
     this.logger.info(`[mcp] tools/call name=${namespacedName}`);
     return client.callTool(parsed.toolName, args);
+  }
+
+  async dispatchMcpToolCall(namespacedName: string, args: JsonObject): Promise<McpToolCallResult> {
+    return this.callNamespacedTool(namespacedName, args);
   }
 
   async callTool(name: string, args: JsonObject): Promise<McpToolCallResult> {
@@ -188,6 +203,41 @@ function toNamespacedTools(serverId: string, tools: McpListedTool[]): Namespaced
     description: tool.description,
     inputSchema: tool.inputSchema
   }));
+}
+
+function toFunctionToolDefinition(tool: NamespacedMcpTool): ModelFunctionToolDefinition {
+  return {
+    type: "function",
+    function: {
+      name: tool.namespacedName,
+      description: tool.description?.trim() || `MCP tool ${tool.serverId}::${tool.toolName}`,
+      parameters: normalizeInputSchema(tool.inputSchema)
+    }
+  };
+}
+
+function normalizeInputSchema(inputSchema: JsonObject): JsonObject {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: true
+    };
+  }
+
+  const schema = { ...inputSchema };
+  if (schema.type !== "object") {
+    schema.type = "object";
+  }
+
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    schema.properties = {};
+  }
+  if (!Object.prototype.hasOwnProperty.call(schema, "additionalProperties")) {
+    schema.additionalProperties = true;
+  }
+  return schema;
 }
 
 function parseNamespacedToolName(input: string): { serverId: string; toolName: string } | null {

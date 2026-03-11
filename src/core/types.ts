@@ -75,8 +75,27 @@ export interface McpToolCallResult {
   [key: string]: unknown;
 }
 
+export interface ModelFunctionToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: JsonObject;
+  };
+}
+
+export interface McpDiscoveredTool {
+  serverId: string;
+  toolName: string;
+  namespacedName: string;
+  description: string;
+  inputSchema: JsonObject;
+}
+
 export interface McpBridge {
   callTool(name: string, args: JsonObject): Promise<McpToolCallResult>;
+  listTools?(): Promise<McpDiscoveredTool[]>;
+  getModelToolDefinitions?(): Promise<ModelFunctionToolDefinition[]>;
 }
 
 export interface ToolDefinition {

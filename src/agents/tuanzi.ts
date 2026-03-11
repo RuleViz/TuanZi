@@ -2,6 +2,8 @@
 import { parseJsonObject } from "../core/json-utils";
 import type {
   CoderResult,
+  McpDiscoveredTool,
+  ModelFunctionToolDefinition,
   ToolCallRecord,
   ToolExecutionContext,
   ToolExecutionResult
@@ -49,6 +51,14 @@ export class TuanZiAgent {
     this.toolContext.logger.info(
       `[agent] profile=${this.activeAgent.filename} activeTools=${activeTools.activeToolNames.length}`
     );
+    const mcpTooling = await discoverMcpTooling(this.toolContext);
+    const mergedAllowedTools = dedupeStrings([
+      ...activeTools.activeToolNames,
+      ...mcpTooling.allowedToolNames
+    ]);
+    this.toolContext.logger.info(
+      `[agent] mcpTools=${mcpTooling.tools.length} mergedAllowedTools=${mergedAllowedTools.length}`
+    );
 
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
     const userPromptSections = [
@@ -71,10 +81,17 @@ export class TuanZiAgent {
       "Handle the full task lifecycle: understand intent, inspect context if needed, use tools when required, and reply to the user in natural language.",
       "Output style requirement: keep wording professional and avoid unnecessary decorative symbols unless the user explicitly requests that style."
     );
+    if (mcpTooling.tools.length > 0) {
+      userPromptSections.push(
+        "",
+        "Connected external MCP tools (name prefix: mcp__). Use them when they improve correctness:",
+        ...mcpTooling.tools.map((tool) => `- ${tool.namespacedName}: ${tool.description || "No description provided."}`)
+      );
+    }
     const userPrompt = userPromptSections.join("\n");
 
-    const output = await agent.run({
-      systemPrompt: coderSystemPrompt({
+    const systemPromptParts = [
+      coderSystemPrompt({
         workspaceRoot: this.toolContext.workspaceRoot,
         agentName: this.activeAgent.name,
         agentPrompt: this.activeAgent.prompt,
@@ -82,9 +99,26 @@ export class TuanZiAgent {
           name: tool.name,
           prompt: tool.prompt
         }))
-      }),
+      })
+    ];
+    if (mcpTooling.tools.length > 0) {
+      systemPromptParts.push(
+        [
+          "<mcp_guidance>",
+          "  You are connected to external MCP services.",
+          "  MCP tool names always start with mcp__ and are safe to call directly when relevant.",
+          "  Prefer MCP tools only when they improve accuracy, observability, or execution capability.",
+          "</mcp_guidance>"
+        ].join("\n")
+      );
+    }
+    const systemPrompt = systemPromptParts.join("\n\n");
+
+    const output = await agent.run({
+      systemPrompt,
       userPrompt,
-      allowedTools: hooks?.resumeState?.allowedTools ?? activeTools.activeToolNames,
+      allowedTools: hooks?.resumeState?.allowedTools ?? mergedAllowedTools,
+      additionalToolDefinitions: mcpTooling.modelToolDefinitions,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,
       temperature: 0.15,
       onAssistantTextDelta: hooks?.onAssistantTextDelta,
@@ -113,6 +147,128 @@ export class TuanZiAgent {
       toolCalls
     };
   }
+}
+
+interface McpToolingSnapshot {
+  tools: McpDiscoveredTool[];
+  allowedToolNames: string[];
+  modelToolDefinitions: ModelFunctionToolDefinition[];
+}
+
+async function discoverMcpTooling(toolContext: ToolExecutionContext): Promise<McpToolingSnapshot> {
+  const bridge = toolContext.mcpBridge;
+  if (!bridge || typeof bridge.listTools !== "function") {
+    return {
+      tools: [],
+      allowedToolNames: [],
+      modelToolDefinitions: []
+    };
+  }
+
+  try {
+    const tools = dedupeMcpTools(await bridge.listTools());
+    if (tools.length === 0) {
+      return {
+        tools: [],
+        allowedToolNames: [],
+        modelToolDefinitions: []
+      };
+    }
+
+    const modelToolDefinitions = await loadMcpToolDefinitions(bridge, tools);
+    return {
+      tools,
+      allowedToolNames: tools.map((tool) => tool.namespacedName),
+      modelToolDefinitions
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    toolContext.logger.warn(`[agent] MCP discovery skipped due to error: ${message}`);
+    return {
+      tools: [],
+      allowedToolNames: [],
+      modelToolDefinitions: []
+    };
+  }
+}
+
+async function loadMcpToolDefinitions(
+  bridge: ToolExecutionContext["mcpBridge"],
+  tools: McpDiscoveredTool[]
+): Promise<ModelFunctionToolDefinition[]> {
+  if (bridge && typeof bridge.getModelToolDefinitions === "function") {
+    const definitions = await bridge.getModelToolDefinitions();
+    const names = new Set(tools.map((tool) => tool.namespacedName));
+    return definitions.filter((definition) => names.has(definition.function.name));
+  }
+  return tools.map((tool) => toModelToolDefinition(tool));
+}
+
+function dedupeMcpTools(tools: McpDiscoveredTool[]): McpDiscoveredTool[] {
+  const output: McpDiscoveredTool[] = [];
+  const seen = new Set<string>();
+  for (const tool of tools) {
+    const namespacedName = tool.namespacedName?.trim();
+    if (!namespacedName || seen.has(namespacedName)) {
+      continue;
+    }
+    seen.add(namespacedName);
+    output.push({
+      serverId: tool.serverId,
+      toolName: tool.toolName,
+      namespacedName,
+      description: tool.description || "",
+      inputSchema: tool.inputSchema
+    });
+  }
+  return output;
+}
+
+function toModelToolDefinition(tool: McpDiscoveredTool): ModelFunctionToolDefinition {
+  return {
+    type: "function",
+    function: {
+      name: tool.namespacedName,
+      description: tool.description || `MCP tool ${tool.serverId}::${tool.toolName}`,
+      parameters: normalizeMcpInputSchema(tool.inputSchema)
+    }
+  };
+}
+
+function normalizeMcpInputSchema(inputSchema: Record<string, unknown>): Record<string, unknown> {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return {
+      type: "object",
+      properties: {},
+      additionalProperties: true
+    };
+  }
+  const schema = { ...inputSchema };
+  if (schema.type !== "object") {
+    schema.type = "object";
+  }
+  const properties = schema.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    schema.properties = {};
+  }
+  if (!Object.prototype.hasOwnProperty.call(schema, "additionalProperties")) {
+    schema.additionalProperties = true;
+  }
+  return schema;
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const output: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    output.push(normalized);
+  }
+  return output;
 }
 
 function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {

@@ -1,3 +1,5 @@
+import type { ModelFunctionToolDefinition } from "../core/types";
+
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
 export interface ChatMessage {
@@ -43,14 +45,7 @@ export interface ChatCompletionClient {
   complete(input: {
     model: string;
     messages: ChatMessage[];
-    tools?: Array<{
-      type: "function";
-      function: {
-        name: string;
-        description: string;
-        parameters: Record<string, unknown>;
-      };
-    }>;
+    tools?: ModelFunctionToolDefinition[];
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult>;

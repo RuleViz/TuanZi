@@ -1,5 +1,11 @@
 ﻿import type { ToolRegistry } from "../core/tool-registry";
-import type { JsonObject, ToolExecutionContext, ToolExecutionResult } from "../core/types";
+import type {
+  JsonObject,
+  McpToolCallResult,
+  ModelFunctionToolDefinition,
+  ToolExecutionContext,
+  ToolExecutionResult
+} from "../core/types";
 import {
   isInterruptedAssistantMessageError,
   type ChatCompletionClient,
@@ -42,6 +48,7 @@ export class ReactToolAgent {
     systemPrompt: string;
     userPrompt: string;
     allowedTools: string[];
+    additionalToolDefinitions?: ModelFunctionToolDefinition[];
     temperature?: number;
     maxTurns?: number;
     onAssistantTextDelta?: (delta: string) => void;
@@ -65,7 +72,12 @@ export class ReactToolAgent {
     );
     const toolCalls = cloneToolCallSnapshots(input.resumeState?.toolCalls ?? []);
     const toolDefinitions = this.toolRegistry.getToolDefinitions(input.allowedTools);
-    const requestTools = toolDefinitions.length > 0 ? toolDefinitions : undefined;
+    const allowedToolSet = new Set(input.allowedTools);
+    const additionalToolDefinitions = (input.additionalToolDefinitions ?? []).filter((tool) =>
+      allowedToolSet.has(tool.function.name)
+    );
+    const mergedToolDefinitions = mergeToolDefinitions(toolDefinitions, additionalToolDefinitions);
+    const requestTools = mergedToolDefinitions.length > 0 ? mergedToolDefinitions : undefined;
     let previousRequestedCalls: string[] | null = null;
     let repeatedNoProgressTurns = 0;
     let nextTurn = clampTurnIndex(input.resumeState?.nextTurn ?? 0);
@@ -214,12 +226,13 @@ export class ReactToolAgent {
     call: ToolCall,
     allowedTools: string[]
   ): Promise<{ args: JsonObject; result: ToolExecutionResult }> {
-    if (!allowedTools.includes(call.function.name)) {
+    const functionName = call.function.name;
+    if (!allowedTools.includes(functionName)) {
       return {
         args: {},
         result: {
           ok: false,
-          error: `Tool ${call.function.name} is not allowed for this agent.`
+          error: `Tool ${functionName} is not allowed for this agent.`
         }
       };
     }
@@ -229,7 +242,7 @@ export class ReactToolAgent {
       args = parseToolArgs(call.function.arguments);
     } catch (error) {
       const message = error instanceof ToolArgsParseError ? error.message : `Failed to parse tool arguments: ${String(error)}`;
-      this.toolContext.logger.warn(`[tool] invalid args ${call.function.name} error=${message}`);
+      this.toolContext.logger.warn(`[tool] invalid args ${functionName} error=${message}`);
       return {
         args: {},
         result: {
@@ -238,9 +251,38 @@ export class ReactToolAgent {
         }
       };
     }
-    this.toolContext.logger.info(`[tool] start ${call.function.name} args=${safePreview(args)}`);
-    const result = await this.toolRegistry.execute(call.function.name, args, this.toolContext);
-    this.toolContext.logger.info(`[tool] done ${call.function.name} ok=${result.ok}`);
+
+    this.toolContext.logger.info(`[tool] start ${functionName} args=${safePreview(args)}`);
+    if (functionName.startsWith("mcp__")) {
+      const bridge = this.toolContext.mcpBridge;
+      if (!bridge) {
+        const result = {
+          ok: false,
+          error: "MCP bridge is not configured."
+        };
+        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        return { args, result };
+      }
+
+      try {
+        const mcpResult = await bridge.callTool(functionName, args);
+        const result = toToolExecutionResult(mcpResult);
+        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        return { args, result };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.toolContext.logger.warn(`[tool] mcp failed ${functionName} error=${message}`);
+        const result = {
+          ok: false,
+          error: message
+        };
+        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        return { args, result };
+      }
+    }
+
+    const result = await this.toolRegistry.execute(functionName, args, this.toolContext);
+    this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
     return { args, result };
   }
 }
@@ -328,6 +370,68 @@ function cloneToolExecutionResult(result: ToolExecutionResult): ToolExecutionRes
     data: cloneJsonLike(result.data),
     error: result.error
   };
+}
+
+function mergeToolDefinitions(
+  localTools: ModelFunctionToolDefinition[],
+  additionalTools: ModelFunctionToolDefinition[]
+): ModelFunctionToolDefinition[] {
+  if (additionalTools.length === 0) {
+    return localTools;
+  }
+  const merged: ModelFunctionToolDefinition[] = [];
+  const seen = new Set<string>();
+  for (const tool of [...localTools, ...additionalTools]) {
+    const name = tool.function.name;
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    merged.push({
+      type: "function",
+      function: {
+        name,
+        description: tool.function.description,
+        parameters: cloneJsonObject(tool.function.parameters)
+      }
+    });
+  }
+  return merged;
+}
+
+function toToolExecutionResult(result: McpToolCallResult): ToolExecutionResult {
+  if (result.isError === true) {
+    return {
+      ok: false,
+      error: extractMcpErrorMessage(result),
+      data: cloneJsonLike(result)
+    };
+  }
+  return {
+    ok: true,
+    data: cloneJsonLike(result)
+  };
+}
+
+function extractMcpErrorMessage(result: McpToolCallResult): string {
+  if (typeof result.structuredContent === "string" && result.structuredContent.trim()) {
+    return result.structuredContent.trim();
+  }
+  if (typeof result.content === "string" && result.content.trim()) {
+    return result.content.trim();
+  }
+  if (Array.isArray(result.content)) {
+    for (const item of result.content) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const text = (item as Record<string, unknown>).text;
+      if (typeof text === "string" && text.trim()) {
+        return text.trim();
+      }
+    }
+  }
+  return "MCP tool returned an error.";
 }
 
 function cloneJsonObject(value: JsonObject): JsonObject {

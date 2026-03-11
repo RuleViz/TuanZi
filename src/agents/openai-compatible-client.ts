@@ -7,6 +7,7 @@
   type ChatMessage,
   type ToolCall
 } from "./model-types";
+import type { ModelFunctionToolDefinition } from "../core/types";
 
 export interface OpenAICompatibleClientOptions {
   baseUrl: string;
@@ -27,14 +28,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
   async complete(input: {
     model: string;
     messages: ChatMessage[];
-    tools?: Array<{
-      type: "function";
-      function: {
-        name: string;
-        description: string;
-        parameters: Record<string, unknown>;
-      };
-    }>;
+    tools?: ModelFunctionToolDefinition[];
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult> {
@@ -58,14 +52,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
   private async completeWithoutStream(input: {
     model: string;
     messages: ChatMessage[];
-    tools?: Array<{
-      type: "function";
-      function: {
-        name: string;
-        description: string;
-        parameters: Record<string, unknown>;
-      };
-    }>;
+    tools?: ModelFunctionToolDefinition[];
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
   }, options?: ChatCompletionOptions): Promise<ChatCompletionResult> {
@@ -110,14 +97,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     input: {
       model: string;
       messages: ChatMessage[];
-      tools?: Array<{
-        type: "function";
-        function: {
-          name: string;
-          description: string;
-          parameters: Record<string, unknown>;
-        };
-      }>;
+      tools?: ModelFunctionToolDefinition[];
       temperature?: number;
       requestOptions?: ChatCompletionRequestOptions;
     },
@@ -311,14 +291,7 @@ function buildChatCompletionsPayload(
   input: {
     model: string;
     messages: ChatMessage[];
-    tools?: Array<{
-      type: "function";
-      function: {
-        name: string;
-        description: string;
-        parameters: Record<string, unknown>;
-      };
-    }>;
+    tools?: ModelFunctionToolDefinition[];
     temperature?: number;
     requestOptions?: ChatCompletionRequestOptions;
   },

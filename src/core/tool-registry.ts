@@ -1,4 +1,10 @@
-import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "./types";
+import type {
+  JsonObject,
+  ModelFunctionToolDefinition,
+  Tool,
+  ToolExecutionContext,
+  ToolExecutionResult
+} from "./types";
 
 export class ToolRegistry {
   private readonly tools: Map<string, Tool>;
@@ -15,14 +21,7 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
-  getToolDefinitions(names?: string[]): Array<{
-    type: "function";
-    function: {
-      name: string;
-      description: string;
-      parameters: JsonObject;
-    };
-  }> {
+  getToolDefinitions(names?: string[]): ModelFunctionToolDefinition[] {
     const pickedTools = names ? names.map((name) => this.tools.get(name)).filter(Boolean) : [...this.tools.values()];
 
     return pickedTools.map((tool) => ({
