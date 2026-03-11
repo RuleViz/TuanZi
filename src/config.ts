@@ -46,9 +46,7 @@ export function loadRuntimeConfig(input: {
   const activeAgent = loadActiveAgentSync(agentOverride);
 
   const customStore = loadCustomModelStore();
-  const overrideCustomModel = modelOverride ? findCustomModelConfig(customStore, modelOverride) : null;
-  const defaultCustomModel = modelOverride ? null : findCustomModelConfig(customStore, customStore.defaultModel);
-  const selectedCustomModel = overrideCustomModel ?? defaultCustomModel;
+  const selectedCustomModel = modelOverride ? findCustomModelConfig(customStore, modelOverride) : null;
   const providerModel = normalizeProviderModel(agentBackendConfig);
 
   let keySource: RuntimeConfig["model"]["keySource"];
@@ -79,10 +77,10 @@ export function loadRuntimeConfig(input: {
     plannerModel = null;
     searchModel = null;
     coderModel = null;
+  }
 
-    if (modelOverride && !overrideCustomModel) {
-      console.warn(`[WARN] model override alias not found in custom model store: ${modelOverride}`);
-    }
+  if (modelOverride && !selectedCustomModel) {
+    console.warn(`[WARN] model override alias not found in custom model store: ${modelOverride}`);
   }
 
   return {
@@ -427,9 +425,23 @@ function normalizeOptionalString(value: unknown): string | null {
 }
 
 function normalizeProviderModel(config: AgentBackendConfig): { baseUrl: string; apiKey: string; model: string } | null {
-  const baseUrl = normalizeOptionalString(config.provider.baseUrl);
-  const apiKey = normalizeOptionalString(config.provider.apiKey);
-  const model = normalizeOptionalString(config.provider.model);
+  const providers = Array.isArray(config.providers) ? config.providers : [];
+  const activeProviderId = normalizeOptionalString(config.activeProviderId);
+  if (!activeProviderId) {
+    return null;
+  }
+
+  const candidateProvider = providers.find((item) => item.id === activeProviderId) ?? null;
+  if (!candidateProvider) {
+    return null;
+  }
+  if (candidateProvider.isEnabled === false) {
+    return null;
+  }
+
+  const baseUrl = normalizeOptionalString(candidateProvider.baseUrl);
+  const apiKey = normalizeOptionalString(candidateProvider.apiKey);
+  const model = normalizeOptionalString(candidateProvider.model);
   if (!baseUrl || !apiKey || !model) {
     return null;
   }

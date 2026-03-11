@@ -39,8 +39,24 @@ interface AgentProviderConfig {
   model: string
 }
 
+interface ProviderModelItem {
+  id: string
+  displayName: string
+  isVision: boolean
+  enabled: boolean
+}
+
+interface ProviderConfig extends AgentProviderConfig {
+  id: string
+  name: string
+  models: ProviderModelItem[]
+  isEnabled: boolean
+}
+
 interface AgentBackendConfig {
   provider: AgentProviderConfig
+  providers: ProviderConfig[]
+  activeProviderId: string
   global_skills: {
     file_system: boolean
     execute_command: boolean
@@ -90,12 +106,21 @@ interface AgentEditorState {
 }
 
 interface SettingsDraft {
-  provider: AgentProviderConfig
+  providers: ProviderConfig[]
+  activeProviderId: string
   globalSkills: {
     file_system: boolean
     execute_command: boolean
     web_search: boolean
   }
+}
+
+interface SlashSuggestion {
+  id: string
+  label: string
+  description: string
+  commandText: string
+  executeImmediately: boolean
 }
 
 const SESSION_STORAGE_KEY = 'tuanzi.desktop.sessions.v1'
@@ -105,6 +130,49 @@ const MAX_SESSION_HISTORY = 30
 const TITLE_MAX_CHARS = 18
 const DEFAULT_AGENT_PROMPT = '你是一个务实、准确的 AI 编程助手，先理解需求，再按需调用工具并验证结果。'
 const EMPTY_WORKSPACE_KEY = '__no_workspace__'
+const DEFAULT_PROVIDER_TYPE = 'openai'
+const DEFAULT_PROVIDER_BASE_URL = 'https://api.openai.com/v1'
+const SLASH_COMMAND_DEFS: Array<{
+  command: string
+  description: string
+  executeImmediately: boolean
+}> = [
+  {
+    command: '/model',
+    description: 'Switch provider model, then continue chatting.',
+    executeImmediately: false
+  },
+  {
+    command: '/model current',
+    description: 'Show current active provider/model.',
+    executeImmediately: true
+  },
+  {
+    command: '/new',
+    description: 'Create a new conversation.',
+    executeImmediately: true
+  },
+  {
+    command: '/workspace',
+    description: 'Select workspace folder.',
+    executeImmediately: true
+  },
+  {
+    command: '/settings',
+    description: 'Open settings center.',
+    executeImmediately: true
+  },
+  {
+    command: '/agent',
+    description: 'Open agent library.',
+    executeImmediately: true
+  },
+  {
+    command: '/help',
+    description: 'Show slash command tips.',
+    executeImmediately: true
+  }
+]
 
 const state = {
   sessions: [] as ChatSession[],
@@ -126,6 +194,9 @@ const state = {
   } as AgentEditorState,
   expandedWorkspaceKeys: new Set<string>(),
   settingsDraft: null as SettingsDraft | null,
+  slashSuggestions: [] as SlashSuggestion[],
+  slashActiveIndex: 0,
+  slashVisible: false,
   mcpServers: [] as McpDashboardServer[],
   expandedMcpServerIds: new Set<string>(),
   isMcpLoading: false,
@@ -184,10 +255,20 @@ const agentEditorSaveBtn = byId<HTMLButtonElement>('agentEditorSaveBtn')
 const settingsModal = byId<HTMLDivElement>('settingsModal')
 const closeSettingsModalBtn = byId<HTMLButtonElement>('closeSettingsModalBtn')
 const settingsNav = byId<HTMLElement>('settingsNav')
-const providerTypeInput = byId<HTMLInputElement>('providerTypeInput')
+const providerList = byId<HTMLDivElement>('providerList')
+const providerAddBtn = byId<HTMLButtonElement>('providerAddBtn')
+const providerEditorTitle = byId<HTMLDivElement>('providerEditorTitle')
+const providerNameInput = byId<HTMLInputElement>('providerNameInput')
+const providerTypeInput = byId<HTMLSelectElement>('providerTypeInput')
 const providerBaseUrlInput = byId<HTMLInputElement>('providerBaseUrlInput')
 const providerModelInput = byId<HTMLInputElement>('providerModelInput')
 const providerApiKeyInput = byId<HTMLInputElement>('providerApiKeyInput')
+const providerEnabledToggle = byId<HTMLButtonElement>('providerEnabledToggle')
+const providerDeleteBtn = byId<HTMLButtonElement>('providerDeleteBtn')
+const providerTestBtn = byId<HTMLButtonElement>('providerTestBtn')
+const providerFetchModelsBtn = byId<HTMLButtonElement>('providerFetchModelsBtn')
+const providerAddModelBtn = byId<HTMLButtonElement>('providerAddModelBtn')
+const providerModelList = byId<HTMLDivElement>('providerModelList')
 const globalSkillFileSystem = byId<HTMLButtonElement>('globalSkillFileSystem')
 const globalSkillExecuteCommand = byId<HTMLButtonElement>('globalSkillExecuteCommand')
 const globalSkillWebSearch = byId<HTMLButtonElement>('globalSkillWebSearch')
@@ -201,6 +282,8 @@ const mcpJsonConfirmBtn = byId<HTMLButtonElement>('mcpJsonConfirmBtn')
 const mcpJsonInput = byId<HTMLTextAreaElement>('mcpJsonInput')
 const settingsCancelBtn = byId<HTMLButtonElement>('settingsCancelBtn')
 const settingsSaveBtn = byId<HTMLButtonElement>('settingsSaveBtn')
+const slashCommandMenu = byId<HTMLDivElement>('slashCommandMenu')
+const slashCommandList = byId<HTMLDivElement>('slashCommandList')
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div')
@@ -249,7 +332,7 @@ function autoResizeTextarea(): void {
   inputTextarea.style.height = newHeight + 'px'
 }
 
-function showError(msg: string): void {
+function showToast(msg: string, success = false): void {
   let toast = document.querySelector('.error-toast') as HTMLDivElement | null
   if (!toast) {
     toast = document.createElement('div')
@@ -257,8 +340,364 @@ function showError(msg: string): void {
     document.body.appendChild(toast)
   }
   toast.textContent = msg
+  toast.classList.toggle('success', success)
   toast.classList.add('visible')
   setTimeout(() => toast!.classList.remove('visible'), 4000)
+}
+
+function showError(msg: string): void {
+  showToast(msg, false)
+}
+
+function showSuccess(msg: string): void {
+  showToast(msg, true)
+}
+
+function closeSlashCommandMenu(): void {
+  state.slashVisible = false
+  state.slashSuggestions = []
+  state.slashActiveIndex = 0
+  slashCommandMenu.classList.remove('visible')
+  slashCommandMenu.setAttribute('aria-hidden', 'true')
+  slashCommandList.innerHTML = ''
+}
+
+function renderSlashCommandMenu(): void {
+  if (!state.slashVisible || state.slashSuggestions.length === 0) {
+    closeSlashCommandMenu()
+    return
+  }
+
+  slashCommandList.innerHTML = ''
+  state.slashSuggestions.forEach((suggestion, index) => {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'slash-command-item'
+    if (index === state.slashActiveIndex) {
+      item.classList.add('active')
+    }
+    item.innerHTML = `
+      <div class="slash-command-title">${escapeHtml(suggestion.label)}</div>
+      <div class="slash-command-desc">${escapeHtml(suggestion.description)}</div>
+    `
+    item.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      void applySlashSuggestion(index)
+    })
+    slashCommandList.appendChild(item)
+  })
+
+  slashCommandMenu.classList.add('visible')
+  slashCommandMenu.setAttribute('aria-hidden', 'false')
+}
+
+function getAvailableSlashModels(): Array<{ providerId: string; providerName: string; modelId: string }> {
+  const config = state.agentConfig
+  if (!config) {
+    return []
+  }
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  const output: Array<{ providerId: string; providerName: string; modelId: string }> = []
+
+  for (const provider of providers) {
+    if (provider.isEnabled === false) {
+      continue
+    }
+    const providerName = provider.name || provider.id || 'Provider'
+    const enabledModels =
+      Array.isArray(provider.models) && provider.models.length > 0
+        ? provider.models.filter((model) => model.enabled !== false).map((model) => model.id)
+        : []
+
+    if (enabledModels.length === 0) {
+      if (provider.model) {
+        output.push({
+          providerId: provider.id,
+          providerName,
+          modelId: provider.model
+        })
+      }
+      continue
+    }
+
+    for (const modelId of enabledModels) {
+      output.push({
+        providerId: provider.id,
+        providerName,
+        modelId
+      })
+    }
+  }
+
+  return output
+}
+
+function getCurrentProviderModelLabel(config: AgentBackendConfig | null): string {
+  if (!config) {
+    return 'Unknown'
+  }
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  const active = providers.find((item) => item.id === config.activeProviderId) ?? null
+  if (active && active.model) {
+    return `${active.name || active.id} / ${active.model}`
+  }
+  return 'Model not set'
+}
+
+function buildCommandSlashSuggestions(query: string): SlashSuggestion[] {
+  const normalized = query.trim().toLowerCase()
+  const output: SlashSuggestion[] = []
+  for (const def of SLASH_COMMAND_DEFS) {
+    if (normalized && !def.command.toLowerCase().startsWith(normalized)) {
+      continue
+    }
+    const commandText = def.command === '/model' ? '/model ' : def.command
+    output.push({
+      id: `cmd-${def.command}`,
+      label: def.command,
+      description: def.description,
+      commandText,
+      executeImmediately: def.executeImmediately
+    })
+  }
+  return output
+}
+
+function buildModelSlashSuggestions(modelQuery: string): SlashSuggestion[] {
+  const normalized = modelQuery.trim().toLowerCase()
+  const suggestions: SlashSuggestion[] = []
+
+  if (!normalized || '/model current'.includes(`/model ${normalized}`)) {
+    suggestions.push({
+      id: 'cmd-/model-current',
+      label: '/model current',
+      description: 'Show the current provider/model',
+      commandText: '/model current',
+      executeImmediately: true
+    })
+  }
+
+  const models = getAvailableSlashModels()
+  for (const item of models) {
+    const keyword = `${item.providerName}/${item.modelId}`.toLowerCase()
+    if (normalized && !keyword.includes(normalized) && !item.modelId.toLowerCase().includes(normalized)) {
+      continue
+    }
+    suggestions.push({
+      id: `model-${item.providerId}-${item.modelId}`,
+      label: `${item.providerName} / ${item.modelId}`,
+      description: `Switch to ${item.modelId}`,
+      commandText: `/model ${item.providerId}/${item.modelId}`,
+      executeImmediately: true
+    })
+  }
+
+  return suggestions
+}
+
+function buildSlashSuggestions(input: string): SlashSuggestion[] {
+  const leftTrimmed = input.trimStart()
+  if (!leftTrimmed.startsWith('/')) {
+    return []
+  }
+
+  const lower = leftTrimmed.toLowerCase()
+  if (lower === '/model' || lower.startsWith('/model ')) {
+    const args = lower === '/model' ? '' : leftTrimmed.slice('/model '.length)
+    return buildModelSlashSuggestions(args)
+  }
+
+  const firstSpace = leftTrimmed.indexOf(' ')
+  if (firstSpace < 0) {
+    return buildCommandSlashSuggestions(leftTrimmed)
+  }
+
+  const command = leftTrimmed.slice(0, firstSpace)
+  return buildCommandSlashSuggestions(command)
+}
+
+function updateSlashCommandMenu(): void {
+  const text = inputTextarea.value
+  if (!text.trim().startsWith('/')) {
+    closeSlashCommandMenu()
+    return
+  }
+
+  const suggestions = buildSlashSuggestions(text)
+  if (suggestions.length === 0) {
+    closeSlashCommandMenu()
+    return
+  }
+
+  state.slashVisible = true
+  state.slashSuggestions = suggestions
+  state.slashActiveIndex = 0
+  renderSlashCommandMenu()
+}
+
+function moveSlashSuggestionCursor(offset: number): void {
+  if (!state.slashVisible || state.slashSuggestions.length === 0) {
+    return
+  }
+  const total = state.slashSuggestions.length
+  state.slashActiveIndex = (state.slashActiveIndex + offset + total) % total
+  renderSlashCommandMenu()
+}
+
+async function switchToProviderModel(providerId: string, modelId: string): Promise<boolean> {
+  const configResult = state.agentConfig
+    ? { ok: true, config: state.agentConfig }
+    : await window.tuanzi.getAgentConfig()
+  if (!configResult.ok || !configResult.config) {
+    showError(configResult.error || 'Failed to load provider config')
+    return false
+  }
+
+  const config = configResult.config
+  const draft = buildSettingsDraft(config)
+  const provider = draft.providers.find((item) => item.id === providerId)
+  if (!provider) {
+    showError('Provider not found')
+    return false
+  }
+
+  provider.isEnabled = true
+  provider.model = modelId
+  if (!provider.models.some((item) => item.id === modelId)) {
+    provider.models.push({
+      id: modelId,
+      displayName: modelId,
+      isVision: false,
+      enabled: true
+    })
+  }
+  for (const model of provider.models) {
+    if (model.id === modelId) {
+      model.enabled = true
+    }
+  }
+
+  const saveResult = await window.tuanzi.saveAgentConfig({
+    provider: {
+      type: provider.type,
+      baseUrl: provider.baseUrl,
+      model: provider.model,
+      apiKey: provider.apiKey
+    },
+    providers: draft.providers,
+    activeProviderId: provider.id,
+    global_skills: config.global_skills
+  })
+  if (!saveResult.ok || !saveResult.config) {
+    showError(saveResult.error || 'Failed to switch model')
+    return false
+  }
+
+  state.agentConfig = saveResult.config
+  state.settingsDraft = buildSettingsDraft(saveResult.config)
+  if (settingsModal.classList.contains('visible')) {
+    renderSettingsDraft()
+  }
+  showSuccess(`Switched to ${provider.name} / ${modelId}`)
+  return true
+}
+
+async function handleModelSlashCommand(args: string): Promise<boolean> {
+  const normalized = args.trim()
+  if (!normalized) {
+    showError('Type /model and select a model from the popup')
+    return true
+  }
+
+  if (normalized.toLowerCase() === 'current') {
+    showSuccess(`Current model: ${getCurrentProviderModelLabel(state.agentConfig)}`)
+    return true
+  }
+
+  const models = getAvailableSlashModels()
+  const query = normalized.toLowerCase()
+  const matches = models.filter((item) => {
+    const byModel = item.modelId.toLowerCase().includes(query)
+    const byProvider = item.providerId.toLowerCase().includes(query) || item.providerName.toLowerCase().includes(query)
+    const byCombo = `${item.providerId}/${item.modelId}`.toLowerCase() === query
+    const byComboName = `${item.providerName}/${item.modelId}`.toLowerCase() === query
+    return byModel || byProvider || byCombo || byComboName
+  })
+
+  if (matches.length === 0) {
+    showError(`No model matched: ${normalized}`)
+    return true
+  }
+  if (matches.length > 1) {
+    showError('Multiple models matched, keep typing to narrow down or pick from popup')
+    return true
+  }
+
+  const matched = matches[0]
+  return switchToProviderModel(matched.providerId, matched.modelId)
+}
+
+async function executeSlashCommand(raw: string): Promise<boolean> {
+  const text = raw.trim()
+  if (!text.startsWith('/')) {
+    return false
+  }
+
+  const [commandToken, ...restParts] = text.split(/\s+/)
+  const command = commandToken.toLowerCase()
+  const args = restParts.join(' ')
+
+  if (command === '/model') {
+    return handleModelSlashCommand(args)
+  }
+  if (command === '/new') {
+    createNewSession()
+    showSuccess('Started a new conversation')
+    return true
+  }
+  if (command === '/workspace') {
+    await selectWorkspace()
+    return true
+  }
+  if (command === '/settings') {
+    await openSettingsModal()
+    return true
+  }
+  if (command === '/agent') {
+    await refreshAgentData().then(() => {
+      setAgentModalView('library')
+      agentLibraryModal.classList.add('visible')
+    })
+    return true
+  }
+  if (command === '/help') {
+    showSuccess('Commands: /model, /model current, /new, /workspace, /settings, /agent')
+    return true
+  }
+
+  showError(`Unknown command: ${commandToken}`)
+  return true
+}
+
+async function applySlashSuggestion(index: number): Promise<void> {
+  if (!state.slashVisible || index < 0 || index >= state.slashSuggestions.length) {
+    return
+  }
+  const suggestion = state.slashSuggestions[index]
+  inputTextarea.value = suggestion.commandText
+  autoResizeTextarea()
+  inputTextarea.focus()
+
+  if (suggestion.executeImmediately) {
+    const handled = await executeSlashCommand(suggestion.commandText)
+    if (handled) {
+      inputTextarea.value = ''
+      autoResizeTextarea()
+      closeSlashCommandMenu()
+    }
+    return
+  }
+  updateSlashCommandMenu()
 }
 
 // 重新配置 marked 实例
@@ -1331,14 +1770,373 @@ function readToggle(button: HTMLButtonElement): boolean {
   return button.dataset.enabled === 'true'
 }
 
+function createProviderId(): string {
+  return `provider-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function normalizeProviderModelList(input: unknown): ProviderModelItem[] {
+  if (!Array.isArray(input)) {
+    return []
+  }
+  const output: ProviderModelItem[] = []
+  const seen = new Set<string>()
+  for (const item of input) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      continue
+    }
+    const record = item as Record<string, unknown>
+    const id = normalizeOptionalString(record.id)
+    if (!id) {
+      continue
+    }
+    const key = id.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    output.push({
+      id,
+      displayName: normalizeOptionalString(record.displayName) ?? id,
+      isVision: record.isVision === true,
+      enabled: typeof record.enabled === 'boolean' ? record.enabled : true
+    })
+  }
+  return output
+}
+
+function normalizeProviderDraft(input: Partial<ProviderConfig>): ProviderConfig {
+  return {
+    id: normalizeOptionalString(input.id) ?? createProviderId(),
+    name: normalizeOptionalString(input.name) ?? 'Untitled Provider',
+    type: normalizeOptionalString(input.type) ?? DEFAULT_PROVIDER_TYPE,
+    baseUrl: normalizeOptionalString(input.baseUrl) ?? DEFAULT_PROVIDER_BASE_URL,
+    apiKey: normalizeOptionalString(input.apiKey) ?? '',
+    model: normalizeOptionalString(input.model) ?? '',
+    models: normalizeProviderModelList(input.models),
+    isEnabled: input.isEnabled !== false
+  }
+}
+
+function ensureSettingsDraft(): SettingsDraft {
+  if (!state.settingsDraft) {
+    state.settingsDraft = {
+      providers: [normalizeProviderDraft({ id: createProviderId(), name: 'OpenAI', type: 'openai' })],
+      activeProviderId: '',
+      globalSkills: {
+        file_system: true,
+        execute_command: true,
+        web_search: true
+      }
+    }
+  }
+
+  if (state.settingsDraft.providers.length === 0) {
+    state.settingsDraft.providers.push(
+      normalizeProviderDraft({ id: createProviderId(), name: 'OpenAI', type: 'openai' })
+    )
+  }
+  if (!state.settingsDraft.providers.some((item) => item.id === state.settingsDraft!.activeProviderId)) {
+    state.settingsDraft.activeProviderId = state.settingsDraft.providers[0].id
+  }
+
+  return state.settingsDraft
+}
+
+function getActiveDraftProvider(): ProviderConfig | null {
+  const draft = ensureSettingsDraft()
+  return draft.providers.find((item) => item.id === draft.activeProviderId) ?? draft.providers[0] ?? null
+}
+
+function renderProviderList(): void {
+  const draft = ensureSettingsDraft()
+  providerList.innerHTML = ''
+  if (draft.providers.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'provider-list-empty'
+    empty.textContent = 'No providers yet'
+    providerList.appendChild(empty)
+    return
+  }
+
+  for (const provider of draft.providers) {
+    const item = document.createElement('button')
+    item.className = 'provider-list-item'
+    if (provider.id === draft.activeProviderId) {
+      item.classList.add('active')
+    }
+    item.innerHTML = `
+      <div class="provider-item-main">
+        <span class="provider-item-name">${escapeHtml(provider.name)}</span>
+        <span class="provider-item-status ${provider.isEnabled ? 'enabled' : ''}">${provider.isEnabled ? 'ON' : 'OFF'}</span>
+      </div>
+      <div class="provider-item-sub">${escapeHtml(provider.model || 'No default model')}</div>
+    `
+    item.addEventListener('click', () => {
+      draft.activeProviderId = provider.id
+      renderSettingsDraft()
+    })
+    providerList.appendChild(item)
+  }
+}
+
+function renderProviderModelCards(provider: ProviderConfig): void {
+  providerModelList.innerHTML = ''
+  if (provider.models.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'provider-model-empty'
+    empty.textContent = 'No models. Fetch from provider or add one manually.'
+    providerModelList.appendChild(empty)
+    return
+  }
+
+  for (const model of provider.models) {
+    const card = document.createElement('div')
+    card.className = 'provider-model-card'
+    if (model.id === provider.model) {
+      card.classList.add('default')
+    }
+    card.innerHTML = `
+      <div class="provider-model-main">
+        <div class="provider-model-name">${escapeHtml(model.displayName || model.id)}</div>
+        <button class="toggle-switch" data-enabled="${model.enabled ? 'true' : 'false'}"></button>
+      </div>
+      <div class="provider-model-meta">
+        <span class="provider-model-badge">${escapeHtml(model.id)}</span>
+        ${model.isVision ? '<span class="provider-model-badge vision">VISION</span>' : ''}
+      </div>
+      <div class="provider-model-actions">
+        <button class="agent-btn secondary provider-model-default-btn">${model.id === provider.model ? 'Default' : 'Set Default'}</button>
+        <button class="agent-btn danger provider-model-delete-btn">Delete</button>
+      </div>
+    `
+
+    const toggle = card.querySelector('.toggle-switch') as HTMLButtonElement
+    toggle.addEventListener('click', () => {
+      model.enabled = !model.enabled
+      if (!model.enabled && provider.model === model.id) {
+        provider.model = provider.models.find((item) => item.enabled && item.id !== model.id)?.id ?? ''
+      }
+      renderSettingsDraft()
+    })
+
+    const setDefaultBtn = card.querySelector('.provider-model-default-btn') as HTMLButtonElement
+    setDefaultBtn.addEventListener('click', () => {
+      model.enabled = true
+      provider.model = model.id
+      renderSettingsDraft()
+    })
+
+    const deleteBtn = card.querySelector('.provider-model-delete-btn') as HTMLButtonElement
+    deleteBtn.addEventListener('click', () => {
+      provider.models = provider.models.filter((item) => item.id !== model.id)
+      if (provider.model === model.id) {
+        provider.model = provider.models.find((item) => item.enabled)?.id ?? ''
+      }
+      renderSettingsDraft()
+    })
+
+    providerModelList.appendChild(card)
+  }
+}
+
+function renderProviderEditor(): void {
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    providerEditorTitle.textContent = 'Provider Settings'
+    providerNameInput.value = ''
+    providerTypeInput.value = DEFAULT_PROVIDER_TYPE
+    providerBaseUrlInput.value = DEFAULT_PROVIDER_BASE_URL
+    providerModelInput.value = ''
+    providerApiKeyInput.value = ''
+    toggleSwitch(providerEnabledToggle, true)
+    providerModelList.innerHTML = ''
+    return
+  }
+
+  providerEditorTitle.textContent = `${provider.name} Settings`
+  providerNameInput.value = provider.name
+  const hasTypeOption = Array.from(providerTypeInput.options).some((item) => item.value === provider.type)
+  if (!hasTypeOption) {
+    const custom = document.createElement('option')
+    custom.value = provider.type
+    custom.textContent = provider.type
+    providerTypeInput.appendChild(custom)
+  }
+  providerTypeInput.value = provider.type
+  providerBaseUrlInput.value = provider.baseUrl
+  providerModelInput.value = provider.model
+  providerApiKeyInput.value = provider.apiKey
+  toggleSwitch(providerEnabledToggle, provider.isEnabled)
+  providerDeleteBtn.disabled = ensureSettingsDraft().providers.length <= 1
+  renderProviderModelCards(provider)
+}
+
+function updateActiveProviderFromInputs(): void {
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    return
+  }
+  provider.name = normalizeOptionalString(providerNameInput.value) ?? 'Untitled Provider'
+  provider.type = normalizeOptionalString(providerTypeInput.value) ?? DEFAULT_PROVIDER_TYPE
+  provider.baseUrl = normalizeOptionalString(providerBaseUrlInput.value) ?? DEFAULT_PROVIDER_BASE_URL
+  provider.model = normalizeOptionalString(providerModelInput.value) ?? ''
+  provider.apiKey = normalizeOptionalString(providerApiKeyInput.value) ?? ''
+  provider.isEnabled = readToggle(providerEnabledToggle)
+  providerEditorTitle.textContent = `${provider.name} Settings`
+  renderProviderList()
+}
+
+function addDraftProvider(): void {
+  const draft = ensureSettingsDraft()
+  const provider = normalizeProviderDraft({
+    id: createProviderId(),
+    name: `Provider ${draft.providers.length + 1}`,
+    type: DEFAULT_PROVIDER_TYPE
+  })
+  draft.providers.push(provider)
+  draft.activeProviderId = provider.id
+  renderSettingsDraft()
+}
+
+function removeActiveDraftProvider(): void {
+  const draft = ensureSettingsDraft()
+  const current = getActiveDraftProvider()
+  if (!current) {
+    return
+  }
+  if (draft.providers.length <= 1) {
+    showError('At least one provider must remain')
+    return
+  }
+  const confirmed = window.confirm(`Delete provider "${current.name}"?`)
+  if (!confirmed) {
+    return
+  }
+  draft.providers = draft.providers.filter((item) => item.id !== current.id)
+  draft.activeProviderId = draft.providers[0]?.id ?? ''
+  renderSettingsDraft()
+}
+
+function addModelToActiveProvider(): void {
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    return
+  }
+  const modelId = normalizeOptionalString(window.prompt('Enter model ID (for example: gpt-4o-mini)', ''))
+  if (!modelId) {
+    return
+  }
+  if (provider.models.some((item) => item.id.toLowerCase() === modelId.toLowerCase())) {
+    showError(`Model already exists: ${modelId}`)
+    return
+  }
+  const supportsVision = window.confirm('Does this model support image input?')
+  provider.models.push({
+    id: modelId,
+    displayName: modelId,
+    isVision: supportsVision,
+    enabled: true
+  })
+  if (!provider.model) {
+    provider.model = modelId
+  }
+  renderSettingsDraft()
+}
+
+async function testActiveProviderConnection(): Promise<void> {
+  updateActiveProviderFromInputs()
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    return
+  }
+  const result = await window.tuanzi.testProviderConnection({
+    type: provider.type,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: provider.model
+  })
+  if (!result.ok) {
+    showError(result.error || 'Connection test failed')
+    return
+  }
+  window.alert(result.message || 'Connection successful.')
+}
+
+async function fetchModelsForActiveProvider(): Promise<void> {
+  updateActiveProviderFromInputs()
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    return
+  }
+  const result = await window.tuanzi.fetchProviderModels({
+    type: provider.type,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: provider.model
+  })
+  if (!result.ok || !result.models) {
+    showError(result.error || 'Failed to fetch models')
+    return
+  }
+
+  if (result.message) {
+    showSuccess(result.message)
+  }
+
+  const existing = new Map(provider.models.map((item) => [item.id.toLowerCase(), item]))
+  for (const model of result.models) {
+    const key = model.id.toLowerCase()
+    const hit = existing.get(key)
+    if (hit) {
+      hit.displayName = model.displayName || hit.displayName
+      hit.isVision = model.isVision || hit.isVision
+      continue
+    }
+    provider.models.push({
+      id: model.id,
+      displayName: model.displayName || model.id,
+      isVision: model.isVision,
+      enabled: true
+    })
+  }
+  if (!provider.model) {
+    provider.model = provider.models.find((item) => item.enabled)?.id ?? ''
+  }
+  renderSettingsDraft()
+  if (result.models.length === 0) {
+    window.alert(result.message || 'No models returned by provider.')
+    return
+  }
+  window.alert(`Synced ${result.models.length} models.`)
+}
+
+function buildSettingsDraft(config: AgentBackendConfig): SettingsDraft {
+  const fromProviders = Array.isArray(config.providers) ? config.providers : []
+  const providers =
+    fromProviders.length > 0
+      ? fromProviders.map((item) => normalizeProviderDraft(item))
+      : [normalizeProviderDraft({ id: createProviderId(), name: 'Default Provider' })]
+  const activeProviderId =
+    providers.find((item) => item.id === config.activeProviderId)?.id ?? providers[0]?.id ?? createProviderId()
+
+  return {
+    providers,
+    activeProviderId,
+    globalSkills: {
+      file_system: config.global_skills.file_system,
+      execute_command: config.global_skills.execute_command,
+      web_search: config.global_skills.web_search
+    }
+  }
+}
+
 function renderSettingsDraft(): void {
   if (!state.settingsDraft) {
     return
   }
-  providerTypeInput.value = state.settingsDraft.provider.type
-  providerBaseUrlInput.value = state.settingsDraft.provider.baseUrl
-  providerModelInput.value = state.settingsDraft.provider.model
-  providerApiKeyInput.value = state.settingsDraft.provider.apiKey
+
+  renderProviderList()
+  renderProviderEditor()
 
   toggleSwitch(globalSkillFileSystem, state.settingsDraft.globalSkills.file_system)
   toggleSwitch(globalSkillExecuteCommand, state.settingsDraft.globalSkills.execute_command)
@@ -1357,6 +2155,9 @@ function setActiveSettingsPanel(panel: string): void {
 }
 
 async function openSettingsModal(): Promise<void> {
+  closeSlashCommandMenu()
+  mcpJsonModal.classList.remove('visible')
+
   const configRes = await window.tuanzi.getAgentConfig()
 
   if (!configRes.ok || !configRes.config) {
@@ -1365,30 +2166,29 @@ async function openSettingsModal(): Promise<void> {
   }
 
   state.agentConfig = configRes.config
-  state.settingsDraft = {
-    provider: {
-      type: configRes.config.provider.type,
-      apiKey: configRes.config.provider.apiKey,
-      baseUrl: configRes.config.provider.baseUrl,
-      model: configRes.config.provider.model
-    },
-    globalSkills: {
-      file_system: configRes.config.global_skills.file_system,
-      execute_command: configRes.config.global_skills.execute_command,
-      web_search: configRes.config.global_skills.web_search
-    }
-  }
+  state.settingsDraft = buildSettingsDraft(configRes.config)
   state.mcpServers = []
   state.expandedMcpServerIds.clear()
 
   renderSettingsDraft()
   setActiveSettingsPanel('provider')
   settingsModal.classList.add('visible')
+  requestAnimationFrame(() => {
+    if (!settingsModal.classList.contains('visible')) {
+      return
+    }
+    providerNameInput.focus()
+    providerNameInput.setSelectionRange(providerNameInput.value.length, providerNameInput.value.length)
+  })
 
   void refreshMcpServers()
 }
 
 function closeSettingsModal(): void {
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement && settingsModal.contains(activeElement)) {
+    activeElement.blur()
+  }
   settingsModal.classList.remove('visible')
   mcpJsonModal.classList.remove('visible')
 }
@@ -1398,11 +2198,12 @@ async function saveSettings(): Promise<void> {
     return
   }
 
-  const provider: AgentProviderConfig = {
-    type: normalizeOptionalString(providerTypeInput.value) ?? 'openai',
-    baseUrl: normalizeOptionalString(providerBaseUrlInput.value) ?? 'https://api.openai.com/v1',
-    model: normalizeOptionalString(providerModelInput.value) ?? '',
-    apiKey: normalizeOptionalString(providerApiKeyInput.value) ?? ''
+  updateActiveProviderFromInputs()
+  const draft = ensureSettingsDraft()
+  const activeProvider = getActiveDraftProvider()
+  if (!activeProvider) {
+    showError('No active provider')
+    return
   }
 
   const globalSkills = {
@@ -1412,7 +2213,14 @@ async function saveSettings(): Promise<void> {
   }
 
   const configResult = await window.tuanzi.saveAgentConfig({
-    provider,
+    provider: {
+      type: activeProvider.type,
+      baseUrl: activeProvider.baseUrl,
+      model: activeProvider.model,
+      apiKey: activeProvider.apiKey
+    },
+    providers: draft.providers,
+    activeProviderId: activeProvider.id,
     global_skills: globalSkills
   })
   if (!configResult.ok || !configResult.config) {
@@ -1421,6 +2229,7 @@ async function saveSettings(): Promise<void> {
   }
 
   state.agentConfig = configResult.config
+  state.settingsDraft = buildSettingsDraft(configResult.config)
 
   closeSettingsModal()
   renderEditorToolList()
@@ -1669,6 +2478,16 @@ async function sendMessage(): Promise<void> {
   const text = inputTextarea.value.trim()
   if (!text || state.isSending) return
 
+  if (text.startsWith('/')) {
+    const handled = await executeSlashCommand(text)
+    if (handled) {
+      inputTextarea.value = ''
+      autoResizeTextarea()
+      closeSlashCommandMenu()
+    }
+    return
+  }
+
   const active = ensureActiveSession()
   if (!active.workspace) {
     showError('Please select a workspace first')
@@ -1837,6 +2656,32 @@ function bindSettingsEvents(): void {
     })
   })
 
+  providerAddBtn.addEventListener('click', () => {
+    addDraftProvider()
+  })
+  providerDeleteBtn.addEventListener('click', () => {
+    removeActiveDraftProvider()
+  })
+  providerAddModelBtn.addEventListener('click', () => {
+    addModelToActiveProvider()
+  })
+  providerEnabledToggle.addEventListener('click', () => {
+    toggleSwitch(providerEnabledToggle, !readToggle(providerEnabledToggle))
+    updateActiveProviderFromInputs()
+  })
+  providerTestBtn.addEventListener('click', () => {
+    void testActiveProviderConnection()
+  })
+  providerFetchModelsBtn.addEventListener('click', () => {
+    void fetchModelsForActiveProvider()
+  })
+
+  providerNameInput.addEventListener('input', updateActiveProviderFromInputs)
+  providerTypeInput.addEventListener('change', updateActiveProviderFromInputs)
+  providerBaseUrlInput.addEventListener('input', updateActiveProviderFromInputs)
+  providerModelInput.addEventListener('input', updateActiveProviderFromInputs)
+  providerApiKeyInput.addEventListener('input', updateActiveProviderFromInputs)
+
   globalSkillFileSystem.addEventListener('click', () => {
     toggleSwitch(globalSkillFileSystem, !readToggle(globalSkillFileSystem))
   })
@@ -1872,17 +2717,54 @@ async function init(): Promise<void> {
   await refreshResumeSnapshot()
   renderActiveConversation()
 
-  document.addEventListener('click', () => {
+  document.addEventListener('click', (event) => {
     closeHistoryContextMenu()
+    const target = event.target as HTMLElement | null
+    if (!target) {
+      closeSlashCommandMenu()
+      return
+    }
+    if (
+      !target.closest('#inputBox') &&
+      !target.closest('#slashCommandMenu')
+    ) {
+      closeSlashCommandMenu()
+    }
   })
 
   inputTextarea.addEventListener('keydown', (e) => {
+    if (state.slashVisible) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        moveSlashSuggestionCursor(1)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        moveSlashSuggestionCursor(-1)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeSlashCommandMenu()
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+        e.preventDefault()
+        void applySlashSuggestion(state.slashActiveIndex)
+        return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void sendMessage()
     }
   })
-  inputTextarea.addEventListener('input', autoResizeTextarea)
+  inputTextarea.addEventListener('input', () => {
+    autoResizeTextarea()
+    updateSlashCommandMenu()
+  })
 
   sendBtn.addEventListener('click', () => {
     void sendMessage()
@@ -1949,11 +2831,6 @@ async function init(): Promise<void> {
   settingsCancelBtn.addEventListener('click', closeSettingsModal)
   settingsSaveBtn.addEventListener('click', () => {
     void saveSettings()
-  })
-  settingsModal.addEventListener('click', (event) => {
-    if (event.target === settingsModal) {
-      closeSettingsModal()
-    }
   })
 
   document.addEventListener('keydown', (event) => {

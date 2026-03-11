@@ -85,7 +85,7 @@ test("should still not fallback to env vars when modelOverride misses", () => {
   );
 });
 
-test("should load default model from custom store", () => {
+test("should not fallback to custom store default model without modelOverride", () => {
   const storeDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-model-store-"));
   const storePath = path.join(storeDir, "models.json");
   writeFileSync(
@@ -130,12 +130,12 @@ test("should load default model from custom store", () => {
       },
       () => {
         const config = loadRuntimeConfig({ workspaceRoot: process.cwd(), approvalMode: "manual" });
-        assert.equal(config.model.keySource, "openai");
-        assert.equal(config.model.baseUrl, "http://127.0.0.1:11434/v1");
-        assert.equal(config.model.apiKey, "none");
-        assert.equal(config.model.plannerModel, "qwen2.5-coder");
-        assert.equal(config.model.searchModel, "qwen2.5-coder");
-        assert.equal(config.model.coderModel, "qwen2.5-coder");
+        assert.equal(config.model.keySource, "none");
+        assert.equal(config.model.baseUrl, "https://api.openai.com/v1");
+        assert.equal(config.model.apiKey, null);
+        assert.equal(config.model.plannerModel, null);
+        assert.equal(config.model.searchModel, null);
+        assert.equal(config.model.coderModel, null);
       }
     );
   } finally {
@@ -249,6 +249,80 @@ test("should load provider model from ~/.tuanzi/config.json when custom model st
         assert.equal(config.model.apiKey, "sk-provider");
         assert.equal(config.model.baseUrl, "https://api.openai.com/v1");
         assert.equal(config.model.coderModel, "gpt-4o");
+      }
+    );
+  } finally {
+    rmSync(agentHome, { recursive: true, force: true });
+  }
+});
+
+test("should not fallback to first provider when activeProviderId is missing", () => {
+  const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    writeFileSync(
+      path.join(agentHome, "config.json"),
+      JSON.stringify(
+        {
+          provider: {
+            type: "openai",
+            apiKey: "sk-legacy",
+            baseUrl: "https://api.openai.com/v1",
+            model: "legacy-model"
+          },
+          providers: [
+            {
+              id: "provider-a",
+              name: "Provider A",
+              type: "openai",
+              apiKey: "sk-a",
+              baseUrl: "https://a.example.com/v1",
+              model: "model-a",
+              models: [],
+              isEnabled: true
+            },
+            {
+              id: "provider-b",
+              name: "Provider B",
+              type: "openai",
+              apiKey: "sk-b",
+              baseUrl: "https://b.example.com/v1",
+              model: "model-b",
+              models: [],
+              isEnabled: true
+            }
+          ],
+          activeProviderId: "",
+          global_skills: {
+            file_system: true,
+            execute_command: true,
+            web_search: true
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    withEnv(
+      {
+        TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+        MYCODERAGENT_HOME: agentHome,
+        MYCODER_API_KEY: null,
+        MYCODER_API_BASE_URL: null,
+        MYCODER_MODEL: null,
+        MYCODER_PLANNER_MODEL: null,
+        MYCODER_SEARCH_MODEL: null,
+        MYCODER_CODER_MODEL: null,
+        QWEN_API_KEY: null,
+        DEEPSEEK_API_KEY: null
+      },
+      () => {
+        const config = loadRuntimeConfig({ workspaceRoot: process.cwd(), approvalMode: "manual" });
+        assert.equal(config.model.keySource, "none");
+        assert.equal(config.model.apiKey, null);
+        assert.equal(config.model.baseUrl, "https://api.openai.com/v1");
+        assert.equal(config.model.coderModel, null);
       }
     );
   } finally {

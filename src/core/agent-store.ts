@@ -11,6 +11,20 @@ export interface AgentProviderConfig {
   model: string;
 }
 
+export interface ProviderModelItem {
+  id: string;
+  displayName: string;
+  isVision: boolean;
+  enabled: boolean;
+}
+
+export interface ProviderConfig extends AgentProviderConfig {
+  id: string;
+  name: string;
+  models: ProviderModelItem[];
+  isEnabled: boolean;
+}
+
 export interface GlobalSkillsConfig {
   file_system: boolean;
   execute_command: boolean;
@@ -18,7 +32,10 @@ export interface GlobalSkillsConfig {
 }
 
 export interface AgentBackendConfig {
+  // Compatibility mirror of the selected provider.
   provider: AgentProviderConfig;
+  providers: ProviderConfig[];
+  activeProviderId: string;
   global_skills: GlobalSkillsConfig;
 }
 
@@ -50,14 +67,29 @@ const AGENT_HOME_DIR_NAME = ".tuanzi";
 const AGENT_CONFIG_FILE_NAME = "config.json";
 const AGENTS_DIR_NAME = "agents";
 const DEFAULT_AGENT_FILE_NAME = "default.md";
+const DEFAULT_PROVIDER_ID = "default-provider";
+const DEFAULT_PROVIDER_NAME = "OpenAI";
+
+const DEFAULT_PROVIDER_CONFIG: ProviderConfig = {
+  id: DEFAULT_PROVIDER_ID,
+  name: DEFAULT_PROVIDER_NAME,
+  type: "openai",
+  apiKey: "",
+  baseUrl: "https://api.openai.com/v1",
+  model: "",
+  models: [],
+  isEnabled: true
+};
 
 const DEFAULT_BACKEND_CONFIG: AgentBackendConfig = {
   provider: {
-    type: "openai",
-    apiKey: "",
-    baseUrl: "https://api.openai.com/v1",
-    model: ""
+    type: DEFAULT_PROVIDER_CONFIG.type,
+    apiKey: DEFAULT_PROVIDER_CONFIG.apiKey,
+    baseUrl: DEFAULT_PROVIDER_CONFIG.baseUrl,
+    model: DEFAULT_PROVIDER_CONFIG.model
   },
+  providers: [DEFAULT_PROVIDER_CONFIG],
+  activeProviderId: DEFAULT_PROVIDER_CONFIG.id,
   global_skills: {
     file_system: true,
     execute_command: true,
@@ -267,14 +299,24 @@ function normalizeBackendConfig(input: unknown): AgentBackendConfig {
     return cloneDefaultBackendConfig();
   }
 
-  const providerRaw = asRecord(raw.provider) ?? {};
+  const providerRaw = asRecord(raw.provider);
+  const providerFromLegacy = normalizeProviderEntry(
+    providerRaw,
+    DEFAULT_PROVIDER_ID,
+    normalizeOptionalString(providerRaw?.name) ?? DEFAULT_PROVIDER_NAME
+  );
+  const providersFromInput = normalizeProviderList(raw.providers);
+  const providers =
+    providersFromInput.length > 0 ? providersFromInput : [providerFromLegacy ?? cloneDefaultProviderConfig()];
+  const activeProviderId = resolveActiveProviderId(raw.activeProviderId, providers, providerFromLegacy?.id ?? null);
+  const activeProvider = providers.find((item) => item.id === activeProviderId) ?? null;
   const skillsRaw = asRecord(raw.global_skills) ?? {};
 
   const provider: AgentProviderConfig = {
-    type: normalizeOptionalString(providerRaw.type) ?? DEFAULT_BACKEND_CONFIG.provider.type,
-    apiKey: normalizeOptionalString(providerRaw.apiKey) ?? "",
-    baseUrl: normalizeOptionalString(providerRaw.baseUrl) ?? DEFAULT_BACKEND_CONFIG.provider.baseUrl,
-    model: normalizeOptionalString(providerRaw.model) ?? ""
+    type: activeProvider?.type ?? DEFAULT_PROVIDER_CONFIG.type,
+    apiKey: activeProvider?.apiKey ?? "",
+    baseUrl: activeProvider?.baseUrl ?? "",
+    model: activeProvider?.model ?? ""
   };
 
   const global_skills: GlobalSkillsConfig = {
@@ -292,8 +334,147 @@ function normalizeBackendConfig(input: unknown): AgentBackendConfig {
 
   return {
     provider,
+    providers,
+    activeProviderId,
     global_skills
   };
+}
+
+function cloneDefaultProviderConfig(): ProviderConfig {
+  return JSON.parse(JSON.stringify(DEFAULT_PROVIDER_CONFIG)) as ProviderConfig;
+}
+
+function normalizeProviderList(input: unknown): ProviderConfig[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const output: ProviderConfig[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input) {
+    const raw = asRecord(item);
+    if (!raw) {
+      continue;
+    }
+    const fallbackName = normalizeOptionalString(raw.name) ?? "Provider";
+    const fallbackId = ensureUniqueProviderId(
+      normalizeProviderId(raw.id) ?? buildProviderIdFromName(fallbackName) ?? `provider-${output.length + 1}`,
+      seen
+    );
+    const normalized = normalizeProviderEntry(raw, fallbackId, fallbackName);
+    if (!normalized) {
+      continue;
+    }
+    normalized.id = ensureUniqueProviderId(normalized.id, seen);
+    output.push(normalized);
+    seen.add(normalized.id.toLowerCase());
+  }
+
+  return output;
+}
+
+function normalizeProviderEntry(
+  input: Record<string, unknown> | null,
+  fallbackId: string,
+  fallbackName: string
+): ProviderConfig | null {
+  if (!input) {
+    return null;
+  }
+  const id = normalizeProviderId(input.id) ?? normalizeProviderId(fallbackId) ?? DEFAULT_PROVIDER_ID;
+  const name = normalizeOptionalString(input.name) ?? fallbackName;
+  const type = normalizeOptionalString(input.type) ?? DEFAULT_PROVIDER_CONFIG.type;
+  const apiKey = normalizeOptionalString(input.apiKey) ?? "";
+  const baseUrl = normalizeOptionalString(input.baseUrl) ?? DEFAULT_PROVIDER_CONFIG.baseUrl;
+  const model = normalizeOptionalString(input.model) ?? "";
+  const models = normalizeProviderModels(input.models);
+  const isEnabled = typeof input.isEnabled === "boolean" ? input.isEnabled : true;
+
+  return {
+    id,
+    name,
+    type,
+    apiKey,
+    baseUrl,
+    model,
+    models,
+    isEnabled
+  };
+}
+
+function normalizeProviderModels(input: unknown): ProviderModelItem[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const output: ProviderModelItem[] = [];
+  const seen = new Set<string>();
+
+  for (const item of input) {
+    const raw = asRecord(item);
+    if (!raw) {
+      continue;
+    }
+    const id = normalizeOptionalString(raw.id);
+    if (!id) {
+      continue;
+    }
+    const key = id.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push({
+      id,
+      displayName: normalizeOptionalString(raw.displayName) ?? id,
+      isVision: raw.isVision === true,
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : true
+    });
+  }
+
+  return output;
+}
+
+function resolveActiveProviderId(rawId: unknown, providers: ProviderConfig[], fallbackId?: string | null): string {
+  const normalized = normalizeProviderId(rawId);
+  if (normalized && providers.some((item) => item.id === normalized)) {
+    return normalized;
+  }
+  const fallback = normalizeProviderId(fallbackId);
+  if (fallback && providers.some((item) => item.id === fallback)) {
+    return fallback;
+  }
+  return "";
+}
+
+function normalizeProviderId(input: unknown): string | null {
+  if (typeof input !== "string") {
+    return null;
+  }
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replace(/[^A-Za-z0-9._-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+  return normalized || null;
+}
+
+function ensureUniqueProviderId(base: string, seen: Set<string>): string {
+  let next = base;
+  let suffix = 2;
+  while (seen.has(next.toLowerCase())) {
+    next = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return next;
+}
+
+function buildProviderIdFromName(name: string): string | null {
+  const normalized = name
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || null;
 }
 
 function cloneDefaultBackendConfig(): AgentBackendConfig {

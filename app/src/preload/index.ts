@@ -50,8 +50,24 @@ export interface AgentProviderConfig {
   model: string
 }
 
+export interface ProviderModelItem {
+  id: string
+  displayName: string
+  isVision: boolean
+  enabled: boolean
+}
+
+export interface ProviderConfig extends AgentProviderConfig {
+  id: string
+  name: string
+  models: ProviderModelItem[]
+  isEnabled: boolean
+}
+
 export interface AgentBackendConfig {
   provider: AgentProviderConfig
+  providers: ProviderConfig[]
+  activeProviderId: string
   global_skills: {
     file_system: boolean
     execute_command: boolean
@@ -171,6 +187,29 @@ const tuanziAPI = {
     payload: unknown
   ): Promise<{ ok: boolean; config?: AgentBackendConfig; error?: string }> => {
     return ipcRenderer.invoke('agent-config:save', payload)
+  },
+
+  testProviderConnection: (payload: {
+    type?: string
+    baseUrl?: string
+    apiKey?: string
+    model?: string
+  }): Promise<{ ok: boolean; reachable?: boolean; message?: string; error?: string }> => {
+    return ipcRenderer.invoke('agent-config:testProviderConnection', payload)
+  },
+
+  fetchProviderModels: (payload: {
+    type?: string
+    baseUrl?: string
+    apiKey?: string
+    model?: string
+  }): Promise<{
+    ok: boolean
+    models?: Array<{ id: string; displayName: string; isVision: boolean }>
+    message?: string
+    error?: string
+  }> => {
+    return ipcRenderer.invoke('agent-config:fetchProviderModels', payload)
   },
 
   getWorkspaceMcp: (payload: {

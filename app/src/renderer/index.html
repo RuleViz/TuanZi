@@ -67,6 +67,9 @@
     </div>
 
     <div class="input-area">
+      <div class="slash-command-menu" id="slashCommandMenu" aria-hidden="true">
+        <div class="slash-command-list" id="slashCommandList"></div>
+      </div>
       <div class="input-box" id="inputBox">
         <textarea id="inputTextarea" class="input-textarea" placeholder="描述你的请求，按 Enter 发送，Shift+Enter 换行..."
           rows="1"></textarea>
@@ -189,7 +192,7 @@
   <div class="settings-modal-overlay" id="settingsModal">
     <div class="settings-modal-content">
       <div class="settings-modal-header">
-        <h2 class="agent-modal-title">设置与扩展</h2>
+        <h2 class="agent-modal-title">设置中心</h2>
         <button class="agent-modal-close" id="closeSettingsModalBtn" title="关闭">
           <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor">
             <path
@@ -199,24 +202,85 @@
       </div>
       <div class="settings-modal-body">
         <aside class="settings-nav" id="settingsNav">
-          <button class="settings-nav-item active" data-panel="provider">AI Provider</button>
+          <button class="settings-nav-item active" data-panel="provider">供应商管理</button>
           <button class="settings-nav-item" data-panel="skills">Skills</button>
           <button class="settings-nav-item" data-panel="mcp">MCP Server</button>
         </aside>
         <section class="settings-panel-wrap">
           <div class="settings-panel active" data-panel="provider">
-            <label class="agent-field-label" for="providerTypeInput">Provider 类型</label>
-            <input id="providerTypeInput" class="agent-field-input" type="text" placeholder="openai" />
+            <div class="provider-layout">
+              <aside class="provider-list-pane">
+                <div class="provider-list-head">
+                  <div class="provider-list-title">供应商</div>
+                  <button class="agent-btn primary provider-add-btn" id="providerAddBtn">+ 添加</button>
+                </div>
+                <div class="provider-list" id="providerList"></div>
+              </aside>
 
-            <label class="agent-field-label" for="providerBaseUrlInput">Base URL</label>
-            <input id="providerBaseUrlInput" class="agent-field-input" type="text"
-              placeholder="https://api.openai.com/v1" />
+              <section class="provider-detail-pane">
+                <div class="provider-detail-head">
+                  <div>
+                    <div class="mcp-panel-title" id="providerEditorTitle">供应商配置</div>
+                    <div class="agent-field-hint">按供应商分组管理密钥、网关和模型列表。</div>
+                  </div>
+                  <div class="provider-detail-actions">
+                    <button class="agent-btn secondary" id="providerTestBtn">测试连接</button>
+                    <button class="agent-btn secondary" id="providerFetchModelsBtn">拉取模型</button>
+                    <button class="agent-btn danger" id="providerDeleteBtn">删除</button>
+                  </div>
+                </div>
 
-            <label class="agent-field-label" for="providerModelInput">默认模型</label>
-            <input id="providerModelInput" class="agent-field-input" type="text" placeholder="gpt-4o-mini" />
+                <div class="provider-form-grid">
+                  <div class="input-group-full">
+                    <label class="agent-field-label" for="providerNameInput">供应商名称</label>
+                    <input id="providerNameInput" class="agent-field-input" type="text" placeholder="例如：OpenAI 官方" />
+                  </div>
 
-            <label class="agent-field-label" for="providerApiKeyInput">API Key</label>
-            <input id="providerApiKeyInput" class="agent-field-input" type="password" placeholder="sk-..." />
+                  <div>
+                    <label class="agent-field-label" for="providerTypeInput">协议类型</label>
+                    <select id="providerTypeInput" class="agent-field-input">
+                      <option value="openai">OpenAI</option>
+                      <option value="openai_compatible">OpenAI Compatible</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="gemini">Gemini</option>
+                      <option value="azure_openai">Azure OpenAI</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="agent-field-label" for="providerModelInput">默认模型</label>
+                    <input id="providerModelInput" class="agent-field-input" type="text" placeholder="例如：gpt-4o-mini" />
+                  </div>
+
+                  <div class="input-group-full">
+                    <label class="agent-field-label" for="providerBaseUrlInput">Base URL</label>
+                    <input id="providerBaseUrlInput" class="agent-field-input" type="text"
+                      placeholder="https://api.openai.com/v1" />
+                  </div>
+
+                  <div class="input-group-full">
+                    <label class="agent-field-label" for="providerApiKeyInput">API Key</label>
+                    <input id="providerApiKeyInput" class="agent-field-input" type="password" placeholder="sk-..." />
+                  </div>
+
+                  <div class="provider-enabled-row input-group-full">
+                    <div>
+                      <div class="global-skill-title">启用供应商</div>
+                      <div class="global-skill-desc">关闭后不会在模型选择中使用该供应商。</div>
+                    </div>
+                    <button class="toggle-switch" id="providerEnabledToggle" data-enabled="true"></button>
+                  </div>
+                </div>
+
+                <div class="provider-models-section">
+                  <div class="provider-models-head">
+                    <div class="provider-models-title">模型库</div>
+                    <button class="agent-btn primary" id="providerAddModelBtn">+ 手动添加</button>
+                  </div>
+                  <div id="providerModelList" class="provider-model-list"></div>
+                </div>
+              </section>
+            </div>
           </div>
 
           <div class="settings-panel" data-panel="skills">

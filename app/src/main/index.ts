@@ -27,8 +27,24 @@ interface AgentProviderConfig {
   model: string
 }
 
+interface ProviderModelItem {
+  id: string
+  displayName: string
+  isVision: boolean
+  enabled: boolean
+}
+
+interface ProviderConfig extends AgentProviderConfig {
+  id: string
+  name: string
+  models: ProviderModelItem[]
+  isEnabled: boolean
+}
+
 interface AgentBackendConfig {
   provider: AgentProviderConfig
+  providers: ProviderConfig[]
+  activeProviderId: string
   global_skills: {
     file_system: boolean
     execute_command: boolean
@@ -213,6 +229,187 @@ function normalizeOptionalString(input: unknown): string | null {
 
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function asRecord(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null
+  }
+  return input as Record<string, unknown>
+}
+
+function normalizeProviderBaseUrl(rawBaseUrl: unknown): string | null {
+  const baseUrl = normalizeOptionalString(rawBaseUrl)
+  if (!baseUrl) {
+    return null
+  }
+  return baseUrl.replace(/\/+$/, "")
+}
+
+function buildProviderHeaders(apiKey: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    "X-DashScope-Api-Key": apiKey,
+    "X-API-Key": apiKey,
+    "x-api-key": apiKey
+  }
+}
+
+function isDashScopeCodingBaseUrl(rawBaseUrl: string): boolean {
+  const normalized = normalizeProviderBaseUrl(rawBaseUrl)
+  if (!normalized) {
+    return false
+  }
+  try {
+    const url = new URL(normalized)
+    return url.hostname.toLowerCase() === "coding.dashscope.aliyuncs.com"
+  } catch {
+    return normalized.toLowerCase().includes("coding.dashscope.aliyuncs.com")
+  }
+}
+
+async function probeProviderChatCompletions(input: {
+  baseUrl: string
+  apiKey: string
+  model: string
+}): Promise<void> {
+  const baseUrl = normalizeProviderBaseUrl(input.baseUrl)
+  const apiKey = normalizeOptionalString(input.apiKey)
+  const model = normalizeOptionalString(input.model)
+  if (!baseUrl) {
+    throw new Error("Missing provider baseUrl")
+  }
+  if (!apiKey) {
+    throw new Error("Missing provider apiKey")
+  }
+  if (!model) {
+    throw new Error("Missing provider model")
+  }
+
+  const endpoint = `${baseUrl}/chat/completions`
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 20_000)
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: buildProviderHeaders(apiKey),
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "ping" }],
+        max_tokens: 1,
+        temperature: 0,
+        stream: false
+      }),
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      const body = await response.text().catch(() => "")
+      throw new Error(`${response.status} ${response.statusText}${body ? ` ${body}` : ""}`.trim())
+    }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function buildProviderModelEndpoints(baseUrl: string): string[] {
+  const directModels = `${baseUrl}/models`
+  const v1Models = `${baseUrl}/v1/models`
+  const endpoints = new Set<string>()
+  endpoints.add(directModels)
+  if (!baseUrl.endsWith("/v1")) {
+    endpoints.add(v1Models)
+  }
+  return [...endpoints]
+}
+
+function extractProviderModels(payload: unknown): Array<{ id: string; displayName: string; isVision: boolean }> {
+  const root = asRecord(payload)
+  const listSource = root && Array.isArray(root.data)
+    ? root.data
+    : root && Array.isArray(root.models)
+      ? root.models
+      : Array.isArray(payload)
+        ? payload
+        : []
+
+  const output: Array<{ id: string; displayName: string; isVision: boolean }> = []
+  const seen = new Set<string>()
+  for (const item of listSource) {
+    const raw = asRecord(item)
+    const modelId =
+      normalizeOptionalString(raw?.id) ??
+      normalizeOptionalString(raw?.name) ??
+      normalizeOptionalString(raw?.model)
+    if (!modelId) {
+      continue
+    }
+    const key = modelId.toLowerCase()
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+
+    const displayName =
+      normalizeOptionalString(raw?.displayName) ??
+      normalizeOptionalString(raw?.display_name) ??
+      modelId
+    const isVision =
+      raw?.isVision === true ||
+      raw?.vision === true ||
+      (Array.isArray(raw?.modalities) && raw.modalities.some((item) => item === "image")) ||
+      (Array.isArray(raw?.input_modalities) && raw.input_modalities.some((item) => item === "image"))
+
+    output.push({
+      id: modelId,
+      displayName,
+      isVision
+    })
+  }
+  return output
+}
+
+async function requestProviderModels(input: {
+  baseUrl: string
+  apiKey: string
+}): Promise<Array<{ id: string; displayName: string; isVision: boolean }>> {
+  const baseUrl = normalizeProviderBaseUrl(input.baseUrl)
+  const apiKey = normalizeOptionalString(input.apiKey)
+  if (!baseUrl) {
+    throw new Error("Missing provider baseUrl")
+  }
+  if (!apiKey) {
+    throw new Error("Missing provider apiKey")
+  }
+
+  const endpoints = buildProviderModelEndpoints(baseUrl)
+  const headers = buildProviderHeaders(apiKey)
+
+  let lastError: Error | null = null
+
+  for (const endpoint of endpoints) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
+    try {
+      const response = await fetch(endpoint, {
+        method: "GET",
+        headers,
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        const body = await response.text().catch(() => "")
+        throw new Error(`${response.status} ${response.statusText}${body ? ` ${body}` : ""}`.trim())
+      }
+      const payload = (await response.json()) as unknown
+      return extractProviderModels(payload)
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  throw lastError ?? new Error("Provider model request failed")
 }
 
 function cloneJson<T>(value: T): T {
@@ -758,6 +955,89 @@ ipcMain.handle('agent-config:save', async (_event, payload: unknown) => {
     }
   }
 })
+
+ipcMain.handle(
+  "agent-config:testProviderConnection",
+  async (_event, payload: { type?: string; baseUrl?: string; apiKey?: string; model?: string }) => {
+    try {
+      const baseUrl = payload?.baseUrl ?? ""
+      const apiKey = payload?.apiKey ?? ""
+      const model = payload?.model ?? ""
+      try {
+        await requestProviderModels({
+          baseUrl,
+          apiKey
+        })
+        return {
+          ok: true,
+          reachable: true,
+          message: "Connection successful"
+        }
+      } catch (modelProbeError) {
+        const normalizedModel = normalizeOptionalString(model)
+        if (!normalizedModel) {
+          throw modelProbeError
+        }
+
+        try {
+          await probeProviderChatCompletions({
+            baseUrl,
+            apiKey,
+            model: normalizedModel
+          })
+          return {
+            ok: true,
+            reachable: true,
+            message: "Connected via chat/completions (this provider may not expose /models)."
+          }
+        } catch (chatProbeError) {
+          const modelErrorText = toErrorMessage(modelProbeError)
+          const chatErrorText = toErrorMessage(chatProbeError)
+          if (modelErrorText === chatErrorText) {
+            throw new Error(modelErrorText)
+          }
+          throw new Error(
+            `Model list probe failed: ${modelErrorText}\nChat probe failed: ${chatErrorText}`
+          )
+        }
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        reachable: false,
+        error: toErrorMessage(error)
+      }
+    }
+  }
+)
+
+ipcMain.handle(
+  "agent-config:fetchProviderModels",
+  async (_event, payload: { type?: string; baseUrl?: string; apiKey?: string; model?: string }) => {
+    try {
+      const models = await requestProviderModels({
+        baseUrl: payload?.baseUrl ?? "",
+        apiKey: payload?.apiKey ?? ""
+      })
+      return {
+        ok: true,
+        models
+      }
+    } catch (error) {
+      if (isDashScopeCodingBaseUrl(payload?.baseUrl ?? "")) {
+        return {
+          ok: true,
+          models: [],
+          message: "DashScope Coding endpoint does not expose /models. Please add model IDs manually."
+        }
+      }
+      return {
+        ok: false,
+        error: toErrorMessage(error)
+      }
+    }
+  }
+)
 
 ipcMain.handle('agent:listTools', async (_event, payload: { workspace?: string | null }) => {
   try {
