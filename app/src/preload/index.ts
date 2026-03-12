@@ -162,16 +162,20 @@ const tuanziAPI = {
     return ipcRenderer.invoke('dialog:selectWorkspace')
   },
 
-  startWindowDrag: (payload: { screenX: number; screenY: number }): void => {
-    ipcRenderer.send('window:dragStart', payload)
+  minimizeWindow: (): Promise<{ ok: boolean; error?: string }> => {
+    return ipcRenderer.invoke('window:minimize')
   },
 
-  updateWindowDrag: (payload: { screenX: number; screenY: number }): void => {
-    ipcRenderer.send('window:dragMove', payload)
+  toggleMaximizeWindow: (): Promise<{ ok: boolean; maximized?: boolean; error?: string }> => {
+    return ipcRenderer.invoke('window:toggleMaximize')
   },
 
-  endWindowDrag: (): void => {
-    ipcRenderer.send('window:dragEnd')
+  closeWindow: (): Promise<{ ok: boolean; error?: string }> => {
+    return ipcRenderer.invoke('window:close')
+  },
+
+  isWindowMaximized: (): Promise<{ ok: boolean; maximized?: boolean; error?: string }> => {
+    return ipcRenderer.invoke('window:isMaximized')
   },
 
   listAgents: (): Promise<{ ok: boolean; agents?: StoredAgent[]; error?: string }> => {
@@ -348,6 +352,16 @@ const tuanziAPI = {
     }
     ipcRenderer.on('chat:phase', handler)
     return () => ipcRenderer.removeListener('chat:phase', handler)
+  },
+
+  onWindowMaximizedChanged: (
+    callback: (data: { maximized: boolean }) => void
+  ): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0])
+    }
+    ipcRenderer.on('window:maximized-changed', handler)
+    return () => ipcRenderer.removeListener('window:maximized-changed', handler)
   }
 }
 

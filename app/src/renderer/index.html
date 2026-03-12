@@ -12,6 +12,17 @@
 <body>
   <aside class="sidebar" id="sidebar">
     <div class="drag-region"></div>
+    <div class="sidebar-top-meta">
+      <div class="agent-chip" id="activeAgentChip" title="切换 Agent">
+        <div class="avatar-mini" id="activeAgentAvatar">T</div>
+        <span class="chip-name" id="activeAgentName">TuanZi</span>
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-left: 2px; opacity: 0.6">
+          <path
+            d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z" />
+        </svg>
+      </div>
+      <span class="workspace-label" id="workspaceLabel" title="点击选择工作目录">未选择工作目录</span>
+    </div>
 
     <div class="section-title" style="margin-top: 8px;">会话</div>
     <div class="history-list" id="historyList"></div>
@@ -45,16 +56,26 @@
         </svg>
       </button>
       <div class="top-bar-drag"></div>
-      <div class="top-bar-right">
-        <div class="agent-chip" id="activeAgentChip" title="切换 Agent">
-          <div class="avatar-mini" id="activeAgentAvatar">T</div>
-          <span class="chip-name" id="activeAgentName">TuanZi</span>
-          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="margin-left: 2px; opacity: 0.6">
-            <path
-              d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z" />
+      <div class="window-controls" id="windowControls">
+        <button class="window-control-btn" id="windowMinimizeBtn" title="最小化">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M2 6.5H10" stroke="currentColor" stroke-width="1.2" stroke-linecap="square" />
           </svg>
-        </div>
-        <span class="workspace-label" id="workspaceLabel" title="点击选择工作目录">未选择工作目录</span>
+        </button>
+        <button class="window-control-btn" id="windowMaximizeBtn" title="最大化">
+          <svg class="icon-maximize" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect x="2.2" y="2.2" width="7.6" height="7.6" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+          <svg class="icon-restore" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M4 2.5H9.5V8" stroke="currentColor" stroke-width="1.2" />
+            <rect x="2" y="4" width="6.2" height="6.2" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+        </button>
+        <button class="window-control-btn close" id="windowCloseBtn" title="关闭">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M2.2 2.2L9.8 9.8M9.8 2.2L2.2 9.8" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+        </button>
       </div>
     </header>
 

@@ -142,9 +142,8 @@ const DEFAULT_AGENT_PROMPT = '你是一个务实、准确的 AI 编程助手，�
 const EMPTY_WORKSPACE_KEY = '__no_workspace__'
 const DEFAULT_PROVIDER_TYPE = 'openai'
 const DEFAULT_PROVIDER_BASE_URL = 'https://api.openai.com/v1'
-const TOP_BAR_NO_DRAG_SELECTOR = '.top-bar-btn, .workspace-label, .agent-chip'
 const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
-let isManualTitlebarDragging = false
+const DEFAULT_TITLEBAR_HEIGHT = 38
 const SLASH_COMMAND_DEFS: Array<{
   command: string
   description: string
@@ -244,6 +243,10 @@ const toggleSidebar = byId<HTMLButtonElement>('toggleSidebar')
 const sidebar = byId<HTMLElement>('sidebar')
 const topBar = document.querySelector<HTMLElement>('.top-bar')
 const topBarDrag = document.querySelector<HTMLElement>('.top-bar-drag')
+const windowControls = byId<HTMLDivElement>('windowControls')
+const windowMinimizeBtn = byId<HTMLButtonElement>('windowMinimizeBtn')
+const windowMaximizeBtn = byId<HTMLButtonElement>('windowMaximizeBtn')
+const windowCloseBtn = byId<HTMLButtonElement>('windowCloseBtn')
 const newChatBtn = byId<HTMLButtonElement>('newChatBtn')
 const settingsBtn = byId<HTMLButtonElement>('settingsBtn')
 const historyList = byId<HTMLDivElement>('historyList')
@@ -479,42 +482,67 @@ function showSuccess(msg: string): void {
   showToast(msg, true)
 }
 
+function isWindowsPlatform(): boolean {
+  return /Windows/i.test(navigator.userAgent)
+}
+
+function setWindowMaximizedState(maximized: boolean): void {
+  windowMaximizeBtn.classList.toggle('is-maximized', maximized)
+  windowMaximizeBtn.title = maximized ? '还原' : '最大化'
+}
+
+async function refreshWindowMaximizedState(): Promise<void> {
+  const result = await window.tuanzi.isWindowMaximized()
+  if (!result.ok) {
+    return
+  }
+  setWindowMaximizedState(result.maximized === true)
+}
+
 function bindTopBarDrag(): void {
-  const dragTargets = topBar ? [topBar] : topBarDrag ? [topBarDrag] : []
+  if (!topBar || !topBarDrag) {
+    return
+  }
+  document.documentElement.style.setProperty('--titlebar-height', `${DEFAULT_TITLEBAR_HEIGHT}px`)
+  const isWindows = isWindowsPlatform()
+  document.documentElement.classList.toggle('platform-windows', isWindows)
+  windowControls.hidden = !isWindows
+  if (!isWindows) {
+    return
+  }
 
-  const stopManualDrag = (): void => {
-    if (!isManualTitlebarDragging) {
+  windowMinimizeBtn.addEventListener('click', () => {
+    void window.tuanzi.minimizeWindow()
+  })
+  windowMaximizeBtn.addEventListener('click', () => {
+    void window.tuanzi.toggleMaximizeWindow()
+  })
+  windowCloseBtn.addEventListener('click', () => {
+    void window.tuanzi.closeWindow()
+  })
+
+  topBar.addEventListener('dblclick', (event) => {
+    const target = event.target as HTMLElement | null
+    if (!target) {
       return
     }
-    isManualTitlebarDragging = false
-    window.tuanzi.endWindowDrag()
-  }
-
-  const onWindowMouseMove = (event: MouseEvent): void => {
-    if (!isManualTitlebarDragging) {
+    if (target.closest('.top-bar-btn, .window-controls, .workspace-label, .agent-chip, button, input, textarea, select, a')) {
       return
     }
-    window.tuanzi.updateWindowDrag({ screenX: event.screenX, screenY: event.screenY })
-  }
+    void window.tuanzi.toggleMaximizeWindow()
+  })
 
-  for (const target of dragTargets) {
-    target.addEventListener('mousedown', (event) => {
-      if (event.button !== 0) {
-        return
-      }
-      const clickedNoDrag = (event.target as HTMLElement | null)?.closest(TOP_BAR_NO_DRAG_SELECTOR)
-      if (clickedNoDrag) {
-        return
-      }
-      event.preventDefault()
-      isManualTitlebarDragging = true
-      window.tuanzi.startWindowDrag({ screenX: event.screenX, screenY: event.screenY })
-    })
-  }
-
-  window.addEventListener('mousemove', onWindowMouseMove)
-  window.addEventListener('mouseup', stopManualDrag)
-  window.addEventListener('blur', stopManualDrag)
+  const removeMaximizedListener = window.tuanzi.onWindowMaximizedChanged((payload) => {
+    setWindowMaximizedState(payload.maximized === true)
+  })
+  window.addEventListener(
+    'beforeunload',
+    () => {
+      removeMaximizedListener()
+    },
+    { once: true }
+  )
+  void refreshWindowMaximizedState()
 }
 
 function closeSlashCommandMenu(): void {

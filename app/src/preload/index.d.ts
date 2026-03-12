@@ -136,9 +136,10 @@ export interface TuanziAPI {
   }) => Promise<{ ok: boolean; resumeSnapshot?: ChatResumeSnapshot | null; error?: string }>
   stopMessage: (payload: { taskId: string }) => Promise<{ ok: boolean; error?: string }>
   selectWorkspace: () => Promise<string | null>
-  startWindowDrag: (payload: { screenX: number; screenY: number }) => void
-  updateWindowDrag: (payload: { screenX: number; screenY: number }) => void
-  endWindowDrag: () => void
+  minimizeWindow: () => Promise<{ ok: boolean; error?: string }>
+  toggleMaximizeWindow: () => Promise<{ ok: boolean; maximized?: boolean; error?: string }>
+  closeWindow: () => Promise<{ ok: boolean; error?: string }>
+  isWindowMaximized: () => Promise<{ ok: boolean; maximized?: boolean; error?: string }>
   listAgents: () => Promise<{ ok: boolean; agents?: StoredAgent[]; error?: string }>
   getAgent: (id: string) => Promise<{ ok: boolean; agent?: StoredAgent; error?: string }>
   saveAgent: (payload: AgentSavePayload) => Promise<{ ok: boolean; agent?: StoredAgent; error?: string }>
@@ -212,6 +213,7 @@ export interface TuanziAPI {
     callback: (data: { taskId: string; level: string; message: string }) => void
   ) => () => void
   onPhase: (callback: (data: { taskId: string; phase: string }) => void) => () => void
+  onWindowMaximizedChanged: (callback: (data: { maximized: boolean }) => void) => () => void
 }
 
 declare global {

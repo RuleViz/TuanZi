@@ -114,6 +114,15 @@ body {
   flex-shrink: 0;
 }
 
+.sidebar-top-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 6px 0 6px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
 /* Agent 头像区 */
 .agent-profile {
   display: flex;
@@ -342,7 +351,8 @@ body {
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
-  padding: 0 16px 0 8px;
+  padding: 0;
+  gap: 8px;
   flex-shrink: 0;
   position: relative;
   z-index: 10;
@@ -351,6 +361,8 @@ body {
   -webkit-user-drag: none;
   app-region: drag;
   -webkit-app-region: drag;
+  background: var(--bg-main);
+  border-bottom: 1px solid var(--border-light);
 }
 
 .top-bar-btn {
@@ -367,6 +379,7 @@ body {
   transition: background 0.15s;
   app-region: no-drag;
   -webkit-app-region: no-drag;
+  margin-left: 8px;
 }
 
 .top-bar-btn svg {
@@ -383,7 +396,7 @@ body {
 
 .top-bar-drag {
   flex: 1;
-  min-width: 120px;
+  min-width: 0;
   app-region: drag;
   -webkit-app-region: drag;
   user-select: none;
@@ -392,19 +405,53 @@ body {
   height: 100%;
 }
 
-.top-bar-right {
+.window-controls {
+  display: none;
+  align-items: center;
+  margin-left: auto;
+  height: 100%;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.platform-windows .window-controls {
+  display: flex;
+}
+
+.window-control-btn {
+  width: 46px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #666;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-  /* 间距稍微收紧 */
-  app-region: drag;
-  -webkit-app-region: drag;
-  user-select: none;
-  -webkit-user-select: none;
-  -webkit-user-drag: none;
-  padding-right: 140px;
-  /* 避开 Windows 窗口控制按钮 */
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.window-control-btn:hover {
+  background: #EAEAEA;
+}
+
+.window-control-btn.close:hover {
+  background: #E81123;
+  color: #FFF;
+}
+
+.window-control-btn .icon-restore {
+  display: none;
+}
+
+.window-control-btn.is-maximized .icon-maximize {
+  display: none;
+}
+
+.window-control-btn.is-maximized .icon-restore {
+  display: block;
 }
 
 .workspace-label {
@@ -434,6 +481,15 @@ body {
 .workspace-label.active {
   color: var(--text-main);
   font-weight: 500;
+}
+
+.sidebar-top-meta .workspace-label {
+  width: 100%;
+  max-width: none;
+  display: block;
+  padding: 7px 10px;
+  border: 1px solid var(--border-light);
+  background: #FFF;
 }
 
 /* ═══════════════════════════════════════════════
@@ -1408,6 +1464,12 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.sidebar-top-meta .agent-chip {
+  width: 100%;
+  border-radius: 10px;
+  padding: 6px 10px 6px 8px;
+}
+
 .agent-chip:hover {
   background-color: #E8E8E8;
   border-color: #D0D0D0;
@@ -1754,14 +1816,14 @@ body {
   inset: 0;
   background: #FCFCFC;
   z-index: 1100;
-  app-region: no-drag;
-  -webkit-app-region: no-drag;
+  display: none;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s ease;
 }
 
 .settings-modal-overlay.visible {
+  display: block;
   opacity: 1;
   pointer-events: auto;
 }
@@ -2324,7 +2386,7 @@ body {
   overflow: hidden;
 }
 
-#mcpJsonModal.settings-modal-overlay {
+#mcpJsonModal.settings-modal-overlay.visible {
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(4px);
   display: flex;
@@ -2332,7 +2394,7 @@ body {
   justify-content: center;
 }
 
-#providerModelModal.settings-modal-overlay {
+#providerModelModal.settings-modal-overlay.visible {
   background: rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(4px);
   display: flex;
