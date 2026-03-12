@@ -3,6 +3,7 @@
    ════════════════════════════════════════════════════════ */
 
 :root {
+  --titlebar-height: 38px;
   /* 极简灰白风格 */
   --bg-main: #FFFFFF;
   --bg-sidebar: #FAFAFA;
@@ -107,8 +108,9 @@ body {
 
 /* 窗口拖拽区 */
 .drag-region {
+  app-region: drag;
   -webkit-app-region: drag;
-  height: 38px;
+  height: var(--titlebar-height);
   flex-shrink: 0;
 }
 
@@ -337,11 +339,18 @@ body {
 
 /* 顶部栏 */
 .top-bar {
-  height: 38px;
+  height: var(--titlebar-height);
   display: flex;
   align-items: center;
   padding: 0 16px 0 8px;
   flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  app-region: drag;
+  -webkit-app-region: drag;
 }
 
 .top-bar-btn {
@@ -356,6 +365,7 @@ body {
   align-items: center;
   justify-content: center;
   transition: background 0.15s;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
@@ -373,7 +383,12 @@ body {
 
 .top-bar-drag {
   flex: 1;
+  min-width: 120px;
+  app-region: drag;
   -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
   height: 100%;
 }
 
@@ -381,8 +396,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   /* 间距稍微收紧 */
-  -webkit-app-region: no-drag;
+  app-region: drag;
+  -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
   padding-right: 140px;
   /* 避开 Windows 窗口控制按钮 */
 }
@@ -391,6 +411,12 @@ body {
   font-size: 12px;
   color: var(--text-placeholder);
   cursor: pointer;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
   padding: 4px 10px;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s;
@@ -409,7 +435,6 @@ body {
   color: var(--text-main);
   font-weight: 500;
 }
-
 
 /* ═══════════════════════════════════════════════
    聊天区域
@@ -1289,6 +1314,9 @@ body {
   cursor: pointer;
   transition: all 0.2s;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
@@ -1638,6 +1666,7 @@ body {
   inset: 0;
   background: #FCFCFC;
   z-index: 1100;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
   opacity: 0;
   pointer-events: none;
@@ -1655,6 +1684,7 @@ body {
   background: linear-gradient(180deg, #FFFFFF 0%, #FBFBFB 100%);
   display: flex;
   flex-direction: column;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
   overflow: hidden;
   transform: translateY(10px);
@@ -1665,6 +1695,7 @@ body {
 .settings-modal-content textarea,
 .settings-modal-content select,
 .settings-modal-content button {
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 

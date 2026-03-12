@@ -132,6 +132,8 @@ const DEFAULT_AGENT_PROMPT = '你是一个务实、准确的 AI 编程助手，�
 const EMPTY_WORKSPACE_KEY = '__no_workspace__'
 const DEFAULT_PROVIDER_TYPE = 'openai'
 const DEFAULT_PROVIDER_BASE_URL = 'https://api.openai.com/v1'
+const TOP_BAR_NO_DRAG_SELECTOR = '.top-bar-btn, .workspace-label, .agent-chip'
+let isManualTitlebarDragging = false
 const SLASH_COMMAND_DEFS: Array<{
   command: string
   description: string
@@ -225,6 +227,8 @@ const thinkingBtn = byId<HTMLButtonElement>('thinkingBtn')
 const workspaceLabel = byId<HTMLSpanElement>('workspaceLabel')
 const toggleSidebar = byId<HTMLButtonElement>('toggleSidebar')
 const sidebar = byId<HTMLElement>('sidebar')
+const topBar = document.querySelector<HTMLElement>('.top-bar')
+const topBarDrag = document.querySelector<HTMLElement>('.top-bar-drag')
 const newChatBtn = byId<HTMLButtonElement>('newChatBtn')
 const settingsBtn = byId<HTMLButtonElement>('settingsBtn')
 const historyList = byId<HTMLDivElement>('historyList')
@@ -351,6 +355,44 @@ function showError(msg: string): void {
 
 function showSuccess(msg: string): void {
   showToast(msg, true)
+}
+
+function bindTopBarDrag(): void {
+  const dragTargets = topBar ? [topBar] : topBarDrag ? [topBarDrag] : []
+
+  const stopManualDrag = (): void => {
+    if (!isManualTitlebarDragging) {
+      return
+    }
+    isManualTitlebarDragging = false
+    window.tuanzi.endWindowDrag()
+  }
+
+  const onWindowMouseMove = (event: MouseEvent): void => {
+    if (!isManualTitlebarDragging) {
+      return
+    }
+    window.tuanzi.updateWindowDrag({ screenX: event.screenX, screenY: event.screenY })
+  }
+
+  for (const target of dragTargets) {
+    target.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) {
+        return
+      }
+      const clickedNoDrag = (event.target as HTMLElement | null)?.closest(TOP_BAR_NO_DRAG_SELECTOR)
+      if (clickedNoDrag) {
+        return
+      }
+      event.preventDefault()
+      isManualTitlebarDragging = true
+      window.tuanzi.startWindowDrag({ screenX: event.screenX, screenY: event.screenY })
+    })
+  }
+
+  window.addEventListener('mousemove', onWindowMouseMove)
+  window.addEventListener('mouseup', stopManualDrag)
+  window.addEventListener('blur', stopManualDrag)
 }
 
 function closeSlashCommandMenu(): void {
@@ -2716,6 +2758,7 @@ async function init(): Promise<void> {
   renderActiveConversation()
   await refreshResumeSnapshot()
   renderActiveConversation()
+  bindTopBarDrag()
 
   document.addEventListener('click', (event) => {
     closeHistoryContextMenu()

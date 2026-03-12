@@ -155,6 +155,18 @@ const tuanziAPI = {
     return ipcRenderer.invoke('dialog:selectWorkspace')
   },
 
+  startWindowDrag: (payload: { screenX: number; screenY: number }): void => {
+    ipcRenderer.send('window:dragStart', payload)
+  },
+
+  updateWindowDrag: (payload: { screenX: number; screenY: number }): void => {
+    ipcRenderer.send('window:dragMove', payload)
+  },
+
+  endWindowDrag: (): void => {
+    ipcRenderer.send('window:dragEnd')
+  },
+
   listAgents: (): Promise<{ ok: boolean; agents?: StoredAgent[]; error?: string }> => {
     return ipcRenderer.invoke('agent:list')
   },

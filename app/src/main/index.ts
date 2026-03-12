@@ -17,6 +17,10 @@ import {
 let mainWindow: BrowserWindow | null = null
 const activeTasks = new Map<string, AbortController>()
 const chatResumeStore = new ChatResumeStore(app.getPath("userData"))
+const windowDragState = new Map<
+  number,
+  { pointerStartX: number; pointerStartY: number; windowStartX: number; windowStartY: number }
+>()
 
 type GlobalSkillCategory = "file_system" | "execute_command" | "web_search"
 
@@ -559,6 +563,10 @@ function normalizeMcpServers(input: unknown): Record<string, McpServerConfigEntr
 }
 
 function createWindow(): void {
+  const isWindows = process.platform === 'win32'
+  const isMac = process.platform === 'darwin'
+  const customTitleBarHeight = 38
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 780,
@@ -566,12 +574,17 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#FAFAFA',
-      symbolColor: '#777777',
-      height: 38
-    },
+    ...(isMac ? { titleBarStyle: 'hidden' } : {}),
+    ...(isWindows
+      ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#FAFAFA',
+          symbolColor: '#777777',
+          height: customTitleBarHeight
+        }
+      }
+      : {}),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -601,6 +614,14 @@ function createWindow(): void {
 /**
  * Select a workspace directory via system dialog.
  */
+function getSenderWindow(webContents: Electron.WebContents): BrowserWindow | null {
+  const win = BrowserWindow.fromWebContents(webContents)
+  if (!win || win.isDestroyed()) {
+    return null
+  }
+  return win
+}
+
 ipcMain.handle('dialog:selectWorkspace', async () => {
   if (!mainWindow) return null
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -799,6 +820,51 @@ ipcMain.handle(
     return runChatTask(event.sender, payload)
   }
 )
+ipcMain.on('window:dragStart', (event, payload: { screenX?: number; screenY?: number } | undefined) => {
+  const win = getSenderWindow(event.sender)
+  if (!win || win.isMaximized() || win.isMinimized()) {
+    return
+  }
+  const pointerStartX = Number(payload?.screenX)
+  const pointerStartY = Number(payload?.screenY)
+  if (!Number.isFinite(pointerStartX) || !Number.isFinite(pointerStartY)) {
+    return
+  }
+  const bounds = win.getBounds()
+  windowDragState.set(win.id, {
+    pointerStartX,
+    pointerStartY,
+    windowStartX: bounds.x,
+    windowStartY: bounds.y
+  })
+})
+
+ipcMain.on('window:dragMove', (event, payload: { screenX?: number; screenY?: number } | undefined) => {
+  const win = getSenderWindow(event.sender)
+  if (!win) {
+    return
+  }
+  const drag = windowDragState.get(win.id)
+  if (!drag) {
+    return
+  }
+  const screenX = Number(payload?.screenX)
+  const screenY = Number(payload?.screenY)
+  if (!Number.isFinite(screenX) || !Number.isFinite(screenY)) {
+    return
+  }
+  const nextX = Math.round(drag.windowStartX + (screenX - drag.pointerStartX))
+  const nextY = Math.round(drag.windowStartY + (screenY - drag.pointerStartY))
+  win.setPosition(nextX, nextY, false)
+})
+
+ipcMain.on('window:dragEnd', (event) => {
+  const win = getSenderWindow(event.sender)
+  if (!win) {
+    return
+  }
+  windowDragState.delete(win.id)
+})
 
 ipcMain.handle(
   'chat:getResumeState',
@@ -1095,7 +1161,7 @@ async function probeMcpServers(
   }) as {
     agentSettings?: { mcp?: { startupTimeoutMs?: number; requestTimeoutMs?: number } }
   }
-  // npx -y may need to download packages on first run – use generous defaults.
+  // npx -y may need to download packages on first run; use generous defaults.
   const startupTimeoutMs = runtimeConfig.agentSettings?.mcp?.startupTimeoutMs ?? 30_000
   const requestTimeoutMs = runtimeConfig.agentSettings?.mcp?.requestTimeoutMs ?? 30_000
 
@@ -1354,3 +1420,4 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
+

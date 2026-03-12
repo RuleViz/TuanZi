@@ -129,6 +129,9 @@ export interface TuanziAPI {
   }) => Promise<{ ok: boolean; resumeSnapshot?: ChatResumeSnapshot | null; error?: string }>
   stopMessage: (payload: { taskId: string }) => Promise<{ ok: boolean; error?: string }>
   selectWorkspace: () => Promise<string | null>
+  startWindowDrag: (payload: { screenX: number; screenY: number }) => void
+  updateWindowDrag: (payload: { screenX: number; screenY: number }) => void
+  endWindowDrag: () => void
   listAgents: () => Promise<{ ok: boolean; agents?: StoredAgent[]; error?: string }>
   getAgent: (id: string) => Promise<{ ok: boolean; agent?: StoredAgent; error?: string }>
   saveAgent: (payload: AgentSavePayload) => Promise<{ ok: boolean; agent?: StoredAgent; error?: string }>
