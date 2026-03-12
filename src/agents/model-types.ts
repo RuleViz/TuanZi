@@ -2,9 +2,31 @@ import type { ModelFunctionToolDefinition } from "../core/types";
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
+export interface ChatTextContentPart {
+  type: "text";
+  text: string;
+}
+
+export interface ChatImageUrlContentPart {
+  type: "image_url";
+  image_url: {
+    url: string;
+    detail?: "auto" | "low" | "high";
+  };
+}
+
+export type ChatContentPart = ChatTextContentPart | ChatImageUrlContentPart;
+export type ChatMessageContent = string | ChatContentPart[];
+
+export interface ChatInputImage {
+  dataUrl: string;
+  mimeType: string;
+  detail?: "auto" | "low" | "high";
+}
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string;
+  content: ChatMessageContent;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];

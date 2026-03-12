@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ToolCallRecord, ToolExecutionContext } from "../core/types";
 import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "./react-tool-agent";
+import type { ChatInputImage } from "./model-types";
 import { TuanZiAgent } from "./tuanzi";
 
 export interface OrchestrationResult {
@@ -21,6 +22,7 @@ export interface OrchestratorRunInput {
   task: string;
   memoryTurns?: ConversationMemoryTurn[];
   resumeState?: ToolLoopResumeState;
+  userImages?: ChatInputImage[];
 }
 
 export type OrchestratorPhase = "running";
@@ -41,7 +43,7 @@ export class PlanToDoOrchestrator {
   ) { }
 
   async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
-    const { task, memoryTurns, resumeState } = normalizeRunInput(input);
+    const { task, memoryTurns, resumeState, userImages } = normalizeRunInput(input);
     const conversationContext = buildConversationContext(memoryTurns);
     this.toolContext.taskId = randomUUID();
     hooks?.onPhaseChange?.("running");
@@ -52,6 +54,7 @@ export class PlanToDoOrchestrator {
       onToolCallCompleted: hooks?.onToolCallCompleted,
       onStateChange: hooks?.onStateChange,
       resumeState,
+      userImages,
       signal: hooks?.signal
     });
 
@@ -72,7 +75,8 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   return {
     task: input.task,
     memoryTurns: input.memoryTurns,
-    resumeState: input.resumeState
+    resumeState: input.resumeState,
+    userImages: input.userImages
   };
 }
 

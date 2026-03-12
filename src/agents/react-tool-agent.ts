@@ -9,7 +9,10 @@ import type {
 import {
   isInterruptedAssistantMessageError,
   type ChatCompletionClient,
+  type ChatContentPart,
+  type ChatInputImage,
   type ChatMessage,
+  type ChatMessageContent,
   type ToolCall
 } from "./model-types";
 
@@ -47,6 +50,7 @@ export class ReactToolAgent {
   async run(input: {
     systemPrompt: string;
     userPrompt: string;
+    userImages?: ChatInputImage[];
     allowedTools: string[];
     additionalToolDefinitions?: ModelFunctionToolDefinition[];
     temperature?: number;
@@ -67,7 +71,10 @@ export class ReactToolAgent {
     const messages = cloneMessages(
       input.resumeState?.messages ?? [
         { role: "system", content: input.systemPrompt },
-        { role: "user", content: input.userPrompt }
+        {
+          role: "user",
+          content: buildInitialUserMessageContent(input.userPrompt, input.userImages)
+        }
       ]
     );
     const toolCalls = cloneToolCallSnapshots(input.resumeState?.toolCalls ?? []);
@@ -164,7 +171,7 @@ export class ReactToolAgent {
       if (calls.length === 0) {
         this.toolContext.logger.info(`[agent] completed without tool calls at turn=${turn + 1}`);
         return {
-          finalText: assistantMessage.content ?? "",
+          finalText: assistantMessageContentToText(assistantMessage.content),
           toolCalls,
           messages
         };
@@ -288,10 +295,11 @@ export class ReactToolAgent {
 }
 
 function appendAssistantText(message: ChatMessage | null, delta: string): ChatMessage {
+  const currentContent = message ? assistantMessageContentToText(message.content) : "";
   if (message) {
     return {
       ...message,
-      content: `${message.content}${delta}`
+      content: `${currentContent}${delta}`
     };
   }
   return {
@@ -319,15 +327,78 @@ function hasCarryForwardAssistantText(message: ChatMessage | null): boolean {
   if (!message) {
     return false;
   }
-  return Boolean(message.content || message.reasoning_content);
+  return Boolean(assistantMessageContentToText(message.content) || message.reasoning_content);
 }
 
 function stripPartialAssistantMessage(message: ChatMessage): ChatMessage {
   return {
     role: "assistant",
-    content: message.content,
+    content: assistantMessageContentToText(message.content),
     reasoning_content: message.reasoning_content
   };
+}
+
+function buildInitialUserMessageContent(userPrompt: string, userImages?: ChatInputImage[]): ChatMessageContent {
+  const normalizedImages = normalizeInputImages(userImages);
+  if (normalizedImages.length === 0) {
+    return userPrompt;
+  }
+
+  const text = userPrompt.trim() || "Please analyze the uploaded image and continue with the task.";
+  const parts: ChatContentPart[] = [{ type: "text", text }];
+  for (const image of normalizedImages) {
+    parts.push({
+      type: "image_url",
+      image_url: {
+        url: image.dataUrl,
+        ...(image.detail ? { detail: image.detail } : {})
+      }
+    });
+  }
+  return parts;
+}
+
+function normalizeInputImages(input: ChatInputImage[] | undefined): ChatInputImage[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [];
+  }
+  const output: ChatInputImage[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    if (typeof item.dataUrl !== "string" || !item.dataUrl.trim()) {
+      continue;
+    }
+    if (typeof item.mimeType !== "string" || !item.mimeType.trim()) {
+      continue;
+    }
+    if (!item.dataUrl.startsWith("data:image/")) {
+      continue;
+    }
+    output.push({
+      dataUrl: item.dataUrl,
+      mimeType: item.mimeType,
+      ...(item.detail ? { detail: item.detail } : {})
+    });
+  }
+  return output;
+}
+
+function assistantMessageContentToText(content: ChatMessageContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  let text = "";
+  for (const part of content) {
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    }
+  }
+  return text;
 }
 
 function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
@@ -337,7 +408,7 @@ function cloneMessages(messages: ChatMessage[]): ChatMessage[] {
 function cloneMessage(message: ChatMessage): ChatMessage {
   return {
     role: message.role,
-    content: message.content,
+    content: cloneMessageContent(message.content),
     name: message.name,
     tool_call_id: message.tool_call_id,
     reasoning_content: message.reasoning_content,
@@ -350,6 +421,13 @@ function cloneMessage(message: ChatMessage): ChatMessage {
       }
     }))
   };
+}
+
+function cloneMessageContent(content: ChatMessageContent): ChatMessageContent {
+  if (typeof content === "string") {
+    return content;
+  }
+  return content.map((part) => cloneJsonLike(part));
 }
 
 function cloneToolCallSnapshots(toolCalls: ToolLoopToolCallSnapshot[]): ToolLoopToolCallSnapshot[] {

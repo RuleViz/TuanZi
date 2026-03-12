@@ -10,7 +10,7 @@ import type {
 } from "../core/types";
 import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
 import { resolveActiveTools } from "../core/agent-tooling";
-import type { ChatCompletionClient } from "./model-types";
+import type { ChatCompletionClient, ChatInputImage } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
@@ -33,6 +33,7 @@ export class TuanZiAgent {
       onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
       onStateChange?: (state: ToolLoopResumeState) => void;
       resumeState?: ToolLoopResumeState;
+      userImages?: ChatInputImage[];
       signal?: AbortSignal;
     }
   ): Promise<{
@@ -117,6 +118,7 @@ export class TuanZiAgent {
     const output = await agent.run({
       systemPrompt,
       userPrompt,
+      userImages: hooks?.userImages,
       allowedTools: hooks?.resumeState?.allowedTools ?? mergedAllowedTools,
       additionalToolDefinitions: mcpTooling.modelToolDefinitions,
       maxTurns: this.toolContext.agentSettings?.toolLoop.coderMaxTurns ?? 20,

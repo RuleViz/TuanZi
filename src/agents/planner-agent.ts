@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ExecutionPlan, PlanStep } from "../core/types";
 import { parseJsonObject } from "../core/json-utils";
-import type { ChatCompletionClient } from "./model-types";
+import type { ChatCompletionClient, ChatMessageContent } from "./model-types";
 import { plannerSystemPrompt } from "./prompts";
 
 export class PlannerAgent {
@@ -33,7 +33,7 @@ export class PlannerAgent {
       messages
     });
 
-    const parsed = parseJsonObject(completion.message.content ?? "");
+    const parsed = parseJsonObject(messageContentToText(completion.message.content));
     if (!parsed) {
       return fallbackPlan(task);
     }
@@ -55,6 +55,22 @@ export class PlannerAgent {
       suggestedTestCommand
     };
   }
+}
+
+function messageContentToText(content: ChatMessageContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  let text = "";
+  for (const part of content) {
+    if (part.type === "text") {
+      text += part.text;
+    }
+  }
+  return text;
 }
 
 function toStep(value: unknown): PlanStep | null {

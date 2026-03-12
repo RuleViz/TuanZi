@@ -521,6 +521,26 @@ body {
   max-width: 75%;
   line-height: 1.6;
   word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.message.user .msg-user-image {
+  display: block;
+  max-width: min(360px, 60vw);
+  max-height: 240px;
+  border-radius: 10px;
+  object-fit: contain;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #FFFFFF;
+}
+
+.message.user .msg-user-image-meta {
+  font-size: 11px;
+  color: #666;
+  line-height: 1.4;
+  word-break: break-word;
 }
 
 /* 助手消息 */
@@ -823,6 +843,74 @@ body {
 
 .input-textarea::placeholder {
   color: var(--text-placeholder);
+}
+
+.input-image-preview {
+  display: none;
+  padding: 0 14px 8px 14px;
+}
+
+.input-image-preview.visible {
+  display: block;
+}
+
+.input-image-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-light);
+  background: #FFFFFF;
+  max-width: 100%;
+}
+
+.input-image-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.input-image-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.input-image-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+
+.input-image-size {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.input-image-remove {
+  border: none;
+  background: #F4F4F4;
+  color: #555;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.input-image-remove:hover {
+  background: #EAEAEA;
 }
 
 .input-toolbar {
@@ -2242,6 +2330,32 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+#providerModelModal.settings-modal-overlay {
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.provider-model-modal-content {
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  border-radius: 16px;
+  background: #FFFFFF;
+  box-shadow: 0 24px 36px -8px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.provider-model-modal-body {
+  padding: 14px 22px 16px;
+  min-height: 0;
+  display: grid;
+  gap: 12px;
 }
 
 .mcp-json-modal-body {

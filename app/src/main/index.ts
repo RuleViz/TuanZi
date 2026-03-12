@@ -21,6 +21,8 @@ const windowDragState = new Map<
   number,
   { pointerStartX: number; pointerStartY: number; windowStartX: number; windowStartY: number }
 >()
+const MAX_CHAT_IMAGE_COUNT = 1
+const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
 
 type GlobalSkillCategory = "file_system" | "execute_command" | "web_search"
 
@@ -36,6 +38,12 @@ interface ProviderModelItem {
   displayName: string
   isVision: boolean
   enabled: boolean
+}
+
+interface ChatImageInput {
+  name: string
+  mimeType: string
+  dataUrl: string
 }
 
 interface ProviderConfig extends AgentProviderConfig {
@@ -109,6 +117,7 @@ type CreateOrchestratorFn = (
       task: string
       memoryTurns?: Array<{ user: string; assistant: string }>
       resumeState?: ToolLoopResumeStateSnapshot | null
+      userImages?: Array<{ dataUrl: string; mimeType: string }>
     },
     hooks?: {
       onPhaseChange?: (phase: string) => void
@@ -484,6 +493,98 @@ function buildChatResumeSnapshot(input: {
   }
 }
 
+function normalizeChatImages(input: unknown): ChatImageInput[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    return []
+  }
+  if (input.length > MAX_CHAT_IMAGE_COUNT) {
+    throw new Error(`Only ${MAX_CHAT_IMAGE_COUNT} image is supported per message.`)
+  }
+
+  const output: ChatImageInput[] = []
+  for (const item of input) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error("Invalid image payload.")
+    }
+    const record = item as Record<string, unknown>
+    const name = normalizeOptionalString(record.name) ?? "image"
+    const mimeType = normalizeOptionalString(record.mimeType)?.toLowerCase() ?? ""
+    const dataUrl = normalizeOptionalString(record.dataUrl)
+    if (!mimeType.startsWith("image/")) {
+      throw new Error("Only image uploads are supported.")
+    }
+    if (!dataUrl) {
+      throw new Error("Missing image data.")
+    }
+
+    const headerMatch = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,/i)
+    if (!headerMatch) {
+      throw new Error("Invalid image format. Please upload a standard image file.")
+    }
+    const headerMimeType = headerMatch[1].toLowerCase()
+    if (headerMimeType !== mimeType) {
+      throw new Error("Image MIME type mismatch.")
+    }
+
+    const byteSize = estimateDataUrlByteSize(dataUrl)
+    if (byteSize === null) {
+      throw new Error("Invalid base64 image content.")
+    }
+    if (byteSize > MAX_CHAT_IMAGE_BYTES) {
+      throw new Error(`Image is too large. Max size is ${Math.floor(MAX_CHAT_IMAGE_BYTES / (1024 * 1024))} MB.`)
+    }
+
+    output.push({
+      name,
+      mimeType,
+      dataUrl
+    })
+  }
+  return output
+}
+
+function estimateDataUrlByteSize(dataUrl: string): number | null {
+  const commaIndex = dataUrl.indexOf(",")
+  if (commaIndex < 0) {
+    return null
+  }
+  const base64 = dataUrl.slice(commaIndex + 1).trim()
+  if (!base64 || !/^[A-Za-z0-9+/=]+$/.test(base64)) {
+    return null
+  }
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
+  return Math.floor((base64.length * 3) / 4) - padding
+}
+
+function getActiveProvider(config: AgentBackendConfig): ProviderConfig | null {
+  const activeProviderId = normalizeOptionalString(config.activeProviderId)
+  if (!activeProviderId) {
+    return null
+  }
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  const provider = providers.find((item) => item.id === activeProviderId) ?? null
+  if (!provider || provider.isEnabled === false) {
+    return null
+  }
+  return provider
+}
+
+function supportsVisionForActiveModel(config: AgentBackendConfig): boolean {
+  const provider = getActiveProvider(config)
+  if (!provider) {
+    return false
+  }
+  const activeModelId = normalizeOptionalString(provider.model)
+  if (!activeModelId) {
+    return false
+  }
+  const model = provider.models.find((item) => item.id.toLowerCase() === activeModelId.toLowerCase()) ?? null
+  if (!model || model.enabled === false) {
+    return false
+  }
+  return model.isVision === true
+}
+
 function resolveWorkspaceFromInput(raw: unknown): string {
   const workspace = normalizeOptionalString(raw)
   return resolve(workspace ?? process.cwd())
@@ -641,15 +742,16 @@ ipcMain.handle('dialog:selectWorkspace', async () => {
  */
 async function runChatTask(
   webContents: Electron.WebContents,
-  payload: {
-    taskId?: string
-    sessionId?: string
-    message: string
-    workspace: string
-    history: Array<{ user: string; assistant: string }>
-    agentId?: string | null
-    thinking?: boolean
-    resumeState?: ToolLoopResumeStateSnapshot | null
+    payload: {
+      taskId?: string
+      sessionId?: string
+      message: string
+      images?: ChatImageInput[]
+      workspace: string
+      history: Array<{ user: string; assistant: string }>
+      agentId?: string | null
+      thinking?: boolean
+      resumeState?: ToolLoopResumeStateSnapshot | null
   }
 ) {
   const taskId = payload.taskId || Date.now().toString(36)
@@ -665,6 +767,27 @@ async function runChatTask(
       approvalMode: "auto",
       agentOverride: normalizeOptionalString(payload.agentId ?? null)
     }) as any
+    const images = normalizeChatImages(payload.images)
+    const effectiveMessage = normalizeOptionalString(payload.message) ?? (
+      images.length > 0 ? "请根据我上传的图片进行分析并回答。" : ""
+    )
+    if (!effectiveMessage) {
+      return {
+        ok: false,
+        taskId,
+        error: "Message cannot be empty."
+      }
+    }
+    if (
+      images.length > 0 &&
+      !supportsVisionForActiveModel(runtimeConfig.agentBackend.config as AgentBackendConfig)
+    ) {
+      return {
+        ok: false,
+        taskId,
+        error: "当前模型不支持图像理解，请切换到支持图像理解的模型后重试。"
+      }
+    }
 
     if (payload.thinking) {
       runtimeConfig.agentSettings.modelRequest.thinking.type = "enabled"
@@ -708,7 +831,7 @@ async function runChatTask(
         taskId,
         sessionId,
         workspace: payload.workspace,
-        message: payload.message,
+        message: effectiveMessage,
         history: memoryTurns,
         agentId: normalizeOptionalString(payload.agentId ?? null),
         thinkingEnabled: payload.thinking === true,
@@ -725,8 +848,12 @@ async function runChatTask(
 
     const result = await orchestrator.run(
       {
-        task: payload.message,
+        task: effectiveMessage,
         memoryTurns,
+        userImages: images.map((item) => ({
+          dataUrl: item.dataUrl,
+          mimeType: item.mimeType
+        })),
         resumeState: payload.resumeState ?? null
       },
       {
@@ -811,6 +938,7 @@ ipcMain.handle(
       taskId?: string
       sessionId?: string
       message: string
+      images?: ChatImageInput[]
       workspace: string
       history: Array<{ user: string; assistant: string }>
       agentId?: string | null

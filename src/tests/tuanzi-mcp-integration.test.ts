@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { TuanZiAgent } from "../agents/tuanzi";
-import type { ChatCompletionClient, ChatCompletionResult, ChatMessage } from "../agents/model-types";
+import type {
+  ChatCompletionClient,
+  ChatCompletionResult,
+  ChatMessage,
+  ChatMessageContent
+} from "../agents/model-types";
 import { ToolRegistry } from "../core/tool-registry";
 import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
 import type {
@@ -35,6 +40,22 @@ class CaptureClient implements ChatCompletionClient {
       }
     };
   }
+}
+
+function messageContentToText(content: ChatMessageContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  let text = "";
+  for (const part of content) {
+    if (part.type === "text") {
+      text += part.text;
+    }
+  }
+  return text;
 }
 
 test("TuanZiAgent should inject MCP tool schemas and prompt guidance", async () => {
@@ -134,8 +155,12 @@ test("TuanZiAgent should inject MCP tool schemas and prompt guidance", async () 
   assert.equal(output.result.summary, "done");
   assert.equal(client.lastInput !== null, true);
   assert.equal(client.lastInput?.tools?.some((tool) => tool.function.name === "mcp__files__read_file"), true);
-  const systemContent = client.lastInput?.messages.find((message) => message.role === "system")?.content ?? "";
-  const userContent = client.lastInput?.messages.find((message) => message.role === "user")?.content ?? "";
+  const systemContent = messageContentToText(
+    client.lastInput?.messages.find((message) => message.role === "system")?.content ?? ""
+  );
+  const userContent = messageContentToText(
+    client.lastInput?.messages.find((message) => message.role === "user")?.content ?? ""
+  );
   assert.match(systemContent, /<mcp_guidance>/);
   assert.match(userContent, /Connected external MCP tools/);
   assert.match(userContent, /mcp__files__read_file/);

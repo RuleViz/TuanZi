@@ -4,6 +4,7 @@
   type ChatCompletionOptions,
   type ChatCompletionRequestOptions,
   type ChatCompletionResult,
+  type ChatMessageContent,
   type ChatMessage,
   type ToolCall
 } from "./model-types";
@@ -212,6 +213,22 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+function assistantContentToText(content: ChatMessageContent): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  let text = "";
+  for (const part of content) {
+    if (part.type === "text") {
+      text += part.text;
+    }
+  }
+  return text;
+}
+
 function applyStreamChunk(
   chunk: StreamChunk,
   message: ChatMessage,
@@ -229,7 +246,7 @@ function applyStreamChunk(
   }
 
   if (typeof delta.content === "string" && delta.content.length > 0) {
-    message.content = `${message.content}${delta.content}`;
+    message.content = `${assistantContentToText(message.content)}${delta.content}`;
     onContentDelta?.(delta.content);
   }
 

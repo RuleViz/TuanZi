@@ -41,6 +41,12 @@ export interface ChatResumeSnapshot {
   updatedAt: string
 }
 
+export interface ChatImageInput {
+  name: string
+  mimeType: string
+  dataUrl: string
+}
+
 export type GlobalSkillCategory = 'file_system' | 'execute_command' | 'web_search'
 
 export interface AgentProviderConfig {
@@ -126,6 +132,7 @@ const tuanziAPI = {
     taskId?: string
     sessionId?: string
     message: string
+    images?: ChatImageInput[]
     workspace: string
     history: Array<{ user: string; assistant: string }>
     agentId?: string | null

@@ -123,6 +123,16 @@ interface SlashSuggestion {
   executeImmediately: boolean
 }
 
+interface ChatImageInput {
+  name: string
+  mimeType: string
+  dataUrl: string
+}
+
+interface PendingChatImage extends ChatImageInput {
+  sizeBytes: number
+}
+
 const SESSION_STORAGE_KEY = 'tuanzi.desktop.sessions.v1'
 const AGENT_STORAGE_KEY = 'tuanzi.desktop.activeAgent.v1'
 const DEFAULT_SESSION_TITLE = '新对话'
@@ -133,6 +143,7 @@ const EMPTY_WORKSPACE_KEY = '__no_workspace__'
 const DEFAULT_PROVIDER_TYPE = 'openai'
 const DEFAULT_PROVIDER_BASE_URL = 'https://api.openai.com/v1'
 const TOP_BAR_NO_DRAG_SELECTOR = '.top-bar-btn, .workspace-label, .agent-chip'
+const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
 let isManualTitlebarDragging = false
 const SLASH_COMMAND_DEFS: Array<{
   command: string
@@ -199,6 +210,7 @@ const state = {
   slashSuggestions: [] as SlashSuggestion[],
   slashActiveIndex: 0,
   slashVisible: false,
+  pendingImage: null as PendingChatImage | null,
   mcpServers: [] as McpDashboardServer[],
   expandedMcpServerIds: new Set<string>(),
   isMcpLoading: false,
@@ -218,10 +230,13 @@ const welcomeState = byId<HTMLDivElement>('welcomeState')
 const welcomeAvatar = byId<HTMLDivElement>('welcomeAvatar')
 const welcomeTitle = byId<HTMLHeadingElement>('welcomeTitle')
 const inputTextarea = byId<HTMLTextAreaElement>('inputTextarea')
+const imageFileInput = byId<HTMLInputElement>('imageFileInput')
+const inputImagePreview = byId<HTMLDivElement>('inputImagePreview')
 const inputBox = byId<HTMLDivElement>('inputBox')
 const sendBtn = byId<HTMLButtonElement>('sendBtn')
 const stopBtn = byId<HTMLButtonElement>('stopBtn')
 const sendingIndicator = byId<HTMLDivElement>('sendingIndicator')
+const attachImageBtn = byId<HTMLButtonElement>('attachImageBtn')
 const selectWorkspaceBtn = byId<HTMLButtonElement>('selectWorkspaceBtn')
 const thinkingBtn = byId<HTMLButtonElement>('thinkingBtn')
 const workspaceLabel = byId<HTMLSpanElement>('workspaceLabel')
@@ -284,6 +299,13 @@ const closeMcpJsonModalBtn = byId<HTMLButtonElement>('closeMcpJsonModalBtn')
 const mcpJsonCancelBtn = byId<HTMLButtonElement>('mcpJsonCancelBtn')
 const mcpJsonConfirmBtn = byId<HTMLButtonElement>('mcpJsonConfirmBtn')
 const mcpJsonInput = byId<HTMLTextAreaElement>('mcpJsonInput')
+const providerModelModal = byId<HTMLDivElement>('providerModelModal')
+const closeProviderModelModalBtn = byId<HTMLButtonElement>('closeProviderModelModalBtn')
+const providerModelModalCancelBtn = byId<HTMLButtonElement>('providerModelModalCancelBtn')
+const providerModelModalConfirmBtn = byId<HTMLButtonElement>('providerModelModalConfirmBtn')
+const providerModelModalIdInput = byId<HTMLInputElement>('providerModelModalIdInput')
+const providerModelModalDisplayNameInput = byId<HTMLInputElement>('providerModelModalDisplayNameInput')
+const providerModelModalVisionToggle = byId<HTMLButtonElement>('providerModelModalVisionToggle')
 const settingsCancelBtn = byId<HTMLButtonElement>('settingsCancelBtn')
 const settingsSaveBtn = byId<HTMLButtonElement>('settingsSaveBtn')
 const slashCommandMenu = byId<HTMLDivElement>('slashCommandMenu')
@@ -310,6 +332,106 @@ function normalizeOptionalString(value: unknown): string | null {
   }
   const trimmed = value.trim()
   return trimmed ? trimmed : null
+}
+
+function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B'
+  }
+  if (bytes < 1024) {
+    return `${Math.round(bytes)} B`
+  }
+  const kb = bytes / 1024
+  if (kb < 1024) {
+    return `${kb.toFixed(1)} KB`
+  }
+  return `${(kb / 1024).toFixed(2)} MB`
+}
+
+function clearPendingImage(): void {
+  state.pendingImage = null
+  inputImagePreview.classList.remove('visible')
+  inputImagePreview.innerHTML = ''
+  attachImageBtn.classList.remove('active')
+  imageFileInput.value = ''
+}
+
+function renderPendingImagePreview(): void {
+  const image = state.pendingImage
+  if (!image) {
+    inputImagePreview.classList.remove('visible')
+    inputImagePreview.innerHTML = ''
+    attachImageBtn.classList.remove('active')
+    return
+  }
+
+  inputImagePreview.classList.add('visible')
+  attachImageBtn.classList.add('active')
+  inputImagePreview.innerHTML = `
+    <div class="input-image-card">
+      <img class="input-image-thumb" src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(image.name)}" />
+      <div class="input-image-meta">
+        <div class="input-image-name">${escapeHtml(image.name)}</div>
+        <div class="input-image-size">${escapeHtml(formatByteSize(image.sizeBytes))}</div>
+      </div>
+      <button class="input-image-remove" id="inputImageRemoveBtn" title="移除图片">×</button>
+    </div>
+  `
+  const removeBtn = byId<HTMLButtonElement>('inputImageRemoveBtn')
+  removeBtn.addEventListener('click', () => {
+    clearPendingImage()
+  })
+}
+
+function setPendingImage(image: PendingChatImage): void {
+  state.pendingImage = image
+  renderPendingImagePreview()
+}
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result
+      if (typeof result !== 'string') {
+        reject(new Error('Failed to read image data'))
+        return
+      }
+      resolve(result)
+    }
+    reader.onerror = () => {
+      reject(reader.error ?? new Error('Failed to read image data'))
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+async function attachImageFile(file: File): Promise<void> {
+  if (state.isSending) {
+    return
+  }
+  if (!file.type.startsWith('image/')) {
+    showError('Only image files are supported')
+    return
+  }
+  if (file.size > MAX_CHAT_IMAGE_BYTES) {
+    showError(`Image is too large. Max ${Math.floor(MAX_CHAT_IMAGE_BYTES / (1024 * 1024))} MB`)
+    return
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    setPendingImage({
+      name: file.name || 'image',
+      mimeType: file.type,
+      dataUrl,
+      sizeBytes: file.size
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    showError(`Failed to load image: ${message}`)
+  } finally {
+    imageFileInput.value = ''
+  }
 }
 
 function getAgentAvatar(agent: Pick<StoredAgent, 'name' | 'avatar'>): string {
@@ -769,12 +891,34 @@ function renderMarkdownHtml(text: string): string {
   }
 }
 
-function addUserMessage(text: string): void {
+function addUserMessage(text: string, image?: PendingChatImage | null): void {
   welcomeState.style.display = 'none'
 
   const messageEl = document.createElement('div')
   messageEl.className = 'message user'
-  messageEl.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}</div>`
+  const bubble = document.createElement('div')
+  bubble.className = 'msg-bubble'
+
+  if (image) {
+    const imageEl = document.createElement('img')
+    imageEl.className = 'msg-user-image'
+    imageEl.src = image.dataUrl
+    imageEl.alt = image.name
+    bubble.appendChild(imageEl)
+
+    const metaEl = document.createElement('div')
+    metaEl.className = 'msg-user-image-meta'
+    metaEl.textContent = `${image.name} · ${formatByteSize(image.sizeBytes)}`
+    bubble.appendChild(metaEl)
+  }
+
+  if (text) {
+    const textEl = document.createElement('div')
+    textEl.textContent = text
+    bubble.appendChild(textEl)
+  }
+
+  messageEl.appendChild(bubble)
   chatArea.appendChild(messageEl)
   scrollToBottom()
 }
@@ -1327,6 +1471,7 @@ function switchSession(sessionId: string): void {
   if (!target) {
     return
   }
+  clearPendingImage()
   state.activeSessionId = target.id
   renderSessionList()
   renderWorkspaceLabel(target.workspace)
@@ -2059,30 +2204,73 @@ function removeActiveDraftProvider(): void {
   renderSettingsDraft()
 }
 
-function addModelToActiveProvider(): void {
+function openProviderModelModal(): void {
+  updateActiveProviderFromInputs()
   const provider = getActiveDraftProvider()
   if (!provider) {
     return
   }
-  const modelId = normalizeOptionalString(window.prompt('Enter model ID (for example: gpt-4o-mini)', ''))
+
+  providerModelModalIdInput.value = ''
+  providerModelModalDisplayNameInput.value = ''
+  toggleSwitch(providerModelModalVisionToggle, false)
+  providerModelModal.classList.add('visible')
+  requestAnimationFrame(() => {
+    if (!providerModelModal.classList.contains('visible')) {
+      return
+    }
+    providerModelModalIdInput.focus()
+    providerModelModalIdInput.setSelectionRange(
+      providerModelModalIdInput.value.length,
+      providerModelModalIdInput.value.length
+    )
+  })
+}
+
+function closeProviderModelModal(): void {
+  const activeElement = document.activeElement
+  if (activeElement instanceof HTMLElement && providerModelModal.contains(activeElement)) {
+    activeElement.blur()
+  }
+  providerModelModal.classList.remove('visible')
+}
+
+function addModelToActiveProvider(): void {
+  updateActiveProviderFromInputs()
+  const provider = getActiveDraftProvider()
+  if (!provider) {
+    return
+  }
+
+  const modelId = normalizeOptionalString(providerModelModalIdInput.value)
   if (!modelId) {
+    showError('请输入模型 ID')
+    providerModelModalIdInput.focus()
     return
   }
-  if (provider.models.some((item) => item.id.toLowerCase() === modelId.toLowerCase())) {
-    showError(`Model already exists: ${modelId}`)
+
+  const existingModelIds = new Set(provider.models.map((item) => item.id.toLowerCase()))
+  if (existingModelIds.has(modelId.toLowerCase())) {
+    showError(`模型已存在：${modelId}`)
+    providerModelModalIdInput.focus()
     return
   }
-  const supportsVision = window.confirm('Does this model support image input?')
+
+  const displayName = normalizeOptionalString(providerModelModalDisplayNameInput.value) ?? modelId
+  const supportsVision = readToggle(providerModelModalVisionToggle)
+
   provider.models.push({
     id: modelId,
-    displayName: modelId,
+    displayName,
     isVision: supportsVision,
     enabled: true
   })
   if (!provider.model) {
     provider.model = modelId
   }
+  closeProviderModelModal()
   renderSettingsDraft()
+  showSuccess(`已添加模型：${modelId}`)
 }
 
 async function testActiveProviderConnection(): Promise<void> {
@@ -2199,6 +2387,7 @@ function setActiveSettingsPanel(panel: string): void {
 async function openSettingsModal(): Promise<void> {
   closeSlashCommandMenu()
   mcpJsonModal.classList.remove('visible')
+  providerModelModal.classList.remove('visible')
 
   const configRes = await window.tuanzi.getAgentConfig()
 
@@ -2233,6 +2422,7 @@ function closeSettingsModal(): void {
   }
   settingsModal.classList.remove('visible')
   mcpJsonModal.classList.remove('visible')
+  providerModelModal.classList.remove('visible')
 }
 
 async function saveSettings(): Promise<void> {
@@ -2405,6 +2595,7 @@ function beginStreamingUi(taskId: string): void {
   state.currentTaskId = taskId
   inputBox.classList.add('disabled')
   sendBtn.disabled = true
+  attachImageBtn.disabled = true
   sendBtn.style.display = 'none'
   stopBtn.style.display = 'flex'
   thinkingBtn.disabled = true
@@ -2417,6 +2608,7 @@ function endStreamingUi(): void {
   state.currentRenderedToolCalls = 0
   inputBox.classList.remove('disabled')
   sendBtn.disabled = false
+  attachImageBtn.disabled = false
   sendBtn.style.display = 'flex'
   stopBtn.style.display = 'none'
   thinkingBtn.disabled = false
@@ -2518,9 +2710,15 @@ function finalizeThinkingBlock(
 
 async function sendMessage(): Promise<void> {
   const text = inputTextarea.value.trim()
-  if (!text || state.isSending) return
+  const pendingImage = state.pendingImage ? { ...state.pendingImage } : null
+  const hasImage = Boolean(pendingImage)
+  if ((!text && !hasImage) || state.isSending) return
 
   if (text.startsWith('/')) {
+    if (hasImage) {
+      showError('Slash commands do not support image attachments')
+      return
+    }
     const handled = await executeSlashCommand(text)
     if (handled) {
       inputTextarea.value = ''
@@ -2536,6 +2734,11 @@ async function sendMessage(): Promise<void> {
     return
   }
 
+  const modelMessage = text || '请根据我上传的图片进行分析并回答。'
+  const userHistoryText = hasImage
+    ? (text ? `[图片] ${pendingImage!.name}\n${text}` : `[图片] ${pendingImage!.name}`)
+    : text
+
   const newTaskId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5)
 
   state.currentStreamText = ''
@@ -2543,8 +2746,9 @@ async function sendMessage(): Promise<void> {
   beginStreamingUi(newTaskId)
   inputTextarea.value = ''
   autoResizeTextarea()
+  clearPendingImage()
 
-  addUserMessage(text)
+  addUserMessage(text, pendingImage)
   const surface = createAssistantSurface()
   scrollToBottom()
 
@@ -2560,7 +2764,18 @@ async function sendMessage(): Promise<void> {
     const result = await window.tuanzi.sendMessage({
       taskId: newTaskId,
       sessionId: active.id,
-      message: text,
+      message: modelMessage,
+      ...(pendingImage
+        ? {
+          images: [
+            {
+              name: pendingImage.name,
+              mimeType: pendingImage.mimeType,
+              dataUrl: pendingImage.dataUrl
+            }
+          ]
+        }
+        : {}),
       workspace: active.workspace,
       history: active.history.slice(-10),
       agentId: activeAgent?.id ?? null,
@@ -2584,14 +2799,14 @@ async function sendMessage(): Promise<void> {
 
       const assistantText = state.currentStreamText || result.summary || ''
       syncInterruptedTurn(active, {
-        user: text,
+        user: userHistoryText,
         assistant: assistantText,
         thinking: listeners.getCurrentThinkingText() || undefined,
         interrupted: false
       })
 
       if (active.history.length === 1 && (!active.title || active.title === DEFAULT_SESSION_TITLE)) {
-        active.title = truncateTitleFromInput(text)
+        active.title = truncateTitleFromInput(text || userHistoryText)
       }
 
       touchActiveSession()
@@ -2599,7 +2814,7 @@ async function sendMessage(): Promise<void> {
       renderSessionList()
         } else if (result.interrupted && result.resumeSnapshot) {
       syncInterruptedTurn(active, {
-        user: text,
+        user: userHistoryText,
         assistant: result.resumeSnapshot.streamedText,
         thinking: result.resumeSnapshot.streamedThinking || undefined,
         interrupted: true
@@ -2661,6 +2876,7 @@ function createNewSession(): void {
   switchSession(session.id)
   inputTextarea.value = ''
   autoResizeTextarea()
+  clearPendingImage()
   inputTextarea.focus()
 }
 
@@ -2705,7 +2921,7 @@ function bindSettingsEvents(): void {
     removeActiveDraftProvider()
   })
   providerAddModelBtn.addEventListener('click', () => {
-    addModelToActiveProvider()
+    openProviderModelModal()
   })
   providerEnabledToggle.addEventListener('click', () => {
     toggleSwitch(providerEnabledToggle, !readToggle(providerEnabledToggle))
@@ -2746,6 +2962,32 @@ function bindSettingsEvents(): void {
   mcpJsonModal.addEventListener('click', (event) => {
     if (event.target === mcpJsonModal) {
       closeMcpJsonModal()
+    }
+  })
+
+  providerModelModalVisionToggle.addEventListener('click', () => {
+    toggleSwitch(providerModelModalVisionToggle, !readToggle(providerModelModalVisionToggle))
+  })
+  closeProviderModelModalBtn.addEventListener('click', closeProviderModelModal)
+  providerModelModalCancelBtn.addEventListener('click', closeProviderModelModal)
+  providerModelModalConfirmBtn.addEventListener('click', () => {
+    addModelToActiveProvider()
+  })
+  providerModelModal.addEventListener('click', (event) => {
+    if (event.target === providerModelModal) {
+      closeProviderModelModal()
+    }
+  })
+  providerModelModalIdInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      addModelToActiveProvider()
+    }
+  })
+  providerModelModalDisplayNameInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      addModelToActiveProvider()
     }
   })
 }
@@ -2807,6 +3049,38 @@ async function init(): Promise<void> {
   inputTextarea.addEventListener('input', () => {
     autoResizeTextarea()
     updateSlashCommandMenu()
+  })
+  inputTextarea.addEventListener('paste', (event) => {
+    const clipboardItems = event.clipboardData?.items
+    if (!clipboardItems || clipboardItems.length === 0) {
+      return
+    }
+    for (const item of Array.from(clipboardItems)) {
+      if (!item.type.startsWith('image/')) {
+        continue
+      }
+      const file = item.getAsFile()
+      if (!file) {
+        continue
+      }
+      event.preventDefault()
+      void attachImageFile(file)
+      break
+    }
+  })
+
+  attachImageBtn.addEventListener('click', () => {
+    if (state.isSending) {
+      return
+    }
+    imageFileInput.click()
+  })
+  imageFileInput.addEventListener('change', () => {
+    const file = imageFileInput.files?.[0]
+    if (!file) {
+      return
+    }
+    void attachImageFile(file)
   })
 
   sendBtn.addEventListener('click', () => {
@@ -2880,6 +3154,10 @@ async function init(): Promise<void> {
     if (event.key !== 'Escape') {
       return
     }
+    if (providerModelModal.classList.contains('visible')) {
+      closeProviderModelModal()
+      return
+    }
     if (mcpJsonModal.classList.contains('visible')) {
       closeMcpJsonModal()
       return
@@ -2902,6 +3180,7 @@ async function init(): Promise<void> {
 
   await refreshAgentData(loadActiveAgentPreference())
   autoResizeTextarea()
+  clearPendingImage()
   inputTextarea.focus()
 }
 
