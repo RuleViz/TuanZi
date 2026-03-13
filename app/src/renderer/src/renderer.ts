@@ -142,6 +142,8 @@ const DEFAULT_PROVIDER_TYPE = 'openai'
 const DEFAULT_PROVIDER_BASE_URL = 'https://api.openai.com/v1'
 const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
 const DEFAULT_TITLEBAR_HEIGHT = 38
+const SESSION_PERSIST_DEBOUNCE_MS = 220
+const SESSION_PERSIST_PERF_LOG = window.localStorage.getItem('tuanzi.desktop.sessionPerf') === '1'
 const SLASH_COMMAND_DEFS: Array<{
   command: string
   description: string
@@ -215,6 +217,17 @@ const state = {
   hasLoadedMcp: false,
   mcpLoadToken: 0,
   isThinking: false
+}
+
+let sessionPersistTimer: number | null = null
+let sessionPersistDirty = false
+
+function sessionPersistPerfLog(event: string, fields?: Record<string, unknown>): void {
+  if (!SESSION_PERSIST_PERF_LOG) {
+    return
+  }
+  const payload = fields ? ` ${JSON.stringify(fields)}` : ''
+  console.log(`[session-persist] ${event}${payload}`)
 }
 
 function byId<T extends HTMLElement>(id: string): T {
@@ -538,6 +551,11 @@ function bindTopBarDrag(): void {
     'beforeunload',
     () => {
       removeMaximizedListener()
+      if (sessionPersistTimer !== null) {
+        window.clearTimeout(sessionPersistTimer)
+        sessionPersistTimer = null
+      }
+      flushSessionsToStorage()
     },
     { once: true }
   )
@@ -1245,15 +1263,36 @@ function truncateTitleFromInput(input: string): string {
 }
 
 function persistSessions(): void {
+  sessionPersistDirty = true
+  if (sessionPersistTimer !== null) {
+    return
+  }
+  sessionPersistTimer = window.setTimeout(() => {
+    sessionPersistTimer = null
+    flushSessionsToStorage()
+  }, SESSION_PERSIST_DEBOUNCE_MS)
+}
+
+function flushSessionsToStorage(): void {
+  if (!sessionPersistDirty) {
+    return
+  }
+  sessionPersistDirty = false
   const payload: StoredSessionPayload = {
     version: 1,
     activeSessionId: state.activeSessionId,
     sessions: state.sessions
   }
+  const startedAt = performance.now()
   try {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload))
+    sessionPersistPerfLog('stored', {
+      sessions: payload.sessions.length,
+      elapsedMs: Number((performance.now() - startedAt).toFixed(2))
+    })
   } catch {
     // storage failures should not block runtime flow
+    sessionPersistPerfLog('store_failed')
   }
 }
 

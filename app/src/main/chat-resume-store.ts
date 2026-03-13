@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export interface ToolExecutionResultSnapshot {
@@ -63,9 +64,11 @@ export class ChatResumeStore {
     this.filePath = join(baseDir, "chat-runtime", "active-chat.json");
   }
 
-  save(snapshot: AppChatResumeSnapshot): void {
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, JSON.stringify(snapshot, null, 2), "utf8");
+  async save(snapshot: AppChatResumeSnapshot): Promise<number> {
+    const serialized = JSON.stringify(snapshot, null, 2);
+    await mkdir(dirname(this.filePath), { recursive: true });
+    await writeFile(this.filePath, serialized, "utf8");
+    return Buffer.byteLength(serialized, "utf8");
   }
 
   load(): AppChatResumeSnapshot | null {
@@ -78,8 +81,8 @@ export class ChatResumeStore {
     }
   }
 
-  clear(): void {
-    rmSync(this.filePath, { force: true });
+  async clear(): Promise<void> {
+    await rm(this.filePath, { force: true });
   }
 }
 

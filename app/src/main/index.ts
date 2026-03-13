@@ -19,6 +19,76 @@ const activeTasks = new Map<string, AbortController>()
 const chatResumeStore = new ChatResumeStore(app.getPath("userData"))
 const MAX_CHAT_IMAGE_COUNT = 1
 const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
+const configuredShutdownTimeout = Number(process.env["TUANZI_SHUTDOWN_WAIT_MS"])
+const SHUTDOWN_WAIT_TIMEOUT_MS = Number.isFinite(configuredShutdownTimeout) && configuredShutdownTimeout > 0
+  ? Math.floor(configuredShutdownTimeout)
+  : 800
+const SNAPSHOT_FLUSH_INTERVAL_MS = 200
+const SNAPSHOT_MAX_STREAM_CHARS = 24_000
+const SNAPSHOT_MAX_TOOL_CALLS = 80
+const CLOSE_PERF_LOG_ENABLED = process.env["TUANZI_CLOSE_PERF_LOG"] === "1"
+const CLOSE_PERF_SNAPSHOT_LOG_ENABLED = process.env["TUANZI_CLOSE_PERF_LOG_SNAPSHOT"] === "1"
+
+let shutdownDrainInProgress = false
+let shutdownDrainCompleted = false
+
+function closePerfLog(
+  event: string,
+  fields?: Record<string, unknown>,
+  options?: { highFrequency?: boolean }
+): void {
+  if (!CLOSE_PERF_LOG_ENABLED) {
+    return
+  }
+  if (options?.highFrequency && !CLOSE_PERF_SNAPSHOT_LOG_ENABLED) {
+    return
+  }
+  const payload = fields ? ` ${JSON.stringify(fields)}` : ""
+  console.log(`[close-perf] ${event}${payload}`)
+}
+
+function abortAllActiveTasks(reason: string): number {
+  let abortedCount = 0
+  for (const controller of activeTasks.values()) {
+    try {
+      controller.abort()
+      abortedCount += 1
+    } catch {
+      // Ignore abort failures; shutdown should continue.
+    }
+  }
+  closePerfLog("active_tasks_aborted", {
+    reason,
+    abortedCount,
+    remaining: activeTasks.size
+  })
+  return abortedCount
+}
+
+function trimPersistedStream(text: string): string {
+  if (text.length <= SNAPSHOT_MAX_STREAM_CHARS) {
+    return text
+  }
+  return text.slice(text.length - SNAPSHOT_MAX_STREAM_CHARS)
+}
+
+async function waitForActiveTasksToDrain(timeoutMs: number): Promise<{ remaining: number; elapsedMs: number }> {
+  const startedAt = Date.now()
+  while (activeTasks.size > 0) {
+    const elapsedMs = Date.now() - startedAt
+    if (elapsedMs >= timeoutMs) {
+      return {
+        remaining: activeTasks.size,
+        elapsedMs
+      }
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 25))
+  }
+  return {
+    remaining: 0,
+    elapsedMs: Date.now() - startedAt
+  }
+}
 
 type GlobalSkillCategory = "file_system" | "execute_command" | "web_search"
 
@@ -201,7 +271,14 @@ interface McpClientLike {
   stop: () => Promise<void>
 }
 
+let cachedCoreModules: CoreModules | null = null
+
 function loadCoreModules(): CoreModules {
+  const disableCache = process.env["TUANZI_DISABLE_CORE_MODULE_CACHE"] === "1"
+  if (!disableCache && cachedCoreModules) {
+    return cachedCoreModules
+  }
+
   const corePath = resolve(__dirname, '../../..')
   const configMod = require(join(corePath, 'dist/config'))
   const runtimeMod = require(join(corePath, 'dist/runtime'))
@@ -210,7 +287,7 @@ function loadCoreModules(): CoreModules {
   const mcpConfigMod = require(join(corePath, 'dist/mcp/config-store'))
   const mcpClientMod = require(join(corePath, 'dist/mcp/stdio-mcp-client'))
 
-  return {
+  const modules: CoreModules = {
     loadRuntimeConfig: configMod.loadRuntimeConfig as LoadRuntimeConfigFn,
     createToolRuntime: runtimeMod.createToolRuntime as CreateToolRuntimeFn,
     createOrchestrator: runtimeMod.createOrchestrator as CreateOrchestratorFn,
@@ -234,6 +311,12 @@ function loadCoreModules(): CoreModules {
       settings: any
     ) => McpClientLike
   }
+
+  if (!disableCache) {
+    cachedCoreModules = modules
+  }
+
+  return modules
 }
 
 function normalizeOptionalString(input: unknown): string | null {
@@ -784,6 +867,9 @@ ipcMain.handle('window:close', async (event) => {
   if (!win) {
     return { ok: false, error: 'Window unavailable' }
   }
+  if (activeTasks.size > 0) {
+    abortAllActiveTasks('window_close')
+  }
   win.close()
   return { ok: true }
 })
@@ -831,6 +917,7 @@ async function runChatTask(
   const sessionId = normalizeOptionalString(payload.sessionId) ?? "default-session"
   const controller = new AbortController()
   activeTasks.set(taskId, controller)
+  let flushPendingSnapshots: (() => Promise<void>) | null = null
 
   try {
     const { loadRuntimeConfig, createToolRuntime, createOrchestrator } = loadCoreModules()
@@ -898,6 +985,70 @@ async function runChatTask(
     let streamedThinking = payload.resumeState?.partialAssistantMessage?.thinking ?? ""
     const completedToolCalls = cloneToolCallSnapshots(payload.resumeState?.toolCalls ?? [])
     let latestResumeState = cloneResumeState(payload.resumeState ?? null)
+    let pendingSnapshot: AppChatResumeSnapshot | null = null
+    let snapshotFlushTimer: NodeJS.Timeout | null = null
+    let snapshotWriteChain: Promise<void> = Promise.resolve()
+
+    const flushSnapshotNow = (): Promise<void> => {
+      const snapshot = pendingSnapshot
+      pendingSnapshot = null
+      if (!snapshot) {
+        return Promise.resolve()
+      }
+      const startedAt = Date.now()
+      const summary = {
+        taskId,
+        messageLength: snapshot.message.length,
+        streamedTextLength: snapshot.streamedText.length,
+        streamedThinkingLength: snapshot.streamedThinking.length,
+        toolCallCount: snapshot.toolCalls.length
+      }
+      snapshotWriteChain = snapshotWriteChain
+        .then(async () => {
+          const byteSize = await chatResumeStore.save(snapshot)
+          closePerfLog("snapshot_saved", {
+            ...summary,
+            byteSize,
+            elapsedMs: Date.now() - startedAt
+          }, { highFrequency: true })
+        })
+        .catch((error) => {
+          console.warn(`[close-perf] Failed to persist chat snapshot: ${toErrorMessage(error)}`)
+        })
+      return snapshotWriteChain.finally(() => {
+        if (pendingSnapshot) {
+          scheduleSnapshotFlush(true)
+        }
+      })
+    }
+
+    const scheduleSnapshotFlush = (immediate: boolean): void => {
+      if (snapshotFlushTimer) {
+        if (!immediate) {
+          return
+        }
+        clearTimeout(snapshotFlushTimer)
+        snapshotFlushTimer = null
+      }
+      const delay = immediate ? 0 : SNAPSHOT_FLUSH_INTERVAL_MS
+      snapshotFlushTimer = setTimeout(() => {
+        snapshotFlushTimer = null
+        void flushSnapshotNow()
+      }, delay)
+    }
+
+    flushPendingSnapshots = async (): Promise<void> => {
+      if (snapshotFlushTimer) {
+        clearTimeout(snapshotFlushTimer)
+        snapshotFlushTimer = null
+      }
+      await flushSnapshotNow()
+      await snapshotWriteChain
+      while (pendingSnapshot) {
+        await flushSnapshotNow()
+        await snapshotWriteChain
+      }
+    }
 
     const persistSnapshot = (): AppChatResumeSnapshot => {
       const snapshot = buildChatResumeSnapshot({
@@ -913,8 +1064,18 @@ async function runChatTask(
         toolCalls: completedToolCalls,
         resumeState: latestResumeState
       })
-      chatResumeStore.save(snapshot)
-      return snapshot
+      const persistedSnapshot: AppChatResumeSnapshot = {
+        ...snapshot,
+        streamedText: trimPersistedStream(snapshot.streamedText),
+        streamedThinking: trimPersistedStream(snapshot.streamedThinking),
+        toolCalls:
+          snapshot.toolCalls.length > SNAPSHOT_MAX_TOOL_CALLS
+            ? snapshot.toolCalls.slice(snapshot.toolCalls.length - SNAPSHOT_MAX_TOOL_CALLS)
+            : snapshot.toolCalls
+      }
+      pendingSnapshot = persistedSnapshot
+      scheduleSnapshotFlush(false)
+      return persistedSnapshot
     }
 
     persistSnapshot()
@@ -969,7 +1130,10 @@ async function runChatTask(
       webContents.send("chat:toolCalls", { taskId, toolCalls: result.toolCalls })
     }
 
-    chatResumeStore.clear()
+    if (flushPendingSnapshots) {
+      await flushPendingSnapshots()
+    }
+    await chatResumeStore.clear()
 
     return {
       ok: true,
@@ -980,6 +1144,9 @@ async function runChatTask(
       executedCommands: result.executedCommands || []
     }
   } catch (error) {
+    if (flushPendingSnapshots) {
+      await flushPendingSnapshots()
+    }
     const message = toErrorMessage(error)
     if (
       message === "Interrupted by user" ||
@@ -1616,5 +1783,35 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+app.on('before-quit', (event) => {
+  if (shutdownDrainCompleted || activeTasks.size === 0) {
+    shutdownDrainCompleted = true
+    return
+  }
+
+  if (shutdownDrainInProgress) {
+    event.preventDefault()
+    return
+  }
+
+  shutdownDrainInProgress = true
+  event.preventDefault()
+  abortAllActiveTasks('before_quit')
+
+  void waitForActiveTasksToDrain(SHUTDOWN_WAIT_TIMEOUT_MS)
+    .then(({ remaining, elapsedMs }) => {
+      if (remaining > 0) {
+        console.warn(
+          `[close-perf] Forced quit with ${remaining} active task(s) after ${elapsedMs}ms drain timeout.`
+        )
+      }
+    })
+    .finally(() => {
+      shutdownDrainInProgress = false
+      shutdownDrainCompleted = true
+      app.quit()
+    })
 })
 
