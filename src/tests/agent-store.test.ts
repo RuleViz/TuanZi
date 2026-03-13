@@ -31,9 +31,9 @@ test("agent store should bootstrap default config and default agent", () => {
   try {
     withAgentHome(homeDir, () => {
       const config = loadAgentBackendConfigSync();
-      assert.equal(config.global_skills.file_system, true);
-      assert.equal(config.global_skills.execute_command, true);
-      assert.equal(config.global_skills.web_search, true);
+      assert.equal(config.provider.type, "openai");
+      assert.equal(Array.isArray(config.providers), true);
+      assert.equal(typeof config.activeProviderId, "string");
 
       const agents = listStoredAgentsSync();
       assert.equal(agents.length >= 1, true);
@@ -75,7 +75,7 @@ test("agent store should save and delete custom agents", () => {
   }
 });
 
-test("agent backend config should persist global skill updates", () => {
+test("agent backend config should persist provider updates", () => {
   const homeDir = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
   try {
     withAgentHome(homeDir, () => {
@@ -85,18 +85,10 @@ test("agent backend config should persist global skill updates", () => {
           apiKey: "sk-test",
           baseUrl: "https://api.openai.com/v1",
           model: "gpt-4o"
-        },
-        global_skills: {
-          file_system: true,
-          execute_command: false,
-          web_search: false
         }
       });
 
-      assert.equal(saved.global_skills.execute_command, false);
       const reloaded = loadAgentBackendConfigSync();
-      assert.equal(reloaded.global_skills.execute_command, false);
-      assert.equal(reloaded.global_skills.web_search, false);
       assert.equal(reloaded.provider.model, "gpt-4o");
     });
   } finally {

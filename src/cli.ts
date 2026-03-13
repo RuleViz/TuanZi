@@ -66,6 +66,13 @@ export async function runCli(argv: string[]): Promise<number> {
     return handleAgentsDelete(restPositionals, parsed.flags);
   }
 
+  if (mainCommand === "skills" && subCommand === "list") {
+    return handleSkillsList(parsed.flags);
+  }
+  if (mainCommand === "skills" && subCommand === "get") {
+    return handleSkillsGet(restPositionals, parsed.flags);
+  }
+
   if (mainCommand === "agent-config" && subCommand === "get") {
     return handleAgentConfigGet();
   }
@@ -428,6 +435,62 @@ async function handleAgentsDelete(positionals: string[], flags: Record<string, s
   }
 }
 
+async function handleSkillsList(flags: Record<string, string | boolean>): Promise<number> {
+  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
+  const runtimeConfig = loadRuntimeConfig({
+    workspaceRoot,
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
+  });
+  const runtime = createToolRuntime(runtimeConfig);
+  const payload = runtime.toolContext.skillRuntime?.listCatalog() ?? [];
+  console.log(JSON.stringify(payload, null, 2));
+  return 0;
+}
+
+async function handleSkillsGet(positionals: string[], flags: Record<string, string | boolean>): Promise<number> {
+  const target = positionals[0] || (typeof flags.name === "string" ? flags.name : "");
+  if (!target.trim()) {
+    console.error("skills get requires a skill name.");
+    return 1;
+  }
+
+  const workspaceRoot = resolveWorkspace(flags.workspace as string | undefined);
+  const runtimeConfig = loadRuntimeConfig({
+    workspaceRoot,
+    approvalMode: parseApprovalMode(flags.approval),
+    agentOverride: parseOptionalFlag(flags.agent)
+  });
+  const runtime = createToolRuntime(runtimeConfig);
+  const skillRuntime = runtime.toolContext.skillRuntime;
+  if (!skillRuntime) {
+    console.error("skill runtime is not configured.");
+    return 1;
+  }
+
+  try {
+    const skill = skillRuntime.loadSkill(target);
+    const catalogItem = skillRuntime
+      .listCatalog()
+      .find((item) => item.name.toLowerCase() === skill.frontmatter.name.toLowerCase());
+    console.log(
+      JSON.stringify(
+        {
+          ...skill,
+          skillDir: catalogItem?.skillDir ?? null,
+          skillFile: catalogItem?.skillFile ?? null
+        },
+        null,
+        2
+      )
+    );
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
 async function handleAgentConfigGet(): Promise<number> {
   const config = loadAgentBackendConfigSync();
   console.log(JSON.stringify(config, null, 2));
@@ -737,8 +800,10 @@ function printHelp(): void {
       "  agents get <id|filename>",
       "  agents save --args '{\"name\":\"...\",\"prompt\":\"...\",\"tools\":[\"view_file\"]}'",
       "  agents delete <id|filename>",
+      "  skills list [--workspace <abs-path>]",
+      "  skills get <skill-name> [--workspace <abs-path>]",
       "  agent-config get",
-      "  agent-config save --args '{\"global_skills\":{...},\"provider\":{...}}'",
+      "  agent-config save --args '{\"provider\":{...},\"providers\":[...],\"activeProviderId\":\"...\"}'",
       "  mcp config get",
       "  mcp config save --args '{\"mcpServers\":{\"serverId\":{\"command\":\"npx\",\"args\":[\"-y\",\"@modelcontextprotocol/server-filesystem\",\"E:/project\"]}}}'",
       "  mcp tools list",
@@ -768,11 +833,7 @@ function printModelRuntime(runtimeConfig: ReturnType<typeof loadRuntimeConfig>):
 
 function printAgentRuntime(runtimeConfig: ReturnType<typeof loadRuntimeConfig>): void {
   const active = runtimeConfig.agentBackend.activeAgent;
-  console.log(
-    `[agent] active=${active.filename} name=${active.name} tools=${active.tools.length} globalSkills=${JSON.stringify(
-      runtimeConfig.agentBackend.config.global_skills
-    )}`
-  );
+  console.log(`[agent] active=${active.filename} name=${active.name} tools=${active.tools.length}`);
 }
 
 async function handleGreet(flags: Record<string, string | boolean>): Promise<number> {

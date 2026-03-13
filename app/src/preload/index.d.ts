@@ -69,11 +69,14 @@ export interface AgentBackendConfig {
   provider: AgentProviderConfig
   providers: ProviderConfig[]
   activeProviderId: string
-  global_skills: {
-    file_system: boolean
-    execute_command: boolean
-    web_search: boolean
-  }
+}
+
+export interface SkillCatalogItem {
+  name: string
+  description: string
+  rootDir: string
+  skillDir: string
+  skillFile: string
 }
 
 export interface StoredAgent {
@@ -151,6 +154,10 @@ export interface TuanziAPI {
   saveAgentConfig: (
     payload: unknown
   ) => Promise<{ ok: boolean; config?: AgentBackendConfig; error?: string }>
+  listSkills: (payload: {
+    workspace?: string | null
+    workspaceCandidates?: Array<string | null | undefined>
+  }) => Promise<{ ok: boolean; skills?: SkillCatalogItem[]; error?: string }>
   testProviderConnection: (payload: {
     type?: string
     baseUrl?: string

@@ -217,11 +217,6 @@ test("should load provider model from ~/.tuanzi/config.json when custom model st
             apiKey: "sk-provider",
             baseUrl: "https://api.openai.com/v1",
             model: "gpt-4o"
-          },
-          global_skills: {
-            file_system: true,
-            execute_command: true,
-            web_search: true
           }
         },
         null,
@@ -291,12 +286,7 @@ test("should not fallback to first provider when activeProviderId is missing", (
               isEnabled: true
             }
           ],
-          activeProviderId: "",
-          global_skills: {
-            file_system: true,
-            execute_command: true,
-            web_search: true
-          }
+          activeProviderId: ""
         },
         null,
         2
@@ -364,11 +354,6 @@ test("should map agent.config.json modelRequest into runtime model request optio
             apiKey: "sk-provider",
             baseUrl: "https://api.openai.com/v1",
             model: "gpt-4o"
-          },
-          global_skills: {
-            file_system: true,
-            execute_command: true,
-            web_search: true
           }
         },
         null,

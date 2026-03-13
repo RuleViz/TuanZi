@@ -8,8 +8,9 @@ import type {
   ToolExecutionContext,
   ToolExecutionResult
 } from "../core/types";
-import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
+import type { StoredAgent } from "../core/agent-store";
 import { resolveActiveTools } from "../core/agent-tooling";
+import type { SkillCatalogItem } from "../core/skill-types";
 import type { ChatCompletionClient, ChatInputImage } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
@@ -20,8 +21,7 @@ export class TuanZiAgent {
     private readonly model: string | null,
     private readonly toolRegistry: ToolRegistry,
     private readonly toolContext: ToolExecutionContext,
-    private readonly activeAgent: StoredAgent,
-    private readonly globalSkills: GlobalSkillsConfig
+    private readonly activeAgent: StoredAgent
   ) { }
 
   async execute(
@@ -48,10 +48,11 @@ export class TuanZiAgent {
     }
 
     const availableToolNames = this.toolRegistry.getToolNames();
-    const activeTools = resolveActiveTools(this.activeAgent.tools, this.globalSkills, availableToolNames);
+    const activeTools = resolveActiveTools(this.activeAgent.tools, availableToolNames);
     this.toolContext.logger.info(
       `[agent] profile=${this.activeAgent.filename} activeTools=${activeTools.activeToolNames.length}`
     );
+    const skillCatalog = listSkillCatalogSafely(this.toolContext);
     const mcpTooling = await discoverMcpTooling(this.toolContext);
     const mergedAllowedTools = dedupeStrings([
       ...activeTools.activeToolNames,
@@ -96,6 +97,7 @@ export class TuanZiAgent {
         workspaceRoot: this.toolContext.workspaceRoot,
         agentName: this.activeAgent.name,
         agentPrompt: this.activeAgent.prompt,
+        skillCatalog,
         toolInstructions: activeTools.activeTools.map((tool) => ({
           name: tool.name,
           prompt: tool.prompt
@@ -148,6 +150,19 @@ export class TuanZiAgent {
       },
       toolCalls
     };
+  }
+}
+
+function listSkillCatalogSafely(toolContext: ToolExecutionContext): SkillCatalogItem[] {
+  const runtime = toolContext.skillRuntime;
+  if (!runtime) {
+    return [];
+  }
+  try {
+    return runtime.listCatalog();
+  } catch (error) {
+    toolContext.logger.warn(`[skill] failed to load catalog: ${error instanceof Error ? error.message : String(error)}`);
+    return [];
   }
 }
 

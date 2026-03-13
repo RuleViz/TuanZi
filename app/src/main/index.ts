@@ -53,11 +53,14 @@ interface AgentBackendConfig {
   provider: AgentProviderConfig
   providers: ProviderConfig[]
   activeProviderId: string
-  global_skills: {
-    file_system: boolean
-    execute_command: boolean
-    web_search: boolean
-  }
+}
+
+interface SkillCatalogItem {
+  name: string
+  description: string
+  rootDir: string
+  skillDir: string
+  skillFile: string
 }
 
 interface StoredAgent {
@@ -101,6 +104,11 @@ type CreateToolRuntimeFn = (
 ) => {
   registry: {
     getToolNames: () => string[]
+  }
+  toolContext?: {
+    skillRuntime?: {
+      listCatalog?: () => SkillCatalogItem[]
+    }
   }
 }
 
@@ -584,6 +592,36 @@ function supportsVisionForActiveModel(config: AgentBackendConfig): boolean {
 function resolveWorkspaceFromInput(raw: unknown): string {
   const workspace = normalizeOptionalString(raw)
   return resolve(workspace ?? process.cwd())
+}
+
+function collectWorkspaceCandidates(workspace: unknown, candidates: unknown): string[] {
+  const seen = new Set<string>()
+  const output: string[] = []
+  const pushCandidate = (value: unknown): void => {
+    const normalized = normalizeOptionalString(value)
+    if (!normalized) {
+      return
+    }
+    const resolved = resolve(normalized)
+    const key = resolved.toLowerCase()
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    output.push(resolved)
+  }
+
+  if (Array.isArray(candidates)) {
+    for (const candidate of candidates) {
+      pushCandidate(candidate)
+    }
+  }
+  pushCandidate(workspace)
+
+  if (output.length === 0) {
+    output.push(resolve(process.cwd()))
+  }
+  return output
 }
 
 function fallbackToolCategory(name: string): GlobalSkillCategory {
@@ -1243,6 +1281,47 @@ ipcMain.handle('agent:listTools', async (_event, payload: { workspace?: string |
     return {
       ok: true,
       tools
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: toErrorMessage(error)
+    }
+  }
+})
+
+ipcMain.handle(
+  'skills:list',
+  async (
+    _event,
+    payload: { workspace?: string | null; workspaceCandidates?: Array<string | null | undefined> }
+  ) => {
+  try {
+    const { loadRuntimeConfig, createToolRuntime } = loadCoreModules()
+    const workspaceCandidates = collectWorkspaceCandidates(payload?.workspace, payload?.workspaceCandidates)
+    const skillMap = new Map<string, SkillCatalogItem>()
+
+    for (const workspaceRoot of workspaceCandidates) {
+      const runtimeConfig = loadRuntimeConfig({
+        workspaceRoot: resolveWorkspaceFromInput(workspaceRoot),
+        approvalMode: 'auto'
+      })
+      const runtime = createToolRuntime(runtimeConfig)
+      const skillRuntime = runtime.toolContext?.skillRuntime
+      const skills =
+        skillRuntime && typeof skillRuntime.listCatalog === 'function' ? skillRuntime.listCatalog() : []
+      for (const skill of skills) {
+        const dedupeKey = skill.skillDir.toLowerCase()
+        if (!skillMap.has(dedupeKey)) {
+          skillMap.set(dedupeKey, skill)
+        }
+      }
+    }
+
+    const skills = [...skillMap.values()].sort((left, right) => left.name.localeCompare(right.name))
+    return {
+      ok: true,
+      skills
     }
   } catch (error) {
     return {

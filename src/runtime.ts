@@ -6,6 +6,7 @@ import { ConsoleApprovalGate } from "./core/approval-gate";
 import { LocalBackupManager } from "./core/backup-manager";
 import { ConsoleLogger } from "./core/logger";
 import { ConfigPolicyEngine } from "./core/policy-engine";
+import { createSkillRuntime } from "./core/skill-store";
 import { ToolRegistry } from "./core/tool-registry";
 import type { ApprovalGate, Logger, ToolExecutionContext } from "./core/types";
 import { McpManager } from "./mcp/manager";
@@ -26,6 +27,7 @@ export function createToolRuntime(
   const backupManager = new LocalBackupManager(runtimeConfig.workspaceRoot);
   const policyEngine = new ConfigPolicyEngine(runtimeConfig.agentSettings.policy);
   const mcpBridge = new McpManager(runtimeConfig.agentSettings.mcp, logger);
+  const skillRuntime = createSkillRuntime(runtimeConfig.workspaceRoot, logger);
   const registry = new ToolRegistry(createDefaultTools());
   const toolContext: ToolExecutionContext = {
     workspaceRoot: runtimeConfig.workspaceRoot,
@@ -34,7 +36,8 @@ export function createToolRuntime(
     logger,
     policyEngine,
     agentSettings: runtimeConfig.agentSettings,
-    mcpBridge
+    mcpBridge,
+    skillRuntime
   };
   return { registry, toolContext, logger };
 }
@@ -54,8 +57,7 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
     runtimeConfig.model.coderModel,
     toolRuntime.registry,
     toolRuntime.toolContext,
-    runtimeConfig.agentBackend.activeAgent,
-    runtimeConfig.agentBackend.config.global_skills
+    runtimeConfig.agentBackend.activeAgent
   );
   return new PlanToDoOrchestrator(coder, toolRuntime.toolContext);
 }

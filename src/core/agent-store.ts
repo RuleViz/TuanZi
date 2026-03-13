@@ -2,8 +2,6 @@
 import os from "node:os";
 import path from "node:path";
 
-export type GlobalSkillCategory = "file_system" | "execute_command" | "web_search";
-
 export interface AgentProviderConfig {
   type: string;
   apiKey: string;
@@ -25,18 +23,11 @@ export interface ProviderConfig extends AgentProviderConfig {
   isEnabled: boolean;
 }
 
-export interface GlobalSkillsConfig {
-  file_system: boolean;
-  execute_command: boolean;
-  web_search: boolean;
-}
-
 export interface AgentBackendConfig {
   // Compatibility mirror of the selected provider.
   provider: AgentProviderConfig;
   providers: ProviderConfig[];
   activeProviderId: string;
-  global_skills: GlobalSkillsConfig;
 }
 
 export interface AgentMetadata {
@@ -89,12 +80,7 @@ const DEFAULT_BACKEND_CONFIG: AgentBackendConfig = {
     model: DEFAULT_PROVIDER_CONFIG.model
   },
   providers: [DEFAULT_PROVIDER_CONFIG],
-  activeProviderId: DEFAULT_PROVIDER_CONFIG.id,
-  global_skills: {
-    file_system: true,
-    execute_command: true,
-    web_search: true
-  }
+  activeProviderId: DEFAULT_PROVIDER_CONFIG.id
 };
 
 const DEFAULT_AGENT_METADATA: AgentMetadata = {
@@ -310,7 +296,6 @@ function normalizeBackendConfig(input: unknown): AgentBackendConfig {
     providersFromInput.length > 0 ? providersFromInput : [providerFromLegacy ?? cloneDefaultProviderConfig()];
   const activeProviderId = resolveActiveProviderId(raw.activeProviderId, providers, providerFromLegacy?.id ?? null);
   const activeProvider = providers.find((item) => item.id === activeProviderId) ?? null;
-  const skillsRaw = asRecord(raw.global_skills) ?? {};
 
   const provider: AgentProviderConfig = {
     type: activeProvider?.type ?? DEFAULT_PROVIDER_CONFIG.type,
@@ -319,24 +304,10 @@ function normalizeBackendConfig(input: unknown): AgentBackendConfig {
     model: activeProvider?.model ?? ""
   };
 
-  const global_skills: GlobalSkillsConfig = {
-    file_system:
-      typeof skillsRaw.file_system === "boolean"
-        ? skillsRaw.file_system
-        : DEFAULT_BACKEND_CONFIG.global_skills.file_system,
-    execute_command:
-      typeof skillsRaw.execute_command === "boolean"
-        ? skillsRaw.execute_command
-        : DEFAULT_BACKEND_CONFIG.global_skills.execute_command,
-    web_search:
-      typeof skillsRaw.web_search === "boolean" ? skillsRaw.web_search : DEFAULT_BACKEND_CONFIG.global_skills.web_search
-  };
-
   return {
     provider,
     providers,
-    activeProviderId,
-    global_skills
+    activeProviderId
   };
 }
 

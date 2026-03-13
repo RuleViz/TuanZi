@@ -8,6 +8,8 @@ import { FindByNameTool } from "./find-by-name";
 import { GrepSearchTool } from "./grep-search";
 import { ListDirTool } from "./list-dir";
 import { RunCommandTool } from "./run-command";
+import { SkillLoadTool } from "./skill-load";
+import { SkillReadResourceTool } from "./skill-read-resource";
 import { ViewFileTool } from "./view-file";
 import { WriteToFileTool } from "./write-to-file";
 
@@ -23,6 +25,8 @@ export function createDefaultTools(): Tool[] {
     new DiffApplyTool(),
     new CodebaseSearchTool(),
     new BrowserActionTool(),
-    new CheckpointTool()
+    new CheckpointTool(),
+    new SkillLoadTool(),
+    new SkillReadResourceTool()
   ];
 }

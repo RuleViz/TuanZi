@@ -1,3 +1,5 @@
+import type { SkillRuntime } from "./skill-types";
+
 export type JsonObject = Record<string, unknown>;
 
 export type PolicyDecision = "allow" | "ask" | "deny";
@@ -146,6 +148,7 @@ export interface ToolExecutionContext {
   agentSettings?: AgentSettings;
   taskId?: string;
   mcpBridge?: McpBridge;
+  skillRuntime?: SkillRuntime;
   signal?: AbortSignal;
 }
 

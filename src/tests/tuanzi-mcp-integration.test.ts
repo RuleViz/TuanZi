@@ -8,7 +8,7 @@ import type {
   ChatMessageContent
 } from "../agents/model-types";
 import { ToolRegistry } from "../core/tool-registry";
-import type { GlobalSkillsConfig, StoredAgent } from "../core/agent-store";
+import type { StoredAgent } from "../core/agent-store";
 import type {
   McpBridge,
   McpDiscoveredTool,
@@ -142,14 +142,8 @@ test("TuanZiAgent should inject MCP tool schemas and prompt guidance", async () 
     tools: [],
     prompt: "You are helpful."
   };
-  const globalSkills: GlobalSkillsConfig = {
-    file_system: true,
-    execute_command: true,
-    web_search: true
-  };
-
   const client = new CaptureClient();
-  const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, activeAgent, globalSkills);
+  const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, activeAgent);
   const output = await agent.execute("Need MCP aware execution");
 
   assert.equal(output.result.summary, "done");

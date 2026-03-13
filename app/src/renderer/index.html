@@ -202,7 +202,7 @@
 
           <div class="agent-panel" data-panel="tools">
             <div class="agent-field-hint" style="margin-bottom: 12px;">
-              工具权限是 Agent 级授权。被全局 Skills 禁用的类别会自动锁定。
+              工具权限是 Agent 级授权。
             </div>
             <div class="tool-list" id="agentToolList"></div>
           </div>
@@ -314,27 +314,10 @@
           </div>
 
           <div class="settings-panel" data-panel="skills">
-            <div class="global-skill-row">
-              <div>
-                <div class="global-skill-title">文件系统</div>
-                <div class="global-skill-desc">读写文件、目录搜索与补丁应用</div>
-              </div>
-              <button class="toggle-switch" id="globalSkillFileSystem" data-enabled="true"></button>
+            <div class="agent-field-hint" style="margin-bottom: 12px;">
+              仅展示真实扫描到的 Skills（来源：~/.tuanzi/skills 与当前 workspace/.tuanzi/skills）。
             </div>
-            <div class="global-skill-row">
-              <div>
-                <div class="global-skill-title">命令执行</div>
-                <div class="global-skill-desc">终端命令与浏览器动作（高权限）</div>
-              </div>
-              <button class="toggle-switch warning" id="globalSkillExecuteCommand" data-enabled="true"></button>
-            </div>
-            <div class="global-skill-row">
-              <div>
-                <div class="global-skill-title">联网搜索</div>
-                <div class="global-skill-desc">Web 搜索与页面抓取</div>
-              </div>
-              <button class="toggle-switch" id="globalSkillWebSearch" data-enabled="true"></button>
-            </div>
+            <div id="skillsCatalogList"></div>
           </div>
 
           <div class="settings-panel" data-panel="mcp">

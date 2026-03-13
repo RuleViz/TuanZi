@@ -1,37 +1,26 @@
-﻿import assert from "node:assert/strict";
+import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { GlobalSkillsConfig } from "../core/agent-store";
 import { resolveActiveTools } from "../core/agent-tooling";
 
-const allEnabled: GlobalSkillsConfig = {
-  file_system: true,
-  execute_command: true,
-  web_search: true
-};
-
-test("resolveActiveTools should apply global and agent intersections", () => {
+test("resolveActiveTools should apply agent and runtime intersections", () => {
   const selection = resolveActiveTools(
     ["list_dir", "run_command", "unknown_tool"],
-    {
-      file_system: true,
-      execute_command: false,
-      web_search: false
-    },
-    ["list_dir", "run_command"]
+    ["list_dir", "skill_load", "skill_read_resource"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["list_dir"]);
-  assert.equal(selection.activeTools.length, 1);
-  assert.equal(selection.activeTools[0].name, "list_dir");
+  assert.deepEqual(selection.activeToolNames, ["list_dir", "skill_load", "skill_read_resource"]);
+  assert.equal(selection.activeTools.map((item) => item.name).join(","), "list_dir,skill_load,skill_read_resource");
 });
 
-test("resolveActiveTools should keep agent-defined order and remove duplicates", () => {
+test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable internal skill tools", () => {
   const selection = resolveActiveTools(
-    ["list_dir", "list_dir", "run_command"],
-    allEnabled,
-    ["list_dir", "run_command"]
+    ["list_dir", "list_dir", "run_command", "skill_load"],
+    ["list_dir", "run_command", "skill_load", "skill_read_resource"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["list_dir", "run_command"]);
-  assert.equal(selection.activeTools.map((item) => item.name).join(","), "list_dir,run_command");
+  assert.deepEqual(selection.activeToolNames, ["list_dir", "run_command", "skill_load", "skill_read_resource"]);
+  assert.equal(
+    selection.activeTools.map((item) => item.name).join(","),
+    "list_dir,run_command,skill_load,skill_read_resource"
+  );
 });

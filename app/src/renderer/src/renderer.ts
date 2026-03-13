@@ -57,11 +57,14 @@ interface AgentBackendConfig {
   provider: AgentProviderConfig
   providers: ProviderConfig[]
   activeProviderId: string
-  global_skills: {
-    file_system: boolean
-    execute_command: boolean
-    web_search: boolean
-  }
+}
+
+interface SkillCatalogItem {
+  name: string
+  description: string
+  rootDir: string
+  skillDir: string
+  skillFile: string
 }
 
 interface StoredAgent {
@@ -108,11 +111,6 @@ interface AgentEditorState {
 interface SettingsDraft {
   providers: ProviderConfig[]
   activeProviderId: string
-  globalSkills: {
-    file_system: boolean
-    execute_command: boolean
-    web_search: boolean
-  }
 }
 
 interface SlashSuggestion {
@@ -206,6 +204,7 @@ const state = {
   } as AgentEditorState,
   expandedWorkspaceKeys: new Set<string>(),
   settingsDraft: null as SettingsDraft | null,
+  skillCatalog: [] as SkillCatalogItem[],
   slashSuggestions: [] as SlashSuggestion[],
   slashActiveIndex: 0,
   slashVisible: false,
@@ -213,6 +212,8 @@ const state = {
   mcpServers: [] as McpDashboardServer[],
   expandedMcpServerIds: new Set<string>(),
   isMcpLoading: false,
+  hasLoadedMcp: false,
+  mcpLoadToken: 0,
   isThinking: false
 }
 
@@ -291,9 +292,7 @@ const providerTestBtn = byId<HTMLButtonElement>('providerTestBtn')
 const providerFetchModelsBtn = byId<HTMLButtonElement>('providerFetchModelsBtn')
 const providerAddModelBtn = byId<HTMLButtonElement>('providerAddModelBtn')
 const providerModelList = byId<HTMLDivElement>('providerModelList')
-const globalSkillFileSystem = byId<HTMLButtonElement>('globalSkillFileSystem')
-const globalSkillExecuteCommand = byId<HTMLButtonElement>('globalSkillExecuteCommand')
-const globalSkillWebSearch = byId<HTMLButtonElement>('globalSkillWebSearch')
+const skillsCatalogList = byId<HTMLDivElement>('skillsCatalogList')
 const mcpRefreshBtn = byId<HTMLButtonElement>('mcpRefreshBtn')
 const mcpAddBtn = byId<HTMLButtonElement>('mcpAddBtn')
 const mcpServerList = byId<HTMLDivElement>('mcpServerList')
@@ -777,8 +776,7 @@ async function switchToProviderModel(providerId: string, modelId: string): Promi
       apiKey: provider.apiKey
     },
     providers: draft.providers,
-    activeProviderId: provider.id,
-    global_skills: config.global_skills
+    activeProviderId: provider.id
   })
   if (!saveResult.ok || !saveResult.config) {
     showError(saveResult.error || 'Failed to switch model')
@@ -1709,13 +1707,6 @@ function mapToolCategoryLabel(category: GlobalSkillCategory): string {
   return '文件系统'
 }
 
-function isGlobalSkillEnabled(category: GlobalSkillCategory): boolean {
-  if (!state.agentConfig) {
-    return true
-  }
-  return state.agentConfig.global_skills[category] === true
-}
-
 function renderEditorToolList(): void {
   agentToolList.innerHTML = ''
   if (state.agentToolProfiles.length === 0) {
@@ -1725,30 +1716,24 @@ function renderEditorToolList(): void {
 
   for (const tool of state.agentToolProfiles) {
     const row = document.createElement('div')
-    const globalEnabled = isGlobalSkillEnabled(tool.category)
     const selected = state.editor.selectedTools.has(tool.name)
-    row.className = 'tool-row' + (globalEnabled ? '' : ' disabled')
+    row.className = 'tool-row'
     row.innerHTML = `
       <div>
         <div class="tool-row-title">
           ${escapeHtml(tool.name)}
           <span class="tool-row-category">${escapeHtml(mapToolCategoryLabel(tool.category))}</span>
         </div>
-        <div class="tool-row-desc ${globalEnabled ? '' : 'tool-row-warning'}">
+        <div class="tool-row-desc">
           ${escapeHtml(tool.prompt || '无描述')}
-          ${globalEnabled ? '' : '<br>当前类别已被全局 Skills 禁用'}
         </div>
       </div>
     `
     const toggle = document.createElement('button')
     toggle.className = 'toggle-switch'
     toggle.dataset.enabled = selected ? 'true' : 'false'
-    toggle.disabled = !globalEnabled
     toggle.addEventListener('click', (event) => {
       event.stopPropagation()
-      if (!globalEnabled) {
-        return
-      }
       if (state.editor.selectedTools.has(tool.name)) {
         state.editor.selectedTools.delete(tool.name)
       } else {
@@ -1757,9 +1742,6 @@ function renderEditorToolList(): void {
       renderEditorToolList()
     })
     row.addEventListener('click', () => {
-      if (!globalEnabled) {
-        return
-      }
       if (state.editor.selectedTools.has(tool.name)) {
         state.editor.selectedTools.delete(tool.name)
       } else {
@@ -2036,12 +2018,7 @@ function ensureSettingsDraft(): SettingsDraft {
   if (!state.settingsDraft) {
     state.settingsDraft = {
       providers: [normalizeProviderDraft({ id: createProviderId(), name: 'OpenAI', type: 'openai' })],
-      activeProviderId: '',
-      globalSkills: {
-        file_system: true,
-        execute_command: true,
-        web_search: true
-      }
+      activeProviderId: ''
     }
   }
 
@@ -2379,12 +2356,57 @@ function buildSettingsDraft(config: AgentBackendConfig): SettingsDraft {
 
   return {
     providers,
-    activeProviderId,
-    globalSkills: {
-      file_system: config.global_skills.file_system,
-      execute_command: config.global_skills.execute_command,
-      web_search: config.global_skills.web_search
+    activeProviderId
+  }
+}
+
+function getSkillWorkspaceCandidates(): string[] {
+  const output: string[] = []
+  const seen = new Set<string>()
+  const push = (value: string | null | undefined): void => {
+    const normalized = normalizeOptionalString(value ?? null)
+    if (!normalized) {
+      return
     }
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    output.push(normalized)
+  }
+
+  push(getActiveSession()?.workspace)
+  for (const session of state.sessions) {
+    push(session.workspace)
+  }
+  return output
+}
+
+function renderSkillCatalog(): void {
+  skillsCatalogList.innerHTML = ''
+  if (state.skillCatalog.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'mcp-empty'
+    const activeWorkspace = normalizeOptionalString(getActiveSession()?.workspace ?? null)
+    empty.textContent = activeWorkspace
+      ? '暂无已安装 Skills。已扫描 ~/.tuanzi/skills 与当前会话工作区的 .tuanzi/skills。'
+      : '当前会话未选择工作区。请先选择工作区，或安装到 ~/.tuanzi/skills。'
+    skillsCatalogList.appendChild(empty)
+    return
+  }
+
+  for (const skill of state.skillCatalog) {
+    const row = document.createElement('div')
+    row.className = 'global-skill-row'
+    row.innerHTML = `
+      <div>
+        <div class="global-skill-title">${escapeHtml(skill.name)}</div>
+        <div class="global-skill-desc">${escapeHtml(skill.description || 'No description')}</div>
+        <div class="agent-field-hint">${escapeHtml(skill.skillDir)}</div>
+      </div>
+    `
+    skillsCatalogList.appendChild(row)
   }
 }
 
@@ -2395,10 +2417,7 @@ function renderSettingsDraft(): void {
 
   renderProviderList()
   renderProviderEditor()
-
-  toggleSwitch(globalSkillFileSystem, state.settingsDraft.globalSkills.file_system)
-  toggleSwitch(globalSkillExecuteCommand, state.settingsDraft.globalSkills.execute_command)
-  toggleSwitch(globalSkillWebSearch, state.settingsDraft.globalSkills.web_search)
+  renderSkillCatalog()
 }
 
 function setActiveSettingsPanel(panel: string): void {
@@ -2417,7 +2436,15 @@ async function openSettingsModal(): Promise<void> {
   mcpJsonModal.classList.remove('visible')
   providerModelModal.classList.remove('visible')
 
-  const configRes = await window.tuanzi.getAgentConfig()
+  const workspaceCandidates = getSkillWorkspaceCandidates()
+  const activeWorkspace = workspaceCandidates[0] ?? ''
+  const [configRes, skillsRes] = await Promise.all([
+    window.tuanzi.getAgentConfig(),
+    window.tuanzi.listSkills({
+      workspace: activeWorkspace,
+      workspaceCandidates
+    })
+  ])
 
   if (!configRes.ok || !configRes.config) {
     showError(configRes.error || '读取全局配置失败')
@@ -2426,8 +2453,15 @@ async function openSettingsModal(): Promise<void> {
 
   state.agentConfig = configRes.config
   state.settingsDraft = buildSettingsDraft(configRes.config)
+  state.skillCatalog = skillsRes.ok && Array.isArray(skillsRes.skills) ? skillsRes.skills : []
+  if (!skillsRes.ok) {
+    showError(skillsRes.error || '读取 Skills 目录失败')
+  }
   state.mcpServers = []
   state.expandedMcpServerIds.clear()
+  state.isMcpLoading = false
+  state.hasLoadedMcp = false
+  state.mcpLoadToken += 1
 
   renderSettingsDraft()
   setActiveSettingsPanel('provider')
@@ -2439,8 +2473,6 @@ async function openSettingsModal(): Promise<void> {
     providerNameInput.focus()
     providerNameInput.setSelectionRange(providerNameInput.value.length, providerNameInput.value.length)
   })
-
-  void refreshMcpServers()
 }
 
 function closeSettingsModal(): void {
@@ -2451,6 +2483,8 @@ function closeSettingsModal(): void {
   settingsModal.classList.remove('visible')
   mcpJsonModal.classList.remove('visible')
   providerModelModal.classList.remove('visible')
+  state.mcpLoadToken += 1
+  state.isMcpLoading = false
 }
 
 async function saveSettings(): Promise<void> {
@@ -2466,12 +2500,6 @@ async function saveSettings(): Promise<void> {
     return
   }
 
-  const globalSkills = {
-    file_system: readToggle(globalSkillFileSystem),
-    execute_command: readToggle(globalSkillExecuteCommand),
-    web_search: readToggle(globalSkillWebSearch)
-  }
-
   const configResult = await window.tuanzi.saveAgentConfig({
     provider: {
       type: activeProvider.type,
@@ -2480,8 +2508,7 @@ async function saveSettings(): Promise<void> {
       apiKey: activeProvider.apiKey
     },
     providers: draft.providers,
-    activeProviderId: activeProvider.id,
-    global_skills: globalSkills
+    activeProviderId: activeProvider.id
   })
   if (!configResult.ok || !configResult.config) {
     showError(configResult.error || '保存全局配置失败')
@@ -2502,6 +2529,13 @@ function renderMcpServers(): void {
     loading.className = 'mcp-empty'
     loading.textContent = '加载中，正在探测 MCP Server 状态...'
     mcpServerList.appendChild(loading)
+    return
+  }
+  if (!state.hasLoadedMcp) {
+    const empty = document.createElement('div')
+    empty.className = 'mcp-empty'
+    empty.textContent = '进入此页面后点击“刷新”以加载 MCP Server 状态。'
+    mcpServerList.appendChild(empty)
     return
   }
   if (state.mcpServers.length === 0) {
@@ -2569,13 +2603,18 @@ function renderMcpServers(): void {
 }
 
 async function refreshMcpServers(): Promise<void> {
+  const requestToken = ++state.mcpLoadToken
   state.isMcpLoading = true
   renderMcpServers()
 
   const workspace = getActiveSession()?.workspace ?? ''
   const result = await window.tuanzi.getMcpDashboard({ workspace })
 
+  if (requestToken !== state.mcpLoadToken) {
+    return
+  }
   state.isMcpLoading = false
+  state.hasLoadedMcp = true
   if (!result.ok || !result.mcp) {
     showError(result.error || '读取 MCP 配置失败')
     renderMcpServers()
@@ -2939,6 +2978,9 @@ function bindSettingsEvents(): void {
     button.addEventListener('click', () => {
       const panel = button.dataset.panel ?? 'provider'
       setActiveSettingsPanel(panel)
+      if (panel === 'mcp' && !state.hasLoadedMcp && !state.isMcpLoading) {
+        void refreshMcpServers()
+      }
     })
   })
 
@@ -2967,16 +3009,6 @@ function bindSettingsEvents(): void {
   providerBaseUrlInput.addEventListener('input', updateActiveProviderFromInputs)
   providerModelInput.addEventListener('input', updateActiveProviderFromInputs)
   providerApiKeyInput.addEventListener('input', updateActiveProviderFromInputs)
-
-  globalSkillFileSystem.addEventListener('click', () => {
-    toggleSwitch(globalSkillFileSystem, !readToggle(globalSkillFileSystem))
-  })
-  globalSkillExecuteCommand.addEventListener('click', () => {
-    toggleSwitch(globalSkillExecuteCommand, !readToggle(globalSkillExecuteCommand))
-  })
-  globalSkillWebSearch.addEventListener('click', () => {
-    toggleSwitch(globalSkillWebSearch, !readToggle(globalSkillWebSearch))
-  })
 
   mcpRefreshBtn.addEventListener('click', () => {
     void refreshMcpServers()
