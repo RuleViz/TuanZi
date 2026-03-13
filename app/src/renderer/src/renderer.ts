@@ -221,6 +221,7 @@ const state = {
 
 let sessionPersistTimer: number | null = null
 let sessionPersistDirty = false
+let lastAutoExpandedWorkspaceKey: string | null = null
 
 function sessionPersistPerfLog(event: string, fields?: Record<string, unknown>): void {
   if (!SESSION_PERSIST_PERF_LOG) {
@@ -1447,7 +1448,10 @@ function renderSessionList(): void {
   }
 
   const activeWorkspaceKey = getWorkspaceKey(getActiveSession()?.workspace ?? '')
-  state.expandedWorkspaceKeys.add(activeWorkspaceKey)
+  if (activeWorkspaceKey !== lastAutoExpandedWorkspaceKey) {
+    state.expandedWorkspaceKeys.add(activeWorkspaceKey)
+    lastAutoExpandedWorkspaceKey = activeWorkspaceKey
+  }
 
   const orderedGroups = Array.from(groups.values()).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   for (const group of orderedGroups) {
