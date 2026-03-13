@@ -154,12 +154,46 @@ export class StdioMcpClient {
   }
 
   async stop(): Promise<void> {
-    if (!this.process) {
+    const proc = this.process;
+    if (!proc) {
       return;
     }
-    this.process.kill("SIGTERM");
     this.process = null;
     this.started = false;
+    this.rejectAllPending(new Error("MCP client stopped."));
+
+    // Close stdin to signal the child process to exit.
+    try {
+      if (proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.end();
+      }
+    } catch { /* ignore */ }
+
+    // Remove data listeners to prevent further processing after stop.
+    proc.stdout.removeAllListeners("data");
+    proc.stderr.removeAllListeners("data");
+
+    const exitPromise = new Promise<void>((resolve) => {
+      const onExit = (): void => {
+        proc.removeListener("exit", onExit);
+        proc.removeListener("error", onExit);
+        resolve();
+      };
+      proc.on("exit", onExit);
+      proc.on("error", onExit);
+    });
+
+    // Fire and forget the kill signals. No more awaiting for OS exit events.
+    if (process.platform === "win32" && proc.pid) {
+      const { exec } = require("node:child_process") as typeof import("node:child_process");
+      // Execute taskkill without waiting for its callback.
+      exec(`taskkill /pid ${proc.pid} /T /F`, { windowsHide: true });
+    } else {
+      try { proc.kill("SIGKILL"); } catch { /* ignore */ }
+    }
+
+    // Resolve immediately. We've done our part by signaling the OS.
+    return Promise.resolve();
   }
 
   private onStdoutData(chunk: Buffer): void {

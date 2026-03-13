@@ -1,4 +1,4 @@
-﻿import { TuanZiAgent } from "./agents/tuanzi";
+import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
@@ -16,6 +16,7 @@ export interface ToolRuntime {
   registry: ToolRegistry;
   toolContext: ToolExecutionContext;
   logger: Logger;
+  dispose: () => Promise<void>;
 }
 
 export function createToolRuntime(
@@ -39,7 +40,16 @@ export function createToolRuntime(
     mcpBridge,
     skillRuntime
   };
-  return { registry, toolContext, logger };
+
+  const dispose = async (): Promise<void> => {
+    try {
+      await mcpBridge.stopAll();
+    } catch {
+      // Ignore errors during disposal.
+    }
+  };
+
+  return { registry, toolContext, logger, dispose };
 }
 
 export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: ToolRuntime): PlanToDoOrchestrator {

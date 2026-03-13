@@ -11,6 +11,11 @@ files:
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
   - resources/**
+extraResources:
+  - from: ../dist
+    to: backend/dist
+  - from: ../agent.config.json
+    to: backend/agent.config.json
 win:
   executableName: app
 nsis:

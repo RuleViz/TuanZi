@@ -27,6 +27,8 @@ export class McpManager implements McpBridge {
   private readonly idleTtlMs: number;
   private readonly cleanupTimer: NodeJS.Timeout;
 
+  private cachedServers: Record<string, McpServerConfigEntry> | null = null;
+
   constructor(
     private readonly settings: McpSettings,
     private readonly logger: Logger,
@@ -105,37 +107,64 @@ export class McpManager implements McpBridge {
 
   async stopAll(): Promise<void> {
     clearInterval(this.cleanupTimer);
-    for (const [serverId, managed] of this.clients.entries()) {
-      this.clients.delete(serverId);
+    const entries = [...this.clients.entries()];
+    this.clients.clear();
+
+    if (entries.length === 0) {
+      return;
+    }
+
+    const stopPromises = entries.map(async ([, managed]) => {
       try {
         const client = await managed.clientPromise;
         await client.stop();
       } catch {
         // ignore stop errors during shutdown
       }
-    }
+    });
+
+    // Apply an overall timeout so a misbehaving MCP server cannot block
+    // shutdown indefinitely.
+    const STOP_ALL_TIMEOUT_MS = 5000;
+    const overallTimeout = new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, STOP_ALL_TIMEOUT_MS);
+      if (typeof timer.unref === "function") { timer.unref(); }
+    });
+
+    await Promise.race([
+      Promise.allSettled(stopPromises),
+      overallTimeout
+    ]);
   }
 
   private loadServers(): Record<string, McpServerConfigEntry> {
+    if (this.cachedServers) {
+      return this.cachedServers;
+    }
+
     const fromConfigFile = loadMcpConfigSync().mcpServers;
     const enabledServers = Object.fromEntries(
       Object.entries(fromConfigFile).filter(([, server]) => server.enabled !== false)
     );
-    if (Object.keys(enabledServers).length > 0) {
-      return enabledServers;
-    }
 
-    // Legacy fallback to agent.config.json single-server MCP settings.
-    if (this.settings.enabled && this.settings.command.trim()) {
-      return {
+    let result: Record<string, McpServerConfigEntry>;
+    if (Object.keys(enabledServers).length > 0) {
+      result = enabledServers;
+    } else if (this.settings.enabled && this.settings.command.trim()) {
+      // Legacy fallback to agent.config.json single-server MCP settings.
+      result = {
         default: {
           command: this.settings.command,
           args: this.settings.args,
           ...(Object.keys(this.settings.env).length > 0 ? { env: this.settings.env } : {})
         }
       };
+    } else {
+      result = {};
     }
-    return {};
+
+    this.cachedServers = result;
+    return result;
   }
 
   private async getClient(serverId: string, server: McpServerConfigEntry): Promise<StdioMcpClient | RemoteMcpClient> {

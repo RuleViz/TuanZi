@@ -22,15 +22,21 @@ const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
 const configuredShutdownTimeout = Number(process.env["TUANZI_SHUTDOWN_WAIT_MS"])
 const SHUTDOWN_WAIT_TIMEOUT_MS = Number.isFinite(configuredShutdownTimeout) && configuredShutdownTimeout > 0
   ? Math.floor(configuredShutdownTimeout)
-  : 800
+  : 2000
 const SNAPSHOT_FLUSH_INTERVAL_MS = 200
 const SNAPSHOT_MAX_STREAM_CHARS = 24_000
 const SNAPSHOT_MAX_TOOL_CALLS = 80
 const CLOSE_PERF_LOG_ENABLED = process.env["TUANZI_CLOSE_PERF_LOG"] === "1"
 const CLOSE_PERF_SNAPSHOT_LOG_ENABLED = process.env["TUANZI_CLOSE_PERF_LOG_SNAPSHOT"] === "1"
+const CLOSE_PERF_RESOURCE_LOG_ENABLED = process.env["TUANZI_CLOSE_PERF_LOG_RESOURCES"] === "1"
+const configuredForceDestroyDelay = Number(process.env["TUANZI_CLOSE_FORCE_DESTROY_MS"])
+const WINDOW_CLOSE_FORCE_DESTROY_MS = Number.isFinite(configuredForceDestroyDelay)
+  ? Math.max(0, Math.floor(configuredForceDestroyDelay))
+  : 1200
 
 let shutdownDrainInProgress = false
 let shutdownDrainCompleted = false
+let closeForceDestroyTimer: NodeJS.Timeout | null = null
 
 function closePerfLog(
   event: string,
@@ -45,6 +51,71 @@ function closePerfLog(
   }
   const payload = fields ? ` ${JSON.stringify(fields)}` : ""
   console.log(`[close-perf] ${event}${payload}`)
+}
+
+function collectActiveResources(): Record<string, number> {
+  const getResourcesInfo = (process as any).getActiveResourcesInfo as (() => string[]) | undefined
+  if (typeof getResourcesInfo !== "function") {
+    return {}
+  }
+  const resources = getResourcesInfo.call(process)
+  if (!Array.isArray(resources)) {
+    return {}
+  }
+  const counts: Record<string, number> = {}
+  for (const resource of resources) {
+    const key = typeof resource === "string" ? resource : String(resource)
+    counts[key] = (counts[key] ?? 0) + 1
+  }
+  return counts
+}
+
+function closePerfLogResources(event: string, fields?: Record<string, unknown>): void {
+  if (!CLOSE_PERF_RESOURCE_LOG_ENABLED) {
+    return
+  }
+  closePerfLog(event, {
+    ...fields,
+    resources: collectActiveResources()
+  })
+}
+
+function clearCloseForceDestroyTimer(): void {
+  if (!closeForceDestroyTimer) {
+    return
+  }
+  clearTimeout(closeForceDestroyTimer)
+  closeForceDestroyTimer = null
+}
+
+function scheduleCloseForceDestroy(win: BrowserWindow, reason: string): void {
+  clearCloseForceDestroyTimer()
+  if (WINDOW_CLOSE_FORCE_DESTROY_MS <= 0 || win.isDestroyed()) {
+    return
+  }
+  closeForceDestroyTimer = setTimeout(() => {
+    closeForceDestroyTimer = null
+    if (win.isDestroyed()) {
+      return
+    }
+    closePerfLog("window_force_destroy", {
+      reason,
+      timeoutMs: WINDOW_CLOSE_FORCE_DESTROY_MS,
+      activeTasks: activeTasks.size
+    })
+    closePerfLogResources("window_force_destroy_resources", { reason })
+    try {
+      win.destroy()
+    } catch (error) {
+      closePerfLog("window_force_destroy_failed", {
+        reason,
+        error: toErrorMessage(error)
+      })
+    }
+  }, WINDOW_CLOSE_FORCE_DESTROY_MS)
+  if (typeof closeForceDestroyTimer.unref === "function") {
+    closeForceDestroyTimer.unref()
+  }
 }
 
 function abortAllActiveTasks(reason: string): number {
@@ -180,6 +251,7 @@ type CreateToolRuntimeFn = (
       listCatalog?: () => SkillCatalogItem[]
     }
   }
+  dispose?: () => Promise<void>
 }
 
 type CreateOrchestratorFn = (
@@ -717,6 +789,17 @@ function fallbackToolCategory(name: string): GlobalSkillCategory {
   return 'file_system'
 }
 
+async function disposeRuntimeSafe(runtime: { dispose?: () => Promise<void> } | null | undefined): Promise<void> {
+  if (!runtime || typeof runtime.dispose !== "function") {
+    return
+  }
+  try {
+    await runtime.dispose()
+  } catch {
+    // Ignore runtime disposal errors during UI-driven metadata operations.
+  }
+}
+
 function normalizeMcpServerId(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) {
@@ -805,6 +888,21 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
   })
+  mainWindow.on("close", () => {
+    closePerfLog("window_close_event", { activeTasks: activeTasks.size })
+    closePerfLogResources("window_close_event_resources", { activeTasks: activeTasks.size })
+    scheduleCloseForceDestroy(mainWindow!, "window_close_event")
+  })
+  mainWindow.on("closed", () => {
+    clearCloseForceDestroyTimer()
+    closePerfLog("window_closed_event", { activeTasks: activeTasks.size })
+    closePerfLogResources("window_closed_event_resources", { activeTasks: activeTasks.size })
+    mainWindow = null
+  })
+  mainWindow.webContents.on("destroyed", () => {
+    closePerfLog("webcontents_destroyed")
+    closePerfLogResources("webcontents_destroyed_resources")
+  })
 
   const emitWindowMaximizedState = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) {
@@ -867,10 +965,31 @@ ipcMain.handle('window:close', async (event) => {
   if (!win) {
     return { ok: false, error: 'Window unavailable' }
   }
+  closePerfLog("close_requested", { activeTasks: activeTasks.size })
+  closePerfLogResources("close_requested_resources", { activeTasks: activeTasks.size })
+  
+  // Immediately hide the window to provide instant visual feedback.
+  // The actual cleanup will continue behind the scenes.
+  if (!win.isDestroyed()) {
+    win.hide()
+  }
+
   if (activeTasks.size > 0) {
     abortAllActiveTasks('window_close')
+    // Give tasks a short window to acknowledge the abort before closing.
+    const drainResult = await waitForActiveTasksToDrain(Math.min(SHUTDOWN_WAIT_TIMEOUT_MS, 400))
+    closePerfLog('window_close_drain', {
+      remaining: drainResult.remaining,
+      elapsedMs: drainResult.elapsedMs
+    })
   }
-  win.close()
+  closePerfLog("close_calling_win_close")
+  scheduleCloseForceDestroy(win, "window_close_ipc")
+  if (!win.isDestroyed()) {
+    win.close()
+  }
+  closePerfLog("close_returned_from_win_close")
+  closePerfLogResources("close_returned_from_win_close_resources", { activeTasks: activeTasks.size })
   return { ok: true }
 })
 
@@ -918,6 +1037,7 @@ async function runChatTask(
   const controller = new AbortController()
   activeTasks.set(taskId, controller)
   let flushPendingSnapshots: (() => Promise<void>) | null = null
+  let runtimeToDispose: { dispose?: () => Promise<void> } | null = null
 
   try {
     const { loadRuntimeConfig, createToolRuntime, createOrchestrator } = loadCoreModules()
@@ -978,6 +1098,7 @@ async function runChatTask(
       logger: ipcLogger,
       approvalGate: autoApprovalGate
     }) as Record<string, unknown>
+    runtimeToDispose = runtime as { dispose?: () => Promise<void> }
     const orchestrator = createOrchestrator(runtimeConfig, runtime)
     const memoryTurns = (payload.history || []).slice(-10)
 
@@ -1144,7 +1265,8 @@ async function runChatTask(
       executedCommands: result.executedCommands || []
     }
   } catch (error) {
-    if (flushPendingSnapshots) {
+    // During shutdown, skip snapshot flushing to avoid blocking the quit sequence.
+    if (flushPendingSnapshots && !shutdownDrainInProgress && !shutdownDrainCompleted) {
       await flushPendingSnapshots()
     }
     const message = toErrorMessage(error)
@@ -1166,7 +1288,15 @@ async function runChatTask(
     }
     return { ok: false, taskId, error: message }
   } finally {
+    // Crucial: remove from activeTasks immediately to let the close handler proceed.
     activeTasks.delete(taskId)
+    if (runtimeToDispose && typeof runtimeToDispose.dispose === "function") {
+      try {
+        await runtimeToDispose.dispose()
+      } catch {
+        // Ignore disposal errors.
+      }
+    }
   }
 }
 
@@ -1429,13 +1559,14 @@ ipcMain.handle(
 )
 
 ipcMain.handle('agent:listTools', async (_event, payload: { workspace?: string | null }) => {
+  let runtime: ReturnType<CreateToolRuntimeFn> | null = null
   try {
     const { loadRuntimeConfig, createToolRuntime, getSystemToolProfile } = loadCoreModules()
     const runtimeConfig = loadRuntimeConfig({
       workspaceRoot: resolveWorkspaceFromInput(payload?.workspace),
       approvalMode: 'auto'
     })
-    const runtime = createToolRuntime(runtimeConfig)
+    runtime = createToolRuntime(runtimeConfig)
     const toolNames = runtime.registry.getToolNames()
     const tools: AgentToolProfile[] = toolNames.map((name) => {
       const profile = getSystemToolProfile(name)
@@ -1454,6 +1585,8 @@ ipcMain.handle('agent:listTools', async (_event, payload: { workspace?: string |
       ok: false,
       error: toErrorMessage(error)
     }
+  } finally {
+    await disposeRuntimeSafe(runtime)
   }
 })
 
@@ -1463,6 +1596,7 @@ ipcMain.handle(
     _event,
     payload: { workspace?: string | null; workspaceCandidates?: Array<string | null | undefined> }
   ) => {
+  const runtimes: Array<{ dispose?: () => Promise<void> }> = []
   try {
     const { loadRuntimeConfig, createToolRuntime } = loadCoreModules()
     const workspaceCandidates = collectWorkspaceCandidates(payload?.workspace, payload?.workspaceCandidates)
@@ -1474,6 +1608,7 @@ ipcMain.handle(
         approvalMode: 'auto'
       })
       const runtime = createToolRuntime(runtimeConfig)
+      runtimes.push(runtime)
       const skillRuntime = runtime.toolContext?.skillRuntime
       const skills =
         skillRuntime && typeof skillRuntime.listCatalog === 'function' ? skillRuntime.listCatalog() : []
@@ -1495,6 +1630,8 @@ ipcMain.handle(
       ok: false,
       error: toErrorMessage(error)
     }
+  } finally {
+    await Promise.allSettled(runtimes.map((runtime) => disposeRuntimeSafe(runtime)))
   }
 })
 
@@ -1780,19 +1917,40 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  closePerfLog("window_all_closed", {
+    platform: process.platform,
+    activeTasks: activeTasks.size
+  })
+  closePerfLogResources("window_all_closed_resources", {
+    platform: process.platform,
+    activeTasks: activeTasks.size
+  })
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
 app.on('before-quit', (event) => {
+  closePerfLog("before_quit", {
+    activeTasks: activeTasks.size,
+    shutdownDrainInProgress,
+    shutdownDrainCompleted
+  })
+  closePerfLogResources("before_quit_resources", {
+    activeTasks: activeTasks.size,
+    shutdownDrainInProgress,
+    shutdownDrainCompleted
+  })
   if (shutdownDrainCompleted || activeTasks.size === 0) {
     shutdownDrainCompleted = true
+    closePerfLog("before_quit_fast_path", { activeTasks: activeTasks.size })
+    closePerfLogResources("before_quit_fast_path_resources", { activeTasks: activeTasks.size })
     return
   }
 
   if (shutdownDrainInProgress) {
     event.preventDefault()
+    closePerfLog("before_quit_reentrant_blocked", { activeTasks: activeTasks.size })
     return
   }
 
@@ -1811,7 +1969,21 @@ app.on('before-quit', (event) => {
     .finally(() => {
       shutdownDrainInProgress = false
       shutdownDrainCompleted = true
+      closePerfLog("before_quit_drain_done", { activeTasks: activeTasks.size })
+      closePerfLogResources("before_quit_drain_done_resources", { activeTasks: activeTasks.size })
       app.quit()
     })
+})
+
+app.on("will-quit", () => {
+  clearCloseForceDestroyTimer()
+  closePerfLog("will_quit", { activeTasks: activeTasks.size })
+  closePerfLogResources("will_quit_resources", { activeTasks: activeTasks.size })
+})
+
+app.on("quit", (_event, exitCode) => {
+  clearCloseForceDestroyTimer()
+  closePerfLog("quit", { exitCode, activeTasks: activeTasks.size })
+  closePerfLogResources("quit_resources", { exitCode, activeTasks: activeTasks.size })
 })
 
