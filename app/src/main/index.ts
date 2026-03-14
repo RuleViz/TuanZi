@@ -1,13 +1,24 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from "electron"
+﻿import { app, shell, BrowserWindow } from "electron"
 import { join, resolve } from "path"
 import { electronApp, optimizer, is } from "@electron-toolkit/utils"
 import icon from "../../resources/icon.png?asset"
+import {
+  type AgentBackendConfig,
+  type AgentToolProfile,
+  type ChatImageInput,
+  type GlobalSkillCategory,
+  type ProviderConfig,
+  type SkillCatalogItem,
+  type StoredAgent
+} from "../shared/domain-types"
+import type { SendMessagePayload } from "../shared/ipc-contracts"
 import {
   ChatResumeStore,
   type AppChatResumeSnapshot,
   type ToolLoopResumeStateSnapshot,
   type ToolLoopToolCallSnapshot
 } from "./chat-resume-store"
+import { registerIpcHandlers } from "./ipc/register"
 
 // ── TuanZi Core Integration ────────────────────────────
 // We import from the compiled CLI core. In development you can point to the
@@ -159,77 +170,6 @@ async function waitForActiveTasksToDrain(timeoutMs: number): Promise<{ remaining
     remaining: 0,
     elapsedMs: Date.now() - startedAt
   }
-}
-
-type GlobalSkillCategory = "file_system" | "execute_command" | "web_search"
-
-interface AgentProviderConfig {
-  type: string
-  apiKey: string
-  baseUrl: string
-  model: string
-}
-
-interface ProviderModelItem {
-  id: string
-  displayName: string
-  isVision: boolean
-  enabled: boolean
-}
-
-interface ChatImageInput {
-  name: string
-  mimeType: string
-  dataUrl: string
-}
-
-interface ProviderConfig extends AgentProviderConfig {
-  id: string
-  name: string
-  models: ProviderModelItem[]
-  isEnabled: boolean
-}
-
-interface AgentBackendConfig {
-  provider: AgentProviderConfig
-  providers: ProviderConfig[]
-  activeProviderId: string
-}
-
-interface SkillCatalogItem {
-  name: string
-  description: string
-  rootDir: string
-  skillDir: string
-  skillFile: string
-}
-
-interface StoredAgent {
-  id: string
-  filename: string
-  name: string
-  avatar: string
-  description: string
-  tags: string[]
-  tools: string[]
-  prompt: string
-}
-
-interface AgentToolProfile {
-  name: string
-  category: GlobalSkillCategory
-  prompt: string
-}
-
-interface AgentSavePayload {
-  previousFilename?: string | null
-  filename?: string | null
-  name?: string | null
-  avatar?: string | null
-  description?: string | null
-  tags?: string[]
-  tools?: string[]
-  prompt?: string | null
 }
 
 type LoadRuntimeConfigFn = (input: {
@@ -930,109 +870,9 @@ function createWindow(): void {
   }
 }
 
-// ── IPC Handlers ───────────────────────────────────────
-
-function getSenderWindow(sender: Electron.WebContents): BrowserWindow | null {
-  const win = BrowserWindow.fromWebContents(sender)
-  if (!win || win.isDestroyed()) {
-    return null
-  }
-  return win
-}
-
-ipcMain.handle('window:minimize', async (event) => {
-  const win = getSenderWindow(event.sender)
-  if (!win) {
-    return { ok: false, error: 'Window unavailable' }
-  }
-  win.minimize()
-  return { ok: true }
-})
-
-ipcMain.handle('window:toggleMaximize', async (event) => {
-  const win = getSenderWindow(event.sender)
-  if (!win) {
-    return { ok: false, error: 'Window unavailable' }
-  }
-  if (win.isMaximized()) {
-    win.unmaximize()
-  } else {
-    win.maximize()
-  }
-  return { ok: true, maximized: win.isMaximized() }
-})
-
-ipcMain.handle('window:close', async (event) => {
-  const win = getSenderWindow(event.sender)
-  if (!win) {
-    return { ok: false, error: 'Window unavailable' }
-  }
-  closePerfLog("close_requested", { activeTasks: activeTasks.size })
-  closePerfLogResources("close_requested_resources", { activeTasks: activeTasks.size })
-  
-  // Immediately hide the window to provide instant visual feedback.
-  // The actual cleanup will continue behind the scenes.
-  if (!win.isDestroyed()) {
-    win.hide()
-  }
-
-  if (activeTasks.size > 0) {
-    abortAllActiveTasks('window_close')
-    // Give tasks a short window to acknowledge the abort before closing.
-    const drainResult = await waitForActiveTasksToDrain(Math.min(SHUTDOWN_WAIT_TIMEOUT_MS, 400))
-    closePerfLog('window_close_drain', {
-      remaining: drainResult.remaining,
-      elapsedMs: drainResult.elapsedMs
-    })
-  }
-  closePerfLog("close_calling_win_close")
-  scheduleCloseForceDestroy(win, "window_close_ipc")
-  if (!win.isDestroyed()) {
-    win.close()
-  }
-  closePerfLog("close_returned_from_win_close")
-  closePerfLogResources("close_returned_from_win_close_resources", { activeTasks: activeTasks.size })
-  return { ok: true }
-})
-
-ipcMain.handle('window:isMaximized', async (event) => {
-  const win = getSenderWindow(event.sender)
-  if (!win) {
-    return { ok: false, error: 'Window unavailable' }
-  }
-  return { ok: true, maximized: win.isMaximized() }
-})
-
-ipcMain.handle('dialog:selectWorkspace', async () => {
-  if (!mainWindow) return null
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: '选择工作目录'
-  })
-  if (result.canceled || result.filePaths.length === 0) return null
-  return result.filePaths[0]
-})
-
-/**
- * Core chat handler — receives a user message and workspace path, streams
- * the Agent response back to the renderer via IPC events.
- *
- * We dynamically import the core modules so the main process can load them
- * after Electron is ready. This avoids import-order issues with ESM/CJS.
- */
 async function runChatTask(
   webContents: Electron.WebContents,
-    payload: {
-      taskId?: string
-      sessionId?: string
-      message: string
-      images?: ChatImageInput[]
-      workspace: string
-      history: Array<{ user: string; assistant: string }>
-      agentId?: string | null
-      thinking?: boolean
-      resumeState?: ToolLoopResumeStateSnapshot | null
-  }
+  payload: SendMessagePayload & { resumeState?: ToolLoopResumeStateSnapshot | null }
 ) {
   const taskId = payload.taskId || Date.now().toString(36)
   const sessionId = normalizeOptionalString(payload.sessionId) ?? "default-session"
@@ -1302,340 +1142,6 @@ async function runChatTask(
   }
 }
 
-ipcMain.handle(
-  'chat:sendMessage',
-  async (
-    event,
-    payload: {
-      taskId?: string
-      sessionId?: string
-      message: string
-      images?: ChatImageInput[]
-      workspace: string
-      history: Array<{ user: string; assistant: string }>
-      agentId?: string | null
-      thinking?: boolean
-    }
-  ) => {
-    return runChatTask(event.sender, payload)
-  }
-)
-
-ipcMain.handle(
-  'chat:getResumeState',
-  async (_event, payload: { sessionId?: string; workspace: string }) => {
-    const sessionId = normalizeOptionalString(payload.sessionId) ?? 'default-session'
-    return {
-      ok: true,
-      resumeSnapshot: loadMatchingChatResumeSnapshot(sessionId, payload.workspace)
-    }
-  }
-)
-
-ipcMain.handle('chat:stopMessage', async (_event, payload: { taskId: string }) => {
-  console.log(`[IPC] Received chat:stopMessage for taskId=${payload.taskId}`)
-  const controller = activeTasks.get(payload.taskId)
-  if (controller) {
-    console.log(`[IPC] Aborting controller for taskId=${payload.taskId}`)
-    controller.abort()
-    return { ok: true }
-  }
-  console.log(`[IPC] Task not found for taskId=${payload.taskId}`)
-  return { ok: false, error: 'Task not found or already completed' }
-})
-
-ipcMain.handle('agent:list', async () => {
-  try {
-    const { listStoredAgentsSync } = loadCoreModules()
-    return {
-      ok: true,
-      agents: listStoredAgentsSync()
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('agent:get', async (_event, payload: { id?: string | null }) => {
-  try {
-    const { getStoredAgentSync } = loadCoreModules()
-    return {
-      ok: true,
-      agent: getStoredAgentSync(payload?.id ?? 'default')
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('agent:save', async (_event, payload: AgentSavePayload) => {
-  try {
-    const { saveStoredAgentSync, deleteStoredAgentSync } = loadCoreModules()
-    const name = normalizeOptionalString(payload?.name)
-    const prompt = normalizeOptionalString(payload?.prompt)
-    if (!name) {
-      return {
-        ok: false,
-        error: 'Agent 名称不能为空'
-      }
-    }
-    if (!prompt) {
-      return {
-        ok: false,
-        error: '系统提示词不能为空'
-      }
-    }
-
-    const saved = saveStoredAgentSync({
-      filename: normalizeOptionalString(payload?.filename ?? null),
-      name,
-      avatar: normalizeOptionalString(payload?.avatar ?? null),
-      description: normalizeOptionalString(payload?.description ?? null),
-      tags: Array.isArray(payload?.tags) ? payload.tags : [],
-      tools: Array.isArray(payload?.tools) ? payload.tools : [],
-      prompt
-    })
-
-    const previousFilename = normalizeOptionalString(payload?.previousFilename ?? null)
-    if (
-      previousFilename &&
-      previousFilename.toLowerCase() !== saved.filename.toLowerCase() &&
-      previousFilename.toLowerCase() !== 'default.md'
-    ) {
-      try {
-        deleteStoredAgentSync(previousFilename)
-      } catch {
-        // ignore rename cleanup errors and keep the saved agent as source of truth
-      }
-    }
-
-    return {
-      ok: true,
-      agent: saved
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('agent:delete', async (_event, payload: { id?: string | null }) => {
-  try {
-    const { deleteStoredAgentSync } = loadCoreModules()
-    const id = normalizeOptionalString(payload?.id ?? null)
-    if (!id) {
-      return {
-        ok: false,
-        error: '缺少 Agent 标识'
-      }
-    }
-    deleteStoredAgentSync(id)
-    return { ok: true }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('agent-config:get', async () => {
-  try {
-    const { loadAgentBackendConfigSync } = loadCoreModules()
-    return {
-      ok: true,
-      config: loadAgentBackendConfigSync()
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('agent-config:save', async (_event, payload: unknown) => {
-  try {
-    const { saveAgentBackendConfigSync } = loadCoreModules()
-    return {
-      ok: true,
-      config: saveAgentBackendConfigSync(payload)
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle(
-  "agent-config:testProviderConnection",
-  async (_event, payload: { type?: string; baseUrl?: string; apiKey?: string; model?: string }) => {
-    try {
-      const baseUrl = payload?.baseUrl ?? ""
-      const apiKey = payload?.apiKey ?? ""
-      const model = payload?.model ?? ""
-      try {
-        await requestProviderModels({
-          baseUrl,
-          apiKey
-        })
-        return {
-          ok: true,
-          reachable: true,
-          message: "Connection successful"
-        }
-      } catch (modelProbeError) {
-        const normalizedModel = normalizeOptionalString(model)
-        if (!normalizedModel) {
-          throw modelProbeError
-        }
-
-        try {
-          await probeProviderChatCompletions({
-            baseUrl,
-            apiKey,
-            model: normalizedModel
-          })
-          return {
-            ok: true,
-            reachable: true,
-            message: "Connected via chat/completions (this provider may not expose /models)."
-          }
-        } catch (chatProbeError) {
-          const modelErrorText = toErrorMessage(modelProbeError)
-          const chatErrorText = toErrorMessage(chatProbeError)
-          if (modelErrorText === chatErrorText) {
-            throw new Error(modelErrorText)
-          }
-          throw new Error(
-            `Model list probe failed: ${modelErrorText}\nChat probe failed: ${chatErrorText}`
-          )
-        }
-      }
-    } catch (error) {
-      return {
-        ok: false,
-        reachable: false,
-        error: toErrorMessage(error)
-      }
-    }
-  }
-)
-
-ipcMain.handle(
-  "agent-config:fetchProviderModels",
-  async (_event, payload: { type?: string; baseUrl?: string; apiKey?: string; model?: string }) => {
-    try {
-      const models = await requestProviderModels({
-        baseUrl: payload?.baseUrl ?? "",
-        apiKey: payload?.apiKey ?? ""
-      })
-      return {
-        ok: true,
-        models
-      }
-    } catch (error) {
-      if (isDashScopeCodingBaseUrl(payload?.baseUrl ?? "")) {
-        return {
-          ok: true,
-          models: [],
-          message: "DashScope Coding endpoint does not expose /models. Please add model IDs manually."
-        }
-      }
-      return {
-        ok: false,
-        error: toErrorMessage(error)
-      }
-    }
-  }
-)
-
-ipcMain.handle('agent:listTools', async (_event, payload: { workspace?: string | null }) => {
-  let runtime: ReturnType<CreateToolRuntimeFn> | null = null
-  try {
-    const { loadRuntimeConfig, createToolRuntime, getSystemToolProfile } = loadCoreModules()
-    const runtimeConfig = loadRuntimeConfig({
-      workspaceRoot: resolveWorkspaceFromInput(payload?.workspace),
-      approvalMode: 'auto'
-    })
-    runtime = createToolRuntime(runtimeConfig)
-    const toolNames = runtime.registry.getToolNames()
-    const tools: AgentToolProfile[] = toolNames.map((name) => {
-      const profile = getSystemToolProfile(name)
-      return {
-        name,
-        category: profile?.category ?? fallbackToolCategory(name),
-        prompt: profile?.prompt ?? ''
-      }
-    })
-    return {
-      ok: true,
-      tools
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  } finally {
-    await disposeRuntimeSafe(runtime)
-  }
-})
-
-ipcMain.handle(
-  'skills:list',
-  async (
-    _event,
-    payload: { workspace?: string | null; workspaceCandidates?: Array<string | null | undefined> }
-  ) => {
-  const runtimes: Array<{ dispose?: () => Promise<void> }> = []
-  try {
-    const { loadRuntimeConfig, createToolRuntime } = loadCoreModules()
-    const workspaceCandidates = collectWorkspaceCandidates(payload?.workspace, payload?.workspaceCandidates)
-    const skillMap = new Map<string, SkillCatalogItem>()
-
-    for (const workspaceRoot of workspaceCandidates) {
-      const runtimeConfig = loadRuntimeConfig({
-        workspaceRoot: resolveWorkspaceFromInput(workspaceRoot),
-        approvalMode: 'auto'
-      })
-      const runtime = createToolRuntime(runtimeConfig)
-      runtimes.push(runtime)
-      const skillRuntime = runtime.toolContext?.skillRuntime
-      const skills =
-        skillRuntime && typeof skillRuntime.listCatalog === 'function' ? skillRuntime.listCatalog() : []
-      for (const skill of skills) {
-        const dedupeKey = skill.skillDir.toLowerCase()
-        if (!skillMap.has(dedupeKey)) {
-          skillMap.set(dedupeKey, skill)
-        }
-      }
-    }
-
-    const skills = [...skillMap.values()].sort((left, right) => left.name.localeCompare(right.name))
-    return {
-      ok: true,
-      skills
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  } finally {
-    await Promise.allSettled(runtimes.map((runtime) => disposeRuntimeSafe(runtime)))
-  }
-})
 
 async function probeMcpServers(
   servers: Record<string, McpServerConfigEntry>,
@@ -1740,168 +1246,51 @@ async function probeMcpServers(
   return results
 }
 
-ipcMain.handle('mcp:dashboard:get', async (_event, payload: { workspace?: string | null }) => {
-  try {
-    const { loadMcpConfigSync } = loadCoreModules()
-    const config = loadMcpConfigSync()
-    const servers = normalizeMcpServers(config.mcpServers)
-    const cards = await probeMcpServers(servers, payload?.workspace)
-    return {
-      ok: true,
-      mcp: {
-        servers: cards
-      }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
+// ── IPC Handlers ───────────────────────────────────────
+
+registerIpcHandlers({
+  window: {
+    getMainWindow: () => mainWindow,
+    closePerfLog,
+    closePerfLogResources,
+    activeTasks,
+    abortAllActiveTasks,
+    waitForActiveTasksToDrain,
+    shutdownWaitTimeoutMs: SHUTDOWN_WAIT_TIMEOUT_MS,
+    scheduleCloseForceDestroy
+  },
+  chat: {
+    runChatTask,
+    normalizeOptionalString,
+    loadMatchingChatResumeSnapshot,
+    activeTasks
+  },
+  agent: {
+    loadCoreModules,
+    normalizeOptionalString,
+    toErrorMessage,
+    requestProviderModels,
+    probeProviderChatCompletions,
+    isDashScopeCodingBaseUrl,
+    resolveWorkspaceFromInput,
+    fallbackToolCategory,
+    disposeRuntimeSafe
+  },
+  skills: {
+    loadCoreModules,
+    toErrorMessage,
+    collectWorkspaceCandidates,
+    resolveWorkspaceFromInput,
+    disposeRuntimeSafe
+  },
+  mcp: {
+    loadCoreModules,
+    toErrorMessage,
+    normalizeMcpServers,
+    normalizeMcpServerId,
+    probeMcpServers
   }
 })
-
-ipcMain.handle('mcp:dashboard:mergeJson', async (_event, payload: { jsonText?: string | null }) => {
-  try {
-    const { loadMcpConfigSync, saveMcpConfigSync } = loadCoreModules()
-    const rawText = typeof payload?.jsonText === 'string' ? payload.jsonText.trim() : ''
-    if (!rawText) {
-      return {
-        ok: false,
-        error: '请输入有效的 JSON 配置'
-      }
-    }
-
-    const parsed = JSON.parse(rawText) as unknown
-    const record = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null
-    if (!record) {
-      return {
-        ok: false,
-        error: 'JSON 顶层必须是对象'
-      }
-    }
-
-    const incomingRaw = record.mcpServers && typeof record.mcpServers === 'object'
-      ? record.mcpServers
-      : record
-    const incoming = normalizeMcpServers(incomingRaw)
-    if (Object.keys(incoming).length === 0) {
-      return {
-        ok: false,
-        error: '未发现可用的 mcpServers 配置'
-      }
-    }
-
-    const current = loadMcpConfigSync()
-    const merged = {
-      mcpServers: {
-        ...current.mcpServers,
-        ...incoming
-      }
-    }
-    saveMcpConfigSync(merged)
-    return { ok: true }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle(
-  'mcp:dashboard:setServerEnabled',
-  async (_event, payload: { serverId?: string | null; enabled?: boolean }) => {
-    try {
-      const { loadMcpConfigSync, saveMcpConfigSync } = loadCoreModules()
-      const serverId = normalizeMcpServerId(typeof payload?.serverId === 'string' ? payload.serverId : '')
-      if (!serverId) {
-        return {
-          ok: false,
-          error: '缺少 serverId'
-        }
-      }
-      const enabled = payload?.enabled === true
-      const config = loadMcpConfigSync()
-      if (!config.mcpServers[serverId]) {
-        return {
-          ok: false,
-          error: `找不到 MCP Server: ${serverId}`
-        }
-      }
-      config.mcpServers[serverId] = {
-        ...config.mcpServers[serverId],
-        enabled
-      }
-      saveMcpConfigSync(config)
-      return { ok: true }
-    } catch (error) {
-      return {
-        ok: false,
-        error: toErrorMessage(error)
-      }
-    }
-  }
-)
-
-// Backward-compatible wrappers used by older renderer code.
-ipcMain.handle('workspace:mcp:get', async () => {
-  try {
-    const { loadMcpConfigSync } = loadCoreModules()
-    const config = loadMcpConfigSync()
-    const servers = normalizeMcpServers(config.mcpServers)
-    const firstServerId = Object.keys(servers)[0] ?? ''
-    const first = firstServerId ? servers[firstServerId] : null
-    return {
-      ok: true,
-      mcp: {
-        enabled: Boolean(first && first.enabled !== false),
-        command: first?.command ?? '',
-        args: first?.args ?? [],
-        serverId: firstServerId
-      }
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
-ipcMain.handle('workspace:mcp:save', async (_event, payload: { mcp?: Record<string, unknown> }) => {
-  try {
-    const { saveMcpConfigSync } = loadCoreModules()
-    const mcp = payload?.mcp && typeof payload.mcp === 'object' ? payload.mcp : {}
-    const enabled = mcp.enabled === true
-    const command = typeof mcp.command === 'string' ? mcp.command.trim() : ''
-    const args = Array.isArray(mcp.args)
-      ? mcp.args.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean)
-      : []
-    const serverId = normalizeMcpServerId(typeof mcp.serverId === 'string' ? mcp.serverId : 'default') || 'default'
-    if (!enabled || !command) {
-      saveMcpConfigSync({ mcpServers: {} })
-      return { ok: true }
-    }
-    saveMcpConfigSync({
-      mcpServers: {
-        [serverId]: {
-          enabled: true,
-          command,
-          args
-        }
-      }
-    })
-    return { ok: true }
-  } catch (error) {
-    return {
-      ok: false,
-      error: toErrorMessage(error)
-    }
-  }
-})
-
 // ── App Lifecycle ──────────────────────────────────────
 
 app.whenReady().then(() => {
@@ -1988,4 +1377,6 @@ app.on("quit", (_event, exitCode) => {
   closePerfLog("quit", { exitCode, activeTasks: activeTasks.size })
   closePerfLogResources("quit_resources", { exitCode, activeTasks: activeTasks.size })
 })
+
+
 

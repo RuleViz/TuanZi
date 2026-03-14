@@ -7,6 +7,17 @@ import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
+import type {
+  AgentBackendConfig,
+  AgentToolProfile,
+  ChatImageInput,
+  GlobalSkillCategory,
+  McpDashboardServer,
+  ProviderModelItem,
+  ProviderConfig,
+  SkillCatalogItem,
+  StoredAgent
+} from '../../shared/domain-types'
 
 interface ConversationTurn {
   user: string
@@ -30,77 +41,6 @@ interface StoredSessionPayload {
   sessions: ChatSession[]
 }
 
-type GlobalSkillCategory = 'file_system' | 'execute_command' | 'web_search'
-
-interface AgentProviderConfig {
-  type: string
-  apiKey: string
-  baseUrl: string
-  model: string
-}
-
-interface ProviderModelItem {
-  id: string
-  displayName: string
-  isVision: boolean
-  enabled: boolean
-}
-
-interface ProviderConfig extends AgentProviderConfig {
-  id: string
-  name: string
-  models: ProviderModelItem[]
-  isEnabled: boolean
-}
-
-interface AgentBackendConfig {
-  provider: AgentProviderConfig
-  providers: ProviderConfig[]
-  activeProviderId: string
-}
-
-interface SkillCatalogItem {
-  name: string
-  description: string
-  rootDir: string
-  skillDir: string
-  skillFile: string
-}
-
-interface StoredAgent {
-  id: string
-  filename: string
-  name: string
-  avatar: string
-  description: string
-  tags: string[]
-  tools: string[]
-  prompt: string
-}
-
-interface AgentToolProfile {
-  name: string
-  category: GlobalSkillCategory
-  prompt: string
-}
-
-interface McpDashboardTool {
-  name: string
-  description: string
-  namespacedName: string
-}
-
-interface McpDashboardServer {
-  serverId: string
-  enabled: boolean
-  command: string
-  args: string[]
-  env: Record<string, string>
-  status: 'online' | 'offline' | 'error'
-  error?: string
-  tools: McpDashboardTool[]
-}
-
 interface AgentEditorState {
   mode: 'create' | 'edit'
   previousFilename: string | null
@@ -119,12 +59,6 @@ interface SlashSuggestion {
   description: string
   commandText: string
   executeImmediately: boolean
-}
-
-interface ChatImageInput {
-  name: string
-  mimeType: string
-  dataUrl: string
 }
 
 interface PendingChatImage extends ChatImageInput {
