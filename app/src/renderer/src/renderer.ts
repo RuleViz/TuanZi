@@ -149,42 +149,42 @@ const SLASH_COMMAND_DEFS: Array<{
   description: string
   executeImmediately: boolean
 }> = [
-  {
-    command: '/model',
-    description: 'Switch provider model, then continue chatting.',
-    executeImmediately: false
-  },
-  {
-    command: '/model current',
-    description: 'Show current active provider/model.',
-    executeImmediately: true
-  },
-  {
-    command: '/new',
-    description: 'Create a new conversation.',
-    executeImmediately: true
-  },
-  {
-    command: '/workspace',
-    description: 'Select workspace folder.',
-    executeImmediately: true
-  },
-  {
-    command: '/settings',
-    description: 'Open settings center.',
-    executeImmediately: true
-  },
-  {
-    command: '/agent',
-    description: 'Open agent library.',
-    executeImmediately: true
-  },
-  {
-    command: '/help',
-    description: 'Show slash command tips.',
-    executeImmediately: true
-  }
-]
+    {
+      command: '/model',
+      description: 'Switch provider model, then continue chatting.',
+      executeImmediately: false
+    },
+    {
+      command: '/model current',
+      description: 'Show current active provider/model.',
+      executeImmediately: true
+    },
+    {
+      command: '/new',
+      description: 'Create a new conversation.',
+      executeImmediately: true
+    },
+    {
+      command: '/workspace',
+      description: 'Select workspace folder.',
+      executeImmediately: true
+    },
+    {
+      command: '/settings',
+      description: 'Open settings center.',
+      executeImmediately: true
+    },
+    {
+      command: '/agent',
+      description: 'Open agent library.',
+      executeImmediately: true
+    },
+    {
+      command: '/help',
+      description: 'Show slash command tips.',
+      executeImmediately: true
+    }
+  ]
 
 const state = {
   sessions: [] as ChatSession[],
@@ -1215,6 +1215,20 @@ function syncInterruptedTurn(session: ChatSession, input: {
   if (session.history.length > MAX_SESSION_HISTORY) {
     session.history.splice(0, session.history.length - MAX_SESSION_HISTORY)
   }
+}
+
+function buildModelHistory(session: ChatSession, maxTurns: number): Array<{ user: string; assistant: string }> {
+  const completedTurns = session.history.filter((turn) => {
+    if (turn.interrupted) {
+      return false
+    }
+    return turn.user.trim().length > 0 && turn.assistant.trim().length > 0
+  })
+  const windowed = completedTurns.slice(-Math.max(0, maxTurns))
+  return windowed.map((turn) => ({
+    user: turn.user,
+    assistant: turn.assistant
+  }))
 }
 
 function createSession(initial?: Partial<Pick<ChatSession, 'title' | 'workspace'>>): ChatSession {
@@ -2738,11 +2752,19 @@ function buildStreamingListeners(input: {
   let thinkingBlock = input.existingThinkingBlock ?? null
   let currentThinkingText = input.initialThinkingText ?? ''
 
+  const isCurrentTask = (taskId: string): boolean => taskId === input.taskId
+
   const removePhaseListener = window.tuanzi.onPhase((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return
+    }
     state.currentTaskId = data.taskId
   })
 
   const removeDeltaListener = window.tuanzi.onDelta((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return
+    }
     state.currentTaskId = data.taskId
     state.currentStreamText += data.delta
     input.textContainer.innerHTML = renderMarkdownHtml(state.currentStreamText)
@@ -2750,6 +2772,9 @@ function buildStreamingListeners(input: {
   })
 
   const removeThinkingListener = window.tuanzi.onThinking((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return
+    }
     state.currentTaskId = data.taskId
     if (!thinkingBlock) {
       thinkingBlock = createExecBlock({
@@ -2767,6 +2792,9 @@ function buildStreamingListeners(input: {
   })
 
   const removeLogListener = window.tuanzi.onLog((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return
+    }
     state.currentTaskId = data.taskId
     if (data.message.startsWith('[tool] start ')) {
       const toolName = data.message.replace('[tool] start ', '').split(' ')[0]
@@ -2781,6 +2809,9 @@ function buildStreamingListeners(input: {
   })
 
   const removeToolCallCompletedListener = window.tuanzi.onToolCallCompleted((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return
+    }
     state.currentTaskId = data.taskId
     appendCompletedToolCall(input.contentEl, data.toolCall)
     state.currentRenderedToolCalls += 1
@@ -2887,7 +2918,7 @@ async function sendMessage(): Promise<void> {
         }
         : {}),
       workspace: active.workspace,
-      history: active.history.slice(-10),
+      history: buildModelHistory(active, 10),
       agentId: activeAgent?.id ?? null,
       thinking: state.isThinking
     })
@@ -2922,7 +2953,7 @@ async function sendMessage(): Promise<void> {
       touchActiveSession()
       persistSessions()
       renderSessionList()
-        } else if (result.interrupted && result.resumeSnapshot) {
+    } else if (result.interrupted && result.resumeSnapshot) {
       syncInterruptedTurn(active, {
         user: userHistoryText,
         assistant: result.resumeSnapshot.streamedText,
@@ -2932,7 +2963,7 @@ async function sendMessage(): Promise<void> {
       touchActiveSession()
       persistSessions()
       renderSessionList()
-        } else {
+    } else {
       surface.textContainer.innerHTML = `<p style="color: var(--status-err);">${escapeHtml(result.error || 'Execution failed')}</p>`
     }
   } catch (error) {
