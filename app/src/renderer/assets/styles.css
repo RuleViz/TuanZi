@@ -623,12 +623,78 @@ body {
 
 /* Markdown typography in assistant replies */
 .markdown-text p {
-  white-space: pre-wrap;
+  margin-bottom: 12px;
+}
+
+.markdown-text p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-text h1,
+.markdown-text h2,
+.markdown-text h3,
+.markdown-text h4,
+.markdown-text h5,
+.markdown-text h6 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.markdown-text h1 { font-size: 1.6em; border-bottom: 1px solid var(--border-light); padding-bottom: 0.3em; }
+.markdown-text h2 { font-size: 1.4em; border-bottom: 1px solid var(--border-light); padding-bottom: 0.3em; }
+.markdown-text h3 { font-size: 1.2em; }
+.markdown-text h4 { font-size: 1.1em; }
+
+.markdown-text blockquote {
+  margin: 12px 0;
+  padding: 0 1em;
+  color: var(--text-secondary);
+  border-left: 0.25em solid #dfe2e5;
+}
+
+/* Markdown Tables */
+.markdown-text table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+
+.markdown-text table th,
+.markdown-text table td {
+  border: 1px solid var(--border-light);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.markdown-text table tr {
+  background-color: var(--bg-main);
+  border-top: 1px solid var(--border-light);
+}
+
+.markdown-text table tr:nth-child(2n) {
+  background-color: #F8F9FA;
+}
+
+.markdown-text table th {
+  font-weight: 600;
+  background-color: var(--bg-sidebar);
+}
+
+.markdown-text strong {
+  font-weight: 600;
+}
+
+.markdown-text em {
+  font-style: italic;
 }
 
 .markdown-text ul,
 .markdown-text ol {
-  margin: 8px 0 8px 1.25em;
+  margin: 8px 0 12px 1.25em;
   padding-left: 1em;
   list-style-position: outside;
 }

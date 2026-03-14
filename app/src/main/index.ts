@@ -351,7 +351,9 @@ function loadCoreModules(): CoreModules {
     return cachedCoreModules
   }
 
-  const corePath = resolve(__dirname, '../../..')
+  const corePath = app.isPackaged
+    ? join(process.resourcesPath, "backend")
+    : resolve(__dirname, "../../..")
   const configMod = require(join(corePath, 'dist/config'))
   const runtimeMod = require(join(corePath, 'dist/runtime'))
   const agentStoreMod = require(join(corePath, 'dist/core/agent-store'))
