@@ -18,6 +18,94 @@ import type {
   SkillCatalogItem,
   StoredAgent
 } from '../../shared/domain-types'
+import {
+  activeAgentAvatar,
+  activeAgentChip,
+  activeAgentName,
+  agentEditorAvatarInput,
+  agentEditorAvatarPreview,
+  agentEditorBackBtn,
+  agentEditorCancelBtn,
+  agentEditorDeleteBtn,
+  agentEditorDescription,
+  agentEditorFilename,
+  agentEditorName,
+  agentEditorPrompt,
+  agentEditorSaveBtn,
+  agentEditorTags,
+  agentEditorView,
+  agentGrid,
+  agentLibraryModal,
+  agentLibraryView,
+  agentModalTitle,
+  agentToolList,
+  attachImageBtn,
+  byId,
+  chatArea,
+  closeAgentModalBtn,
+  closeMcpJsonModalBtn,
+  closeProviderModelModalBtn,
+  closeSettingsModalBtn,
+  historyList,
+  imageFileInput,
+  inputBox,
+  inputImagePreview,
+  inputTextarea,
+  mcpAddBtn,
+  mcpJsonCancelBtn,
+  mcpJsonConfirmBtn,
+  mcpJsonInput,
+  mcpJsonModal,
+  mcpRefreshBtn,
+  mcpServerList,
+  newChatBtn,
+  providerAddBtn,
+  providerAddModelBtn,
+  providerApiKeyInput,
+  providerBaseUrlInput,
+  providerDeleteBtn,
+  providerEditorTitle,
+  providerEnabledToggle,
+  providerFetchModelsBtn,
+  providerList,
+  providerModelInput,
+  providerModelList,
+  providerModelModal,
+  providerModelModalCancelBtn,
+  providerModelModalConfirmBtn,
+  providerModelModalDisplayNameInput,
+  providerModelModalIdInput,
+  providerModelModalVisionToggle,
+  providerNameInput,
+  providerTestBtn,
+  providerTypeInput,
+  selectWorkspaceBtn,
+  sendingIndicator,
+  sendBtn,
+  settingsBtn,
+  settingsCancelBtn,
+  settingsModal,
+  settingsNav,
+  settingsSaveBtn,
+  skillsCatalogList,
+  slashCommandList,
+  slashCommandMenu,
+  sidebar,
+  stopBtn,
+  thinkingBtn,
+  toggleSidebar,
+  topBar,
+  topBarDrag,
+  welcomeAvatar,
+  welcomeState,
+  welcomeTitle,
+  windowCloseBtn,
+  windowControls,
+  windowMaximizeBtn,
+  windowMinimizeBtn,
+  workspaceLabel
+} from './app/dom'
+import { showError, showSuccess } from './app/toast'
 
 interface ConversationTurn {
   user: string
@@ -164,102 +252,6 @@ function sessionPersistPerfLog(event: string, fields?: Record<string, unknown>):
   const payload = fields ? ` ${JSON.stringify(fields)}` : ''
   console.log(`[session-persist] ${event}${payload}`)
 }
-
-function byId<T extends HTMLElement>(id: string): T {
-  const element = document.getElementById(id)
-  if (!element) {
-    throw new Error(`Missing required element #${id}`)
-  }
-  return element as T
-}
-
-const chatArea = byId<HTMLDivElement>('chatArea')
-const welcomeState = byId<HTMLDivElement>('welcomeState')
-const welcomeAvatar = byId<HTMLDivElement>('welcomeAvatar')
-const welcomeTitle = byId<HTMLHeadingElement>('welcomeTitle')
-const inputTextarea = byId<HTMLTextAreaElement>('inputTextarea')
-const imageFileInput = byId<HTMLInputElement>('imageFileInput')
-const inputImagePreview = byId<HTMLDivElement>('inputImagePreview')
-const inputBox = byId<HTMLDivElement>('inputBox')
-const sendBtn = byId<HTMLButtonElement>('sendBtn')
-const stopBtn = byId<HTMLButtonElement>('stopBtn')
-const sendingIndicator = byId<HTMLDivElement>('sendingIndicator')
-const attachImageBtn = byId<HTMLButtonElement>('attachImageBtn')
-const selectWorkspaceBtn = byId<HTMLButtonElement>('selectWorkspaceBtn')
-const thinkingBtn = byId<HTMLButtonElement>('thinkingBtn')
-const workspaceLabel = byId<HTMLSpanElement>('workspaceLabel')
-const toggleSidebar = byId<HTMLButtonElement>('toggleSidebar')
-const sidebar = byId<HTMLElement>('sidebar')
-const topBar = document.querySelector<HTMLElement>('.top-bar')
-const topBarDrag = document.querySelector<HTMLElement>('.top-bar-drag')
-const windowControls = byId<HTMLDivElement>('windowControls')
-const windowMinimizeBtn = byId<HTMLButtonElement>('windowMinimizeBtn')
-const windowMaximizeBtn = byId<HTMLButtonElement>('windowMaximizeBtn')
-const windowCloseBtn = byId<HTMLButtonElement>('windowCloseBtn')
-const newChatBtn = byId<HTMLButtonElement>('newChatBtn')
-const settingsBtn = byId<HTMLButtonElement>('settingsBtn')
-const historyList = byId<HTMLDivElement>('historyList')
-
-const activeAgentChip = byId<HTMLDivElement>('activeAgentChip')
-const activeAgentAvatar = byId<HTMLDivElement>('activeAgentAvatar')
-const activeAgentName = byId<HTMLSpanElement>('activeAgentName')
-
-const agentLibraryModal = byId<HTMLDivElement>('agentLibraryModal')
-const closeAgentModalBtn = byId<HTMLButtonElement>('closeAgentModalBtn')
-const agentModalTitle = byId<HTMLHeadingElement>('agentModalTitle')
-const agentEditorBackBtn = byId<HTMLButtonElement>('agentEditorBackBtn')
-const agentLibraryView = byId<HTMLDivElement>('agentLibraryView')
-const agentEditorView = byId<HTMLDivElement>('agentEditorView')
-const agentGrid = byId<HTMLDivElement>('agentGrid')
-const agentEditorAvatarInput = byId<HTMLInputElement>('agentEditorAvatarInput')
-const agentEditorAvatarPreview = byId<HTMLDivElement>('agentEditorAvatarPreview')
-const agentEditorName = byId<HTMLInputElement>('agentEditorName')
-const agentEditorFilename = byId<HTMLInputElement>('agentEditorFilename')
-const agentEditorDescription = byId<HTMLInputElement>('agentEditorDescription')
-const agentEditorTags = byId<HTMLInputElement>('agentEditorTags')
-const agentEditorPrompt = byId<HTMLTextAreaElement>('agentEditorPrompt')
-const agentToolList = byId<HTMLDivElement>('agentToolList')
-const agentEditorDeleteBtn = byId<HTMLButtonElement>('agentEditorDeleteBtn')
-const agentEditorCancelBtn = byId<HTMLButtonElement>('agentEditorCancelBtn')
-const agentEditorSaveBtn = byId<HTMLButtonElement>('agentEditorSaveBtn')
-
-const settingsModal = byId<HTMLDivElement>('settingsModal')
-const closeSettingsModalBtn = byId<HTMLButtonElement>('closeSettingsModalBtn')
-const settingsNav = byId<HTMLElement>('settingsNav')
-const providerList = byId<HTMLDivElement>('providerList')
-const providerAddBtn = byId<HTMLButtonElement>('providerAddBtn')
-const providerEditorTitle = byId<HTMLDivElement>('providerEditorTitle')
-const providerNameInput = byId<HTMLInputElement>('providerNameInput')
-const providerTypeInput = byId<HTMLSelectElement>('providerTypeInput')
-const providerBaseUrlInput = byId<HTMLInputElement>('providerBaseUrlInput')
-const providerModelInput = byId<HTMLInputElement>('providerModelInput')
-const providerApiKeyInput = byId<HTMLInputElement>('providerApiKeyInput')
-const providerEnabledToggle = byId<HTMLButtonElement>('providerEnabledToggle')
-const providerDeleteBtn = byId<HTMLButtonElement>('providerDeleteBtn')
-const providerTestBtn = byId<HTMLButtonElement>('providerTestBtn')
-const providerFetchModelsBtn = byId<HTMLButtonElement>('providerFetchModelsBtn')
-const providerAddModelBtn = byId<HTMLButtonElement>('providerAddModelBtn')
-const providerModelList = byId<HTMLDivElement>('providerModelList')
-const skillsCatalogList = byId<HTMLDivElement>('skillsCatalogList')
-const mcpRefreshBtn = byId<HTMLButtonElement>('mcpRefreshBtn')
-const mcpAddBtn = byId<HTMLButtonElement>('mcpAddBtn')
-const mcpServerList = byId<HTMLDivElement>('mcpServerList')
-const mcpJsonModal = byId<HTMLDivElement>('mcpJsonModal')
-const closeMcpJsonModalBtn = byId<HTMLButtonElement>('closeMcpJsonModalBtn')
-const mcpJsonCancelBtn = byId<HTMLButtonElement>('mcpJsonCancelBtn')
-const mcpJsonConfirmBtn = byId<HTMLButtonElement>('mcpJsonConfirmBtn')
-const mcpJsonInput = byId<HTMLTextAreaElement>('mcpJsonInput')
-const providerModelModal = byId<HTMLDivElement>('providerModelModal')
-const closeProviderModelModalBtn = byId<HTMLButtonElement>('closeProviderModelModalBtn')
-const providerModelModalCancelBtn = byId<HTMLButtonElement>('providerModelModalCancelBtn')
-const providerModelModalConfirmBtn = byId<HTMLButtonElement>('providerModelModalConfirmBtn')
-const providerModelModalIdInput = byId<HTMLInputElement>('providerModelModalIdInput')
-const providerModelModalDisplayNameInput = byId<HTMLInputElement>('providerModelModalDisplayNameInput')
-const providerModelModalVisionToggle = byId<HTMLButtonElement>('providerModelModalVisionToggle')
-const settingsCancelBtn = byId<HTMLButtonElement>('settingsCancelBtn')
-const settingsSaveBtn = byId<HTMLButtonElement>('settingsSaveBtn')
-const slashCommandMenu = byId<HTMLDivElement>('slashCommandMenu')
-const slashCommandList = byId<HTMLDivElement>('slashCommandList')
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div')
@@ -416,27 +408,6 @@ function autoResizeTextarea(): void {
   inputTextarea.style.height = 'auto'
   const newHeight = Math.min(inputTextarea.scrollHeight, 200)
   inputTextarea.style.height = newHeight + 'px'
-}
-
-function showToast(msg: string, success = false): void {
-  let toast = document.querySelector('.error-toast') as HTMLDivElement | null
-  if (!toast) {
-    toast = document.createElement('div')
-    toast.className = 'error-toast'
-    document.body.appendChild(toast)
-  }
-  toast.textContent = msg
-  toast.classList.toggle('success', success)
-  toast.classList.add('visible')
-  setTimeout(() => toast!.classList.remove('visible'), 4000)
-}
-
-function showError(msg: string): void {
-  showToast(msg, false)
-}
-
-function showSuccess(msg: string): void {
-  showToast(msg, true)
 }
 
 function isWindowsPlatform(): boolean {

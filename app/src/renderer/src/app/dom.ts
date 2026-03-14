@@ -1,0 +1,95 @@
+﻿export function byId<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (!element) {
+    throw new Error(`Missing required element #${id}`);
+  }
+  return element as T;
+}
+
+export const chatArea = byId<HTMLDivElement>("chatArea");
+export const welcomeState = byId<HTMLDivElement>("welcomeState");
+export const welcomeAvatar = byId<HTMLDivElement>("welcomeAvatar");
+export const welcomeTitle = byId<HTMLHeadingElement>("welcomeTitle");
+export const inputTextarea = byId<HTMLTextAreaElement>("inputTextarea");
+export const imageFileInput = byId<HTMLInputElement>("imageFileInput");
+export const inputImagePreview = byId<HTMLDivElement>("inputImagePreview");
+export const inputBox = byId<HTMLDivElement>("inputBox");
+export const sendBtn = byId<HTMLButtonElement>("sendBtn");
+export const stopBtn = byId<HTMLButtonElement>("stopBtn");
+export const sendingIndicator = byId<HTMLDivElement>("sendingIndicator");
+export const attachImageBtn = byId<HTMLButtonElement>("attachImageBtn");
+export const selectWorkspaceBtn = byId<HTMLButtonElement>("selectWorkspaceBtn");
+export const thinkingBtn = byId<HTMLButtonElement>("thinkingBtn");
+export const workspaceLabel = byId<HTMLSpanElement>("workspaceLabel");
+export const toggleSidebar = byId<HTMLButtonElement>("toggleSidebar");
+export const sidebar = byId<HTMLElement>("sidebar");
+export const topBar = document.querySelector<HTMLElement>(".top-bar");
+export const topBarDrag = document.querySelector<HTMLElement>(".top-bar-drag");
+export const windowControls = byId<HTMLDivElement>("windowControls");
+export const windowMinimizeBtn = byId<HTMLButtonElement>("windowMinimizeBtn");
+export const windowMaximizeBtn = byId<HTMLButtonElement>("windowMaximizeBtn");
+export const windowCloseBtn = byId<HTMLButtonElement>("windowCloseBtn");
+export const newChatBtn = byId<HTMLButtonElement>("newChatBtn");
+export const settingsBtn = byId<HTMLButtonElement>("settingsBtn");
+export const historyList = byId<HTMLDivElement>("historyList");
+
+export const activeAgentChip = byId<HTMLDivElement>("activeAgentChip");
+export const activeAgentAvatar = byId<HTMLDivElement>("activeAgentAvatar");
+export const activeAgentName = byId<HTMLSpanElement>("activeAgentName");
+
+export const agentLibraryModal = byId<HTMLDivElement>("agentLibraryModal");
+export const closeAgentModalBtn = byId<HTMLButtonElement>("closeAgentModalBtn");
+export const agentModalTitle = byId<HTMLHeadingElement>("agentModalTitle");
+export const agentEditorBackBtn = byId<HTMLButtonElement>("agentEditorBackBtn");
+export const agentLibraryView = byId<HTMLDivElement>("agentLibraryView");
+export const agentEditorView = byId<HTMLDivElement>("agentEditorView");
+export const agentGrid = byId<HTMLDivElement>("agentGrid");
+export const agentEditorAvatarInput = byId<HTMLInputElement>("agentEditorAvatarInput");
+export const agentEditorAvatarPreview = byId<HTMLDivElement>("agentEditorAvatarPreview");
+export const agentEditorName = byId<HTMLInputElement>("agentEditorName");
+export const agentEditorFilename = byId<HTMLInputElement>("agentEditorFilename");
+export const agentEditorDescription = byId<HTMLInputElement>("agentEditorDescription");
+export const agentEditorTags = byId<HTMLInputElement>("agentEditorTags");
+export const agentEditorPrompt = byId<HTMLTextAreaElement>("agentEditorPrompt");
+export const agentToolList = byId<HTMLDivElement>("agentToolList");
+export const agentEditorDeleteBtn = byId<HTMLButtonElement>("agentEditorDeleteBtn");
+export const agentEditorCancelBtn = byId<HTMLButtonElement>("agentEditorCancelBtn");
+export const agentEditorSaveBtn = byId<HTMLButtonElement>("agentEditorSaveBtn");
+
+export const settingsModal = byId<HTMLDivElement>("settingsModal");
+export const closeSettingsModalBtn = byId<HTMLButtonElement>("closeSettingsModalBtn");
+export const settingsNav = byId<HTMLElement>("settingsNav");
+export const providerList = byId<HTMLDivElement>("providerList");
+export const providerAddBtn = byId<HTMLButtonElement>("providerAddBtn");
+export const providerEditorTitle = byId<HTMLDivElement>("providerEditorTitle");
+export const providerNameInput = byId<HTMLInputElement>("providerNameInput");
+export const providerTypeInput = byId<HTMLSelectElement>("providerTypeInput");
+export const providerBaseUrlInput = byId<HTMLInputElement>("providerBaseUrlInput");
+export const providerModelInput = byId<HTMLInputElement>("providerModelInput");
+export const providerApiKeyInput = byId<HTMLInputElement>("providerApiKeyInput");
+export const providerEnabledToggle = byId<HTMLButtonElement>("providerEnabledToggle");
+export const providerDeleteBtn = byId<HTMLButtonElement>("providerDeleteBtn");
+export const providerTestBtn = byId<HTMLButtonElement>("providerTestBtn");
+export const providerFetchModelsBtn = byId<HTMLButtonElement>("providerFetchModelsBtn");
+export const providerAddModelBtn = byId<HTMLButtonElement>("providerAddModelBtn");
+export const providerModelList = byId<HTMLDivElement>("providerModelList");
+export const skillsCatalogList = byId<HTMLDivElement>("skillsCatalogList");
+export const mcpRefreshBtn = byId<HTMLButtonElement>("mcpRefreshBtn");
+export const mcpAddBtn = byId<HTMLButtonElement>("mcpAddBtn");
+export const mcpServerList = byId<HTMLDivElement>("mcpServerList");
+export const mcpJsonModal = byId<HTMLDivElement>("mcpJsonModal");
+export const closeMcpJsonModalBtn = byId<HTMLButtonElement>("closeMcpJsonModalBtn");
+export const mcpJsonCancelBtn = byId<HTMLButtonElement>("mcpJsonCancelBtn");
+export const mcpJsonConfirmBtn = byId<HTMLButtonElement>("mcpJsonConfirmBtn");
+export const mcpJsonInput = byId<HTMLTextAreaElement>("mcpJsonInput");
+export const providerModelModal = byId<HTMLDivElement>("providerModelModal");
+export const closeProviderModelModalBtn = byId<HTMLButtonElement>("closeProviderModelModalBtn");
+export const providerModelModalCancelBtn = byId<HTMLButtonElement>("providerModelModalCancelBtn");
+export const providerModelModalConfirmBtn = byId<HTMLButtonElement>("providerModelModalConfirmBtn");
+export const providerModelModalIdInput = byId<HTMLInputElement>("providerModelModalIdInput");
+export const providerModelModalDisplayNameInput = byId<HTMLInputElement>("providerModelModalDisplayNameInput");
+export const providerModelModalVisionToggle = byId<HTMLButtonElement>("providerModelModalVisionToggle");
+export const settingsCancelBtn = byId<HTMLButtonElement>("settingsCancelBtn");
+export const settingsSaveBtn = byId<HTMLButtonElement>("settingsSaveBtn");
+export const slashCommandMenu = byId<HTMLDivElement>("slashCommandMenu");
+export const slashCommandList = byId<HTMLDivElement>("slashCommandList");
