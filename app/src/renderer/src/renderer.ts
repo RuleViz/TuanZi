@@ -468,6 +468,16 @@ function scrollToBottom(): void {
   })
 }
 
+function isNearBottom(threshold = 150): boolean {
+  return chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < threshold
+}
+
+function smartScrollToBottom(): void {
+  if (isNearBottom()) {
+    scrollToBottom()
+  }
+}
+
 function autoResizeTextarea(): void {
   inputTextarea.style.height = 'auto'
   const newHeight = Math.min(inputTextarea.scrollHeight, 200)
@@ -2737,7 +2747,7 @@ function endStreamingUi(): void {
   stopBtn.style.display = 'none'
   thinkingBtn.disabled = false
   sendingIndicator.classList.remove('visible')
-  scrollToBottom()
+  smartScrollToBottom()
   inputTextarea.focus()
 }
 
@@ -2751,6 +2761,8 @@ function buildStreamingListeners(input: {
 }) {
   let thinkingBlock = input.existingThinkingBlock ?? null
   let currentThinkingText = input.initialThinkingText ?? ''
+  let activeTextContainer = input.textContainer
+  let segmentStart = 0
 
   const isCurrentTask = (taskId: string): boolean => taskId === input.taskId
 
@@ -2767,8 +2779,9 @@ function buildStreamingListeners(input: {
     }
     state.currentTaskId = data.taskId
     state.currentStreamText += data.delta
-    input.textContainer.innerHTML = renderMarkdownHtml(state.currentStreamText)
-    scrollToBottom()
+    const segmentText = state.currentStreamText.substring(segmentStart)
+    activeTextContainer.innerHTML = renderMarkdownHtml(segmentText)
+    smartScrollToBottom()
   })
 
   const removeThinkingListener = window.tuanzi.onThinking((data) => {
@@ -2788,7 +2801,7 @@ function buildStreamingListeners(input: {
     thinkingBlock.block.classList.add('loading')
     currentThinkingText += data.delta
     thinkingBlock.output.textContent = currentThinkingText
-    scrollToBottom()
+    smartScrollToBottom()
   })
 
   const removeLogListener = window.tuanzi.onLog((data) => {
@@ -2803,8 +2816,8 @@ function buildStreamingListeners(input: {
         title: `Tool Call: ${toolName}`,
         loading: true
       })
-      input.blocksContainer.appendChild(block)
-      scrollToBottom()
+      input.contentEl.appendChild(block)
+      smartScrollToBottom()
     }
   })
 
@@ -2815,12 +2828,20 @@ function buildStreamingListeners(input: {
     state.currentTaskId = data.taskId
     appendCompletedToolCall(input.contentEl, data.toolCall)
     state.currentRenderedToolCalls += 1
-    scrollToBottom()
+
+    // Create a new text container for subsequent text after the tool call
+    segmentStart = state.currentStreamText.length
+    activeTextContainer = document.createElement('div')
+    activeTextContainer.className = 'markdown-text'
+    input.contentEl.appendChild(activeTextContainer)
+
+    smartScrollToBottom()
   })
 
   return {
     getCurrentThinkingText: (): string => currentThinkingText,
     getThinkingBlock: () => thinkingBlock,
+    getActiveTextContainer: () => activeTextContainer,
     dispose: (): void => {
       removePhaseListener()
       removeDeltaListener()
@@ -2930,13 +2951,20 @@ async function sendMessage(): Promise<void> {
       const loadingBlocks = surface.contentEl.querySelectorAll('.exec-block.loading')
       loadingBlocks.forEach((block) => block.remove())
 
+      const activeText = listeners.getActiveTextContainer()
       if (!state.currentStreamText && result.summary) {
-        surface.textContainer.innerHTML = renderMarkdownHtml(result.summary)
+        activeText.innerHTML = renderMarkdownHtml(result.summary)
       }
 
       if (result.toolCalls && result.toolCalls.length > state.currentRenderedToolCalls) {
         renderToolCalls(surface.contentEl, result.toolCalls.slice(state.currentRenderedToolCalls))
       }
+
+      // Remove empty trailing text containers created after the last tool call
+      const allTextContainers = surface.contentEl.querySelectorAll('.markdown-text')
+      allTextContainers.forEach((tc) => {
+        if (!tc.innerHTML.trim()) tc.remove()
+      })
 
       const assistantText = state.currentStreamText || result.summary || ''
       syncInterruptedTurn(active, {
@@ -2964,12 +2992,14 @@ async function sendMessage(): Promise<void> {
       persistSessions()
       renderSessionList()
     } else {
-      surface.textContainer.innerHTML = `<p style="color: var(--status-err);">${escapeHtml(result.error || 'Execution failed')}</p>`
+      const activeText = listeners.getActiveTextContainer()
+      activeText.innerHTML = `<p style="color: var(--status-err);">${escapeHtml(result.error || 'Execution failed')}</p>`
     }
   } catch (error) {
     listeners.dispose()
     const msg = error instanceof Error ? error.message : String(error)
-    surface.textContainer.innerHTML = `<p style="color: var(--status-err);">${escapeHtml(msg)}</p>`
+    const activeText = listeners.getActiveTextContainer()
+    activeText.innerHTML = `<p style="color: var(--status-err);">${escapeHtml(msg)}</p>`
   } finally {
     endStreamingUi()
   }
