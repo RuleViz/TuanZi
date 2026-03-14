@@ -5,20 +5,17 @@ import icon from "../../resources/icon.png?asset"
 import {
   type AgentBackendConfig,
   type AgentToolProfile,
-  type ChatImageInput,
   type GlobalSkillCategory,
-  type ProviderConfig,
   type SkillCatalogItem,
   type StoredAgent
 } from "../shared/domain-types"
-import type { SendMessagePayload } from "../shared/ipc-contracts"
 import {
   ChatResumeStore,
-  type AppChatResumeSnapshot,
   type ToolLoopResumeStateSnapshot,
   type ToolLoopToolCallSnapshot
 } from "./chat-resume-store"
 import { registerIpcHandlers } from "./ipc/register"
+import { createRunChatTask, loadMatchingChatResumeSnapshot } from "./services/chat-task-service"
 
 // ── TuanZi Core Integration ────────────────────────────
 // We import from the compiled CLI core. In development you can point to the
@@ -145,13 +142,6 @@ function abortAllActiveTasks(reason: string): number {
     remaining: activeTasks.size
   })
   return abortedCount
-}
-
-function trimPersistedStream(text: string): string {
-  if (text.length <= SNAPSHOT_MAX_STREAM_CHARS) {
-    return text
-  }
-  return text.slice(text.length - SNAPSHOT_MAX_STREAM_CHARS)
 }
 
 async function waitForActiveTasksToDrain(timeoutMs: number): Promise<{ remaining: number; elapsedMs: number }> {
@@ -526,166 +516,6 @@ async function requestProviderModels(input: {
   throw lastError ?? new Error("Provider model request failed")
 }
 
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
-}
-
-function cloneToolCallSnapshot(call: ToolLoopToolCallSnapshot): ToolLoopToolCallSnapshot {
-  return cloneJson(call)
-}
-
-function cloneToolCallSnapshots(calls: ToolLoopToolCallSnapshot[]): ToolLoopToolCallSnapshot[] {
-  return calls.map((call) => cloneToolCallSnapshot(call))
-}
-
-function cloneResumeState(
-  resumeState: ToolLoopResumeStateSnapshot | null
-): ToolLoopResumeStateSnapshot | null {
-  return resumeState ? cloneJson(resumeState) : null
-}
-
-function toRendererToolCall(call: ToolLoopToolCallSnapshot) {
-  return {
-    toolName: call.name,
-    args: cloneJson(call.args),
-    result: cloneJson(call.result),
-    timestamp: new Date().toISOString()
-  }
-}
-
-function loadMatchingChatResumeSnapshot(sessionId: string, workspace: string): AppChatResumeSnapshot | null {
-  const snapshot = chatResumeStore.load()
-  if (!snapshot) {
-    return null
-  }
-  if (snapshot.sessionId !== sessionId || snapshot.workspace !== workspace) {
-    return null
-  }
-  return snapshot
-}
-
-function buildChatResumeSnapshot(input: {
-  taskId: string
-  sessionId: string
-  workspace: string
-  message: string
-  history: Array<{ user: string; assistant: string }>
-  agentId: string | null
-  thinkingEnabled: boolean
-  streamedText: string
-  streamedThinking: string
-  toolCalls: ToolLoopToolCallSnapshot[]
-  resumeState: ToolLoopResumeStateSnapshot | null
-}): AppChatResumeSnapshot {
-  return {
-    version: 1,
-    taskId: input.taskId,
-    sessionId: input.sessionId,
-    workspace: input.workspace,
-    message: input.message,
-    history: cloneJson(input.history),
-    agentId: input.agentId,
-    thinkingEnabled: input.thinkingEnabled,
-    streamedText: input.streamedText,
-    streamedThinking: input.streamedThinking,
-    toolCalls: cloneToolCallSnapshots(input.toolCalls),
-    resumeState: cloneResumeState(input.resumeState),
-    updatedAt: new Date().toISOString()
-  }
-}
-
-function normalizeChatImages(input: unknown): ChatImageInput[] {
-  if (!Array.isArray(input) || input.length === 0) {
-    return []
-  }
-  if (input.length > MAX_CHAT_IMAGE_COUNT) {
-    throw new Error(`Only ${MAX_CHAT_IMAGE_COUNT} image is supported per message.`)
-  }
-
-  const output: ChatImageInput[] = []
-  for (const item of input) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) {
-      throw new Error("Invalid image payload.")
-    }
-    const record = item as Record<string, unknown>
-    const name = normalizeOptionalString(record.name) ?? "image"
-    const mimeType = normalizeOptionalString(record.mimeType)?.toLowerCase() ?? ""
-    const dataUrl = normalizeOptionalString(record.dataUrl)
-    if (!mimeType.startsWith("image/")) {
-      throw new Error("Only image uploads are supported.")
-    }
-    if (!dataUrl) {
-      throw new Error("Missing image data.")
-    }
-
-    const headerMatch = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,/i)
-    if (!headerMatch) {
-      throw new Error("Invalid image format. Please upload a standard image file.")
-    }
-    const headerMimeType = headerMatch[1].toLowerCase()
-    if (headerMimeType !== mimeType) {
-      throw new Error("Image MIME type mismatch.")
-    }
-
-    const byteSize = estimateDataUrlByteSize(dataUrl)
-    if (byteSize === null) {
-      throw new Error("Invalid base64 image content.")
-    }
-    if (byteSize > MAX_CHAT_IMAGE_BYTES) {
-      throw new Error(`Image is too large. Max size is ${Math.floor(MAX_CHAT_IMAGE_BYTES / (1024 * 1024))} MB.`)
-    }
-
-    output.push({
-      name,
-      mimeType,
-      dataUrl
-    })
-  }
-  return output
-}
-
-function estimateDataUrlByteSize(dataUrl: string): number | null {
-  const commaIndex = dataUrl.indexOf(",")
-  if (commaIndex < 0) {
-    return null
-  }
-  const base64 = dataUrl.slice(commaIndex + 1).trim()
-  if (!base64 || !/^[A-Za-z0-9+/=]+$/.test(base64)) {
-    return null
-  }
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
-  return Math.floor((base64.length * 3) / 4) - padding
-}
-
-function getActiveProvider(config: AgentBackendConfig): ProviderConfig | null {
-  const activeProviderId = normalizeOptionalString(config.activeProviderId)
-  if (!activeProviderId) {
-    return null
-  }
-  const providers = Array.isArray(config.providers) ? config.providers : []
-  const provider = providers.find((item) => item.id === activeProviderId) ?? null
-  if (!provider || provider.isEnabled === false) {
-    return null
-  }
-  return provider
-}
-
-function supportsVisionForActiveModel(config: AgentBackendConfig): boolean {
-  const provider = getActiveProvider(config)
-  if (!provider) {
-    return false
-  }
-  const activeModelId = normalizeOptionalString(provider.model)
-  if (!activeModelId) {
-    return false
-  }
-  const model = provider.models.find((item) => item.id.toLowerCase() === activeModelId.toLowerCase()) ?? null
-  if (!model || model.enabled === false) {
-    return false
-  }
-  return model.isVision === true
-}
-
 function resolveWorkspaceFromInput(raw: unknown): string {
   const workspace = normalizeOptionalString(raw)
   return resolve(workspace ?? process.cwd())
@@ -869,280 +699,6 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-
-async function runChatTask(
-  webContents: Electron.WebContents,
-  payload: SendMessagePayload & { resumeState?: ToolLoopResumeStateSnapshot | null }
-) {
-  const taskId = payload.taskId || Date.now().toString(36)
-  const sessionId = normalizeOptionalString(payload.sessionId) ?? "default-session"
-  const controller = new AbortController()
-  activeTasks.set(taskId, controller)
-  let flushPendingSnapshots: (() => Promise<void>) | null = null
-  let runtimeToDispose: { dispose?: () => Promise<void> } | null = null
-
-  try {
-    const { loadRuntimeConfig, createToolRuntime, createOrchestrator } = loadCoreModules()
-
-    const runtimeConfig = loadRuntimeConfig({
-      workspaceRoot: payload.workspace || process.cwd(),
-      approvalMode: "auto",
-      agentOverride: normalizeOptionalString(payload.agentId ?? null)
-    }) as any
-    const images = normalizeChatImages(payload.images)
-    const effectiveMessage = normalizeOptionalString(payload.message) ?? (
-      images.length > 0 ? "请根据我上传的图片进行分析并回答。" : ""
-    )
-    if (!effectiveMessage) {
-      return {
-        ok: false,
-        taskId,
-        error: "Message cannot be empty."
-      }
-    }
-    if (
-      images.length > 0 &&
-      !supportsVisionForActiveModel(runtimeConfig.agentBackend.config as AgentBackendConfig)
-    ) {
-      return {
-        ok: false,
-        taskId,
-        error: "当前模型不支持图像理解，请切换到支持图像理解的模型后重试。"
-      }
-    }
-
-    if (payload.thinking) {
-      runtimeConfig.agentSettings.modelRequest.thinking.type = "enabled"
-      if (!runtimeConfig.agentSettings.modelRequest.thinking.budgetTokens) {
-        runtimeConfig.agentSettings.modelRequest.thinking.budgetTokens = 4000
-      }
-    } else {
-      runtimeConfig.agentSettings.modelRequest.thinking.type = "disabled"
-    }
-
-    const ipcLogger = {
-      info: (msg: string): void => {
-        webContents.send("chat:log", { taskId, level: "info", message: msg })
-      },
-      warn: (msg: string): void => {
-        webContents.send("chat:log", { taskId, level: "warn", message: msg })
-      },
-      error: (msg: string): void => {
-        webContents.send("chat:log", { taskId, level: "error", message: msg })
-      }
-    }
-
-    const autoApprovalGate = {
-      approve: async (): Promise<{ approved: boolean }> => ({ approved: true })
-    }
-
-    const runtime = createToolRuntime(runtimeConfig, {
-      logger: ipcLogger,
-      approvalGate: autoApprovalGate
-    }) as Record<string, unknown>
-    runtimeToDispose = runtime as { dispose?: () => Promise<void> }
-    const orchestrator = createOrchestrator(runtimeConfig, runtime)
-    const memoryTurns = (payload.history || []).slice(-10)
-
-    let streamedText = payload.resumeState?.partialAssistantMessage?.content ?? ""
-    let streamedThinking = payload.resumeState?.partialAssistantMessage?.thinking ?? ""
-    const completedToolCalls = cloneToolCallSnapshots(payload.resumeState?.toolCalls ?? [])
-    let latestResumeState = cloneResumeState(payload.resumeState ?? null)
-    let pendingSnapshot: AppChatResumeSnapshot | null = null
-    let snapshotFlushTimer: NodeJS.Timeout | null = null
-    let snapshotWriteChain: Promise<void> = Promise.resolve()
-
-    const flushSnapshotNow = (): Promise<void> => {
-      const snapshot = pendingSnapshot
-      pendingSnapshot = null
-      if (!snapshot) {
-        return Promise.resolve()
-      }
-      const startedAt = Date.now()
-      const summary = {
-        taskId,
-        messageLength: snapshot.message.length,
-        streamedTextLength: snapshot.streamedText.length,
-        streamedThinkingLength: snapshot.streamedThinking.length,
-        toolCallCount: snapshot.toolCalls.length
-      }
-      snapshotWriteChain = snapshotWriteChain
-        .then(async () => {
-          const byteSize = await chatResumeStore.save(snapshot)
-          closePerfLog("snapshot_saved", {
-            ...summary,
-            byteSize,
-            elapsedMs: Date.now() - startedAt
-          }, { highFrequency: true })
-        })
-        .catch((error) => {
-          console.warn(`[close-perf] Failed to persist chat snapshot: ${toErrorMessage(error)}`)
-        })
-      return snapshotWriteChain.finally(() => {
-        if (pendingSnapshot) {
-          scheduleSnapshotFlush(true)
-        }
-      })
-    }
-
-    const scheduleSnapshotFlush = (immediate: boolean): void => {
-      if (snapshotFlushTimer) {
-        if (!immediate) {
-          return
-        }
-        clearTimeout(snapshotFlushTimer)
-        snapshotFlushTimer = null
-      }
-      const delay = immediate ? 0 : SNAPSHOT_FLUSH_INTERVAL_MS
-      snapshotFlushTimer = setTimeout(() => {
-        snapshotFlushTimer = null
-        void flushSnapshotNow()
-      }, delay)
-    }
-
-    flushPendingSnapshots = async (): Promise<void> => {
-      if (snapshotFlushTimer) {
-        clearTimeout(snapshotFlushTimer)
-        snapshotFlushTimer = null
-      }
-      await flushSnapshotNow()
-      await snapshotWriteChain
-      while (pendingSnapshot) {
-        await flushSnapshotNow()
-        await snapshotWriteChain
-      }
-    }
-
-    const persistSnapshot = (): AppChatResumeSnapshot => {
-      const snapshot = buildChatResumeSnapshot({
-        taskId,
-        sessionId,
-        workspace: payload.workspace,
-        message: effectiveMessage,
-        history: memoryTurns,
-        agentId: normalizeOptionalString(payload.agentId ?? null),
-        thinkingEnabled: payload.thinking === true,
-        streamedText,
-        streamedThinking,
-        toolCalls: completedToolCalls,
-        resumeState: latestResumeState
-      })
-      const persistedSnapshot: AppChatResumeSnapshot = {
-        ...snapshot,
-        streamedText: trimPersistedStream(snapshot.streamedText),
-        streamedThinking: trimPersistedStream(snapshot.streamedThinking),
-        toolCalls:
-          snapshot.toolCalls.length > SNAPSHOT_MAX_TOOL_CALLS
-            ? snapshot.toolCalls.slice(snapshot.toolCalls.length - SNAPSHOT_MAX_TOOL_CALLS)
-            : snapshot.toolCalls
-      }
-      pendingSnapshot = persistedSnapshot
-      scheduleSnapshotFlush(false)
-      return persistedSnapshot
-    }
-
-    persistSnapshot()
-
-    const result = await orchestrator.run(
-      {
-        task: effectiveMessage,
-        memoryTurns,
-        userImages: images.map((item) => ({
-          dataUrl: item.dataUrl,
-          mimeType: item.mimeType
-        })),
-        resumeState: payload.resumeState ?? null
-      },
-      {
-        signal: controller.signal,
-        onPhaseChange: (phase: string) => {
-          webContents.send("chat:phase", { taskId, phase })
-        },
-        onAssistantTextDelta: (delta: string) => {
-          if (!delta) {
-            return
-          }
-          streamedText += delta
-          persistSnapshot()
-          webContents.send("chat:delta", { taskId, delta })
-        },
-        onAssistantThinkingDelta: (delta: string) => {
-          if (!delta) {
-            return
-          }
-          streamedThinking += delta
-          persistSnapshot()
-          webContents.send("chat:thinking", { taskId, delta })
-        },
-        onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
-          completedToolCalls.push(cloneToolCallSnapshot(call))
-          persistSnapshot()
-          webContents.send("chat:toolCallCompleted", {
-            taskId,
-            toolCall: toRendererToolCall(call)
-          })
-        },
-        onStateChange: (resumeState: ToolLoopResumeStateSnapshot) => {
-          latestResumeState = cloneResumeState(resumeState)
-          persistSnapshot()
-        }
-      }
-    )
-
-    if (result.toolCalls && result.toolCalls.length > 0) {
-      webContents.send("chat:toolCalls", { taskId, toolCalls: result.toolCalls })
-    }
-
-    if (flushPendingSnapshots) {
-      await flushPendingSnapshots()
-    }
-    await chatResumeStore.clear()
-
-    return {
-      ok: true,
-      taskId,
-      summary: streamedText || result.summary,
-      toolCalls: result.toolCalls || [],
-      changedFiles: result.changedFiles || [],
-      executedCommands: result.executedCommands || []
-    }
-  } catch (error) {
-    // During shutdown, skip snapshot flushing to avoid blocking the quit sequence.
-    if (flushPendingSnapshots && !shutdownDrainInProgress && !shutdownDrainCompleted) {
-      await flushPendingSnapshots()
-    }
-    const message = toErrorMessage(error)
-    if (
-      message === "Interrupted by user" ||
-      message === "Model stream interrupted by user." ||
-      (error instanceof Error && error.name === "AbortError") ||
-      message.includes("The operation was aborted") ||
-      message.includes("This operation was aborted")
-    ) {
-      const snapshot = loadMatchingChatResumeSnapshot(sessionId, payload.workspace)
-      return {
-        ok: false,
-        taskId,
-        error: "Task interrupted by user",
-        interrupted: true,
-        resumeSnapshot: snapshot
-      }
-    }
-    return { ok: false, taskId, error: message }
-  } finally {
-    // Crucial: remove from activeTasks immediately to let the close handler proceed.
-    activeTasks.delete(taskId)
-    if (runtimeToDispose && typeof runtimeToDispose.dispose === "function") {
-      try {
-        await runtimeToDispose.dispose()
-      } catch {
-        // Ignore disposal errors.
-      }
-    }
-  }
-}
-
-
 async function probeMcpServers(
   servers: Record<string, McpServerConfigEntry>,
   workspace?: string | null
@@ -1246,6 +802,22 @@ async function probeMcpServers(
   return results
 }
 
+const runChatTask = createRunChatTask({
+  activeTasks,
+  chatResumeStore,
+  loadCoreModules,
+  normalizeOptionalString,
+  toErrorMessage,
+  closePerfLog,
+  isShutdownDrainInProgress: () => shutdownDrainInProgress,
+  isShutdownDrainCompleted: () => shutdownDrainCompleted,
+  snapshotFlushIntervalMs: SNAPSHOT_FLUSH_INTERVAL_MS,
+  snapshotMaxStreamChars: SNAPSHOT_MAX_STREAM_CHARS,
+  snapshotMaxToolCalls: SNAPSHOT_MAX_TOOL_CALLS,
+  maxChatImageCount: MAX_CHAT_IMAGE_COUNT,
+  maxChatImageBytes: MAX_CHAT_IMAGE_BYTES
+})
+
 // ── IPC Handlers ───────────────────────────────────────
 
 registerIpcHandlers({
@@ -1262,7 +834,8 @@ registerIpcHandlers({
   chat: {
     runChatTask,
     normalizeOptionalString,
-    loadMatchingChatResumeSnapshot,
+    loadMatchingChatResumeSnapshot: (sessionId: string, workspace: string) =>
+      loadMatchingChatResumeSnapshot(chatResumeStore, sessionId, workspace),
     activeTasks
   },
   agent: {
@@ -1377,6 +950,7 @@ app.on("quit", (_event, exitCode) => {
   closePerfLog("quit", { exitCode, activeTasks: activeTasks.size })
   closePerfLogResources("quit_resources", { exitCode, activeTasks: activeTasks.size })
 })
+
 
 
 
