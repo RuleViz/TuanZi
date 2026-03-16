@@ -1,0 +1,36 @@
+{
+  "name": "tuanzi-backend",
+  "version": "0.1.0",
+  "description": "Core backend runtime for TuanZi desktop app and agent orchestration.",
+  "main": "dist/runtime.js",
+  "files": [
+    "dist",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/tests"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "coding",
+    "tuanzi",
+    "backend",
+    "orchestration"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.37.5"
+  }
+}

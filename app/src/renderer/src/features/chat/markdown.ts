@@ -1,0 +1,37 @@
+import { Marked } from "marked";
+import { markedHighlight } from "marked-highlight";
+import hljs from "highlight.js";
+
+interface MarkdownRendererDeps {
+  escapeHtml: (text: string) => string;
+}
+
+export function createMarkdownRenderer(input: MarkdownRendererDeps): (text: string) => string {
+  const marked = new Marked(
+    markedHighlight({
+      emptyLangClass: "hljs",
+      langPrefix: "hljs language-",
+      highlight(code, lang) {
+        const language = hljs.getLanguage(lang) ? lang : "plaintext";
+        return hljs.highlight(code, { language }).value;
+      }
+    })
+  );
+
+  marked.setOptions({
+    breaks: true,
+    gfm: true
+  });
+
+  return (text: string): string => {
+    if (!text) {
+      return "";
+    }
+    try {
+      return marked.parse(text) as string;
+    } catch (error) {
+      console.error("Markdown rendering error:", error);
+      return input.escapeHtml(text).replace(/\n/g, "<br>");
+    }
+  };
+}
