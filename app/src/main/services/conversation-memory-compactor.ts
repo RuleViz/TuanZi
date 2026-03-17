@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
 import type { ProviderModelProtocolType } from "../../shared/domain-types";
 import type {
-  ConversationTurnRecord,
-  MemoryCardRecord
+  ConversationSummaryRecord,
+  ConversationTurnRecord
 } from "./conversation-memory-types";
 import { ConversationMemoryStore } from "./conversation-memory-store";
 
@@ -33,7 +32,7 @@ export class ConversationMemoryCompactor {
     private readonly options?: { toErrorMessage?: (error: unknown) => string; log?: (message: string) => void }
   ) {}
 
-  async compactToLatestCard(input: CompactConversationInput): Promise<MemoryCardRecord | null> {
+  async compactToSummary(input: CompactConversationInput): Promise<ConversationSummaryRecord | null> {
     const state = await this.store.getSessionState(input.workspace, input.sessionId);
     const turns = await this.store.listTurns(input.workspace, input.sessionId, {
       afterSeq: state.lastCompactedSeq
@@ -42,24 +41,20 @@ export class ConversationMemoryCompactor {
       return null;
     }
 
-    const cards = await this.store.listMemoryCards(input.workspace, input.sessionId);
-    const latestCard = state.latestCardId
-      ? cards.find((card) => card.id === state.latestCardId) ?? null
-      : null;
+    const previousSummary = await this.store.getSummary(input.workspace, input.sessionId);
 
     const draft =
-      (await this.tryModelCompaction(latestCard, turns, input.modelConfig).catch((error) => {
+      (await this.tryModelCompaction(previousSummary, turns, input.modelConfig).catch((error) => {
         this.log(`compaction model call failed: ${this.toErrorMessage(error)}`);
         return null;
-      })) ?? buildFallbackCompaction(latestCard, turns);
+      })) ?? buildFallbackCompaction(previousSummary, turns);
 
-    const fromSeq = turns[0].seq;
+    const fromSeq = previousSummary ? Math.min(previousSummary.fromSeq, turns[0].seq) : turns[0].seq;
     const toSeq = turns[turns.length - 1].seq;
-    const createdAt = new Date().toISOString();
+    const updatedAt = new Date().toISOString();
 
-    const card: MemoryCardRecord = {
+    const summary: ConversationSummaryRecord = {
       version: 1,
-      id: `card-${randomUUID()}`,
       workspace: input.workspace,
       workspaceHash: this.store.resolveWorkspaceHash(input.workspace),
       sessionId: input.sessionId,
@@ -69,24 +64,19 @@ export class ConversationMemoryCompactor {
       summary: sanitizeParagraph(draft.summary),
       keyPoints: normalizeStringList(draft.keyPoints),
       openQuestions: normalizeStringList(draft.openQuestions),
-      createdAt,
+      updatedAt,
       source: draft.source
     };
 
-    await this.store.appendMemoryCard(card);
-    state.latestCardId = card.id;
+    await this.store.saveSummary(summary);
     state.lastCompactedSeq = toSeq;
-    state.updatedAt = createdAt;
-    if (!Number.isFinite(state.memoryCardCacheLimit) || state.memoryCardCacheLimit < 1) {
-      state.memoryCardCacheLimit = 10;
-    }
+    state.updatedAt = updatedAt;
     await this.store.saveSessionState(state);
-    await this.store.pruneMemoryCards(input.workspace, input.sessionId, state.memoryCardCacheLimit);
-    return card;
+    return summary;
   }
 
   private async tryModelCompaction(
-    latestCard: MemoryCardRecord | null,
+    previousSummary: ConversationSummaryRecord | null,
     turns: ConversationTurnRecord[],
     modelConfig: CompactorModelConfig | null
   ): Promise<CompactionDraft | null> {
@@ -104,7 +94,7 @@ export class ConversationMemoryCompactor {
     }
 
     const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
-    const prompt = buildCompactionPrompt(latestCard, turns);
+    const prompt = buildCompactionPrompt(previousSummary, turns);
     const response = await fetch(endpoint, {
       method: "POST",
       headers: {
@@ -121,7 +111,7 @@ export class ConversationMemoryCompactor {
           {
             role: "system",
             content:
-              "You compress conversation memory cards. Return strict JSON only with keys: title, summary, keyPoints, openQuestions. Keep tool outputs abstracted as concise summaries."
+              "You compress conversation memory summary. Return strict JSON only with keys: title, summary, keyPoints, openQuestions. Keep tool outputs abstracted as concise summaries."
           },
           {
             role: "user",
@@ -211,25 +201,25 @@ function extractFirstJsonObject(input: string): string | null {
   return input.slice(start, end + 1);
 }
 
-function buildCompactionPrompt(latestCard: MemoryCardRecord | null, turns: ConversationTurnRecord[]): string {
-  const latestCardSection = latestCard
+function buildCompactionPrompt(previousSummary: ConversationSummaryRecord | null, turns: ConversationTurnRecord[]): string {
+  const previousSummarySection = previousSummary
     ? [
-        `Title: ${latestCard.title}`,
-        `Summary: ${latestCard.summary}`,
-        `Key Points: ${latestCard.keyPoints.join(" | ") || "(none)"}`,
-        `Open Questions: ${latestCard.openQuestions.join(" | ") || "(none)"}`
+        `Title: ${previousSummary.title}`,
+        `Summary: ${previousSummary.summary}`,
+        `Key Points: ${previousSummary.keyPoints.join(" | ") || "(none)"}`,
+        `Open Questions: ${previousSummary.openQuestions.join(" | ") || "(none)"}`
       ].join("\n")
     : "(none)";
 
   const turnsSection = turns.map((turn) => formatTurnForCompaction(turn)).join("\n\n");
 
   return [
-    "Please merge previous long-term memory and new turns into one latest memory card.",
+    "Please merge previous long-term conversation summary and new turns into one updated summary.",
     "Do NOT include raw tool outputs; only abstracted outcomes.",
     "Return strict JSON with keys: title, summary, keyPoints, openQuestions.",
     "",
-    "[Previous Latest Card]",
-    latestCardSection,
+    "[Previous Summary]",
+    previousSummarySection,
     "",
     "[New Turns Since Last Compaction]",
     turnsSection
@@ -259,7 +249,7 @@ function formatTurnForCompaction(turn: ConversationTurnRecord): string {
 }
 
 function buildFallbackCompaction(
-  latestCard: MemoryCardRecord | null,
+  previousSummary: ConversationSummaryRecord | null,
   turns: ConversationTurnRecord[]
 ): CompactionDraft {
   const userIntents = turns
@@ -271,7 +261,7 @@ function buildFallbackCompaction(
     .filter((item) => item.length > 0)
     .slice(-8);
   const keyPoints = dedupeStrings([
-    ...(latestCard?.keyPoints ?? []),
+    ...(previousSummary?.keyPoints ?? []),
     ...userIntents.map((item) => `User asked: ${item}`),
     ...assistantOutcomes.map((item) => `Assistant response: ${item}`)
   ]).slice(-12);
@@ -281,9 +271,9 @@ function buildFallbackCompaction(
     .slice(-5);
 
   return {
-    title: latestCard?.title || `Memory ${turns[0].seq}-${turns[turns.length - 1].seq}`,
+    title: previousSummary?.title || `Memory ${turns[0].seq}-${turns[turns.length - 1].seq}`,
     summary: [
-      latestCard?.summary ?? "",
+      previousSummary?.summary ?? "",
       `Merged ${turns.length} new turns (${turns[0].seq}-${turns[turns.length - 1].seq}).`
     ]
       .filter((item) => item.trim().length > 0)

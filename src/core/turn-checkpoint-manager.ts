@@ -19,7 +19,7 @@ export interface TurnCheckpointIndex {
 }
 
 const SHADOW_DIR_NAME = "turn-checkpoints";
-const INDEX_FILE_NAME = "index.json";
+const INDEX_FILE_NAME = "checkpoints.json";
 const MAX_CHECKPOINTS_DEFAULT = 50;
 const MESSAGE_PREVIEW_LENGTH = 200;
 
@@ -280,7 +280,7 @@ export class TurnCheckpointManager {
   }
 
   private async loadIndex(): Promise<TurnCheckpointIndex> {
-    const indexPath = path.join(this.shadowRoot, INDEX_FILE_NAME);
+    const indexPath = path.join(this.workspaceRoot, ".tuanzi", INDEX_FILE_NAME);
     try {
       const content = await fs.readFile(indexPath, "utf8");
       const parsed = JSON.parse(content) as unknown;
@@ -299,7 +299,7 @@ export class TurnCheckpointManager {
   }
 
   private async saveIndex(index: TurnCheckpointIndex): Promise<void> {
-    const indexPath = path.join(this.shadowRoot, INDEX_FILE_NAME);
+    const indexPath = path.join(this.workspaceRoot, ".tuanzi", INDEX_FILE_NAME);
     await fs.writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
   }
 

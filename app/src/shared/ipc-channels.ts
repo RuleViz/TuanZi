@@ -26,7 +26,7 @@
   checkpointList: "checkpoint:list",
   checkpointUndo: "checkpoint:undo",
   memoryGetStatus: "memory:getStatus",
-  memoryListCards: "memory:listCards",
+  memoryGetSummary: "memory:getSummary",
   memoryForceCompact: "memory:forceCompact",
   memoryGetTurns: "memory:getTurns",
   chatDelta: "chat:delta",

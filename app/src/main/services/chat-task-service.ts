@@ -472,9 +472,6 @@ export function createRunChatTask(
     state.nextSeq = seq + 1;
     state.updatedAt = now;
     state.modelSnapshot = buildConversationModelSnapshot(input.modelSelection);
-    if (!Number.isFinite(state.memoryCardCacheLimit) || state.memoryCardCacheLimit < 1) {
-      state.memoryCardCacheLimit = 10;
-    }
     await deps.conversationMemoryStore.saveSessionState(state);
     return record;
   };
@@ -527,15 +524,15 @@ export function createRunChatTask(
     }
 
     const modelConfig = resolveCompactorModelConfig(input.runtimeConfig, input.modelSelection, deps.normalizeOptionalString);
-    const compactedCard = await compactor.compactToLatestCard({
+    const compactedSummary = await compactor.compactToSummary({
       workspace: input.workspace,
       sessionId: input.sessionId,
       modelConfig
     });
     deps.closePerfLog("memory_compacted", {
       sessionId: input.sessionId,
-      compacted: compactedCard !== null,
-      cardId: compactedCard?.id ?? null,
+      compacted: compactedSummary !== null,
+      compactedToSeq: compactedSummary?.toSeq ?? null,
       threshold,
       estimatedInputTokens: estimate.estimatedInputTokens
     });
@@ -612,9 +609,6 @@ export function createRunChatTask(
       const sessionState = await deps.conversationMemoryStore.getSessionState(workspace, sessionId);
       sessionState.modelSnapshot = buildConversationModelSnapshot(modelSelection);
       sessionState.updatedAt = new Date().toISOString();
-      if (!Number.isFinite(sessionState.memoryCardCacheLimit) || sessionState.memoryCardCacheLimit < 1) {
-        sessionState.memoryCardCacheLimit = 10;
-      }
       await deps.conversationMemoryStore.saveSessionState(sessionState);
 
       const assembledContext = await assembler.assembleContext({

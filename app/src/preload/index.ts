@@ -107,8 +107,8 @@ const tuanziAPI: TuanziAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.memoryGetStatus, payload);
   },
 
-  memoryListCards: (payload) => {
-    return ipcRenderer.invoke(IPC_CHANNELS.memoryListCards, payload);
+  memoryGetSummary: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.memoryGetSummary, payload);
   },
 
   memoryForceCompact: (payload) => {

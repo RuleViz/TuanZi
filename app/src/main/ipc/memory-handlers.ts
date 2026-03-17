@@ -2,8 +2,8 @@ import { ipcMain } from "electron";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 import type {
   MemoryForceCompactPayload,
+  MemoryGetSummaryPayload,
   MemoryGetTurnsPayload,
-  MemoryListCardsPayload,
   MemoryStatusPayload
 } from "../../shared/ipc-contracts";
 import type { ProviderModelProtocolType } from "../../shared/domain-types";
@@ -33,10 +33,10 @@ export function registerMemoryHandlers(deps: MemoryHandlersDeps): void {
         return { ok: false, error: "Missing workspace" };
       }
       const sessionId = deps.normalizeOptionalString(payload?.sessionId) ?? "default-session";
-      const state = await deps.conversationMemoryStore.getSessionState(workspace, sessionId);
-      const [turns, cards] = await Promise.all([
+      const [state, turns, summary] = await Promise.all([
+        deps.conversationMemoryStore.getSessionState(workspace, sessionId),
         deps.conversationMemoryStore.listTurns(workspace, sessionId),
-        deps.conversationMemoryStore.listMemoryCards(workspace, sessionId)
+        deps.conversationMemoryStore.getSummary(workspace, sessionId)
       ]);
       return {
         ok: true,
@@ -44,11 +44,12 @@ export function registerMemoryHandlers(deps: MemoryHandlersDeps): void {
           sessionId,
           workspace,
           nextSeq: state.nextSeq,
-          latestCardId: state.latestCardId,
           lastCompactedSeq: state.lastCompactedSeq,
-          memoryCardCacheLimit: state.memoryCardCacheLimit,
           turnCount: turns.length,
-          cardCount: cards.length
+          hasSummary: summary !== null,
+          summaryUpdatedAt: summary?.updatedAt ?? null,
+          summaryFromSeq: summary?.fromSeq ?? null,
+          summaryToSeq: summary?.toSeq ?? null
         }
       };
     } catch (error) {
@@ -56,30 +57,28 @@ export function registerMemoryHandlers(deps: MemoryHandlersDeps): void {
     }
   });
 
-  ipcMain.handle(IPC_CHANNELS.memoryListCards, async (_event, payload: MemoryListCardsPayload) => {
+  ipcMain.handle(IPC_CHANNELS.memoryGetSummary, async (_event, payload: MemoryGetSummaryPayload) => {
     try {
       const workspace = deps.normalizeOptionalString(payload?.workspace);
       if (!workspace) {
         return { ok: false, error: "Missing workspace" };
       }
       const sessionId = deps.normalizeOptionalString(payload?.sessionId) ?? "default-session";
-      const cards = await deps.conversationMemoryStore.listMemoryCards(workspace, sessionId);
-      const limit =
-        typeof payload?.limit === "number" && Number.isFinite(payload.limit)
-          ? Math.max(1, Math.floor(payload.limit))
-          : null;
-      const output = limit === null ? cards : cards.slice(cards.length - limit);
+      const summary = await deps.conversationMemoryStore.getSummary(workspace, sessionId);
       return {
         ok: true,
-        cards: output.map((card) => ({
-          id: card.id,
-          fromSeq: card.fromSeq,
-          toSeq: card.toSeq,
-          title: card.title,
-          summary: card.summary,
-          createdAt: card.createdAt,
-          source: card.source
-        }))
+        summary: summary
+          ? {
+              fromSeq: summary.fromSeq,
+              toSeq: summary.toSeq,
+              title: summary.title,
+              summary: summary.summary,
+              keyPoints: summary.keyPoints,
+              openQuestions: summary.openQuestions,
+              updatedAt: summary.updatedAt,
+              source: summary.source
+            }
+          : null
       };
     } catch (error) {
       return { ok: false, error: deps.toErrorMessage(error) };
@@ -94,22 +93,23 @@ export function registerMemoryHandlers(deps: MemoryHandlersDeps): void {
       }
       const sessionId = deps.normalizeOptionalString(payload?.sessionId) ?? "default-session";
       const modelConfig = resolveModelCompactionConfig(deps, workspace);
-      const card = await deps.conversationMemoryCompactor.compactToLatestCard({
+      const summary = await deps.conversationMemoryCompactor.compactToSummary({
         workspace,
         sessionId,
         modelConfig
       });
       return {
         ok: true,
-        card: card
+        summary: summary
           ? {
-              id: card.id,
-              fromSeq: card.fromSeq,
-              toSeq: card.toSeq,
-              title: card.title,
-              summary: card.summary,
-              createdAt: card.createdAt,
-              source: card.source
+              fromSeq: summary.fromSeq,
+              toSeq: summary.toSeq,
+              title: summary.title,
+              summary: summary.summary,
+              keyPoints: summary.keyPoints,
+              openQuestions: summary.openQuestions,
+              updatedAt: summary.updatedAt,
+              source: summary.source
             }
           : null
       };

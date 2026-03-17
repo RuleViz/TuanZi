@@ -50,9 +50,8 @@ export interface ConversationTurnRecord {
   tokenEstimate?: TokenEstimateRecord | null;
 }
 
-export interface MemoryCardRecord {
+export interface ConversationSummaryRecord {
   version: 1;
-  id: string;
   workspace: string;
   workspaceHash: string;
   sessionId: string;
@@ -62,7 +61,7 @@ export interface MemoryCardRecord {
   summary: string;
   keyPoints: string[];
   openQuestions: string[];
-  createdAt: string;
+  updatedAt: string;
   source: "model" | "fallback";
 }
 
@@ -72,9 +71,7 @@ export interface ConversationSessionState {
   workspaceHash: string;
   sessionId: string;
   nextSeq: number;
-  latestCardId: string | null;
   lastCompactedSeq: number;
-  memoryCardCacheLimit: number;
   modelSnapshot: ConversationModelSnapshot | null;
   createdAt: string;
   updatedAt: string;

@@ -1,6 +1,6 @@
 import type {
-  ConversationTurnRecord,
-  MemoryCardRecord
+  ConversationSummaryRecord,
+  ConversationTurnRecord
 } from "./conversation-memory-types";
 import { ConversationMemoryStore } from "./conversation-memory-store";
 
@@ -12,8 +12,8 @@ export interface AssembleConversationContextInput {
 
 export interface AssembleConversationContextOutput {
   contextText: string;
-  latestCard: MemoryCardRecord | null;
-  rawTurnsSinceCard: ConversationTurnRecord[];
+  summary: ConversationSummaryRecord | null;
+  rawTurnsSinceCompaction: ConversationTurnRecord[];
 }
 
 export class ConversationMemoryAssembler {
@@ -21,11 +21,8 @@ export class ConversationMemoryAssembler {
 
   async assembleContext(input: AssembleConversationContextInput): Promise<AssembleConversationContextOutput> {
     const state = await this.store.getSessionState(input.workspace, input.sessionId);
-    const cards = await this.store.listMemoryCards(input.workspace, input.sessionId);
-    const latestCard = state.latestCardId
-      ? cards.find((card) => card.id === state.latestCardId) ?? null
-      : null;
-    const rawTurnsSinceCard = await this.store.listTurns(input.workspace, input.sessionId, {
+    const summary = await this.store.getSummary(input.workspace, input.sessionId);
+    const rawTurnsSinceCompaction = await this.store.listTurns(input.workspace, input.sessionId, {
       afterSeq: state.lastCompactedSeq
     });
 
@@ -33,12 +30,12 @@ export class ConversationMemoryAssembler {
       "[Current Time]",
       new Date().toISOString(),
       "",
-      "[Latest Memory Card]",
-      latestCard ? formatMemoryCard(latestCard) : "(none)",
+      "[Conversation Summary]",
+      summary ? formatSummary(summary) : "(none)",
       "",
-      "[Turns Since Last Card]",
-      rawTurnsSinceCard.length > 0
-        ? rawTurnsSinceCard.map((turn) => formatTurn(turn)).join("\n\n")
+      "[Turns Since Last Compaction]",
+      rawTurnsSinceCompaction.length > 0
+        ? rawTurnsSinceCompaction.map((turn) => formatTurn(turn)).join("\n\n")
         : "(none)",
       "",
       "[Current User Input]",
@@ -47,23 +44,26 @@ export class ConversationMemoryAssembler {
 
     return {
       contextText,
-      latestCard,
-      rawTurnsSinceCard
+      summary,
+      rawTurnsSinceCompaction
     };
   }
 }
 
-function formatMemoryCard(card: MemoryCardRecord): string {
-  const keyPoints = card.keyPoints.length > 0 ? card.keyPoints.map((point) => `- ${point}`).join("\n") : "- (none)";
+function formatSummary(summary: ConversationSummaryRecord): string {
+  const keyPoints =
+    summary.keyPoints.length > 0 ? summary.keyPoints.map((point) => `- ${point}`).join("\n") : "- (none)";
   const openQuestions =
-    card.openQuestions.length > 0 ? card.openQuestions.map((item) => `- ${item}`).join("\n") : "- (none)";
+    summary.openQuestions.length > 0
+      ? summary.openQuestions.map((item) => `- ${item}`).join("\n")
+      : "- (none)";
 
   return [
-    `id: ${card.id}`,
-    `range: ${card.fromSeq} -> ${card.toSeq}`,
-    `title: ${card.title || "(untitled)"}`,
+    `range: ${summary.fromSeq} -> ${summary.toSeq}`,
+    `title: ${summary.title || "(untitled)"}`,
+    `updated_at: ${summary.updatedAt}`,
     "summary:",
-    card.summary || "(empty)",
+    summary.summary || "(empty)",
     "key_points:",
     keyPoints,
     "open_questions:",

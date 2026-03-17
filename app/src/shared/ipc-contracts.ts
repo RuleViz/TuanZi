@@ -62,10 +62,9 @@ export interface MemoryStatusPayload {
   sessionId?: string;
 }
 
-export interface MemoryListCardsPayload {
+export interface MemoryGetSummaryPayload {
   workspace: string;
   sessionId?: string;
-  limit?: number;
 }
 
 export interface MemoryForceCompactPayload {
@@ -170,40 +169,43 @@ export interface TuanziAPI {
       sessionId: string;
       workspace: string;
       nextSeq: number;
-      latestCardId: string | null;
       lastCompactedSeq: number;
-      memoryCardCacheLimit: number;
       turnCount: number;
-      cardCount: number;
+      hasSummary: boolean;
+      summaryUpdatedAt: string | null;
+      summaryFromSeq: number | null;
+      summaryToSeq: number | null;
     };
     error?: string;
   }>;
-  memoryListCards: (
-    payload: MemoryListCardsPayload
+  memoryGetSummary: (
+    payload: MemoryGetSummaryPayload
   ) => Promise<{
     ok: boolean;
-    cards?: Array<{
-      id: string;
+    summary?: {
       fromSeq: number;
       toSeq: number;
       title: string;
       summary: string;
-      createdAt: string;
+      keyPoints: string[];
+      openQuestions: string[];
+      updatedAt: string;
       source: "model" | "fallback";
-    }>;
+    } | null;
     error?: string;
   }>;
   memoryForceCompact: (
     payload: MemoryForceCompactPayload
   ) => Promise<{
     ok: boolean;
-    card?: {
-      id: string;
+    summary?: {
       fromSeq: number;
       toSeq: number;
       title: string;
       summary: string;
-      createdAt: string;
+      keyPoints: string[];
+      openQuestions: string[];
+      updatedAt: string;
       source: "model" | "fallback";
     } | null;
     error?: string;
