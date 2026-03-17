@@ -46,17 +46,32 @@ class StubCoder {
 }
 
 class StubPlanner {
+  calls = 0;
+  signals: Array<AbortSignal | undefined> = [];
+
   constructor(private readonly plan: ExecutionPlan) {}
 
-  async buildPlan(): Promise<ExecutionPlan> {
+  async buildPlan(
+    _task?: string,
+    _conversationContext?: string,
+    signal?: AbortSignal
+  ): Promise<ExecutionPlan> {
+    this.calls += 1;
+    this.signals.push(signal);
     return this.plan;
   }
 }
 
 class StubSearcher {
   calls = 0;
+  signals: Array<AbortSignal | undefined> = [];
 
-  async search(): Promise<{
+  async search(
+    _task?: string,
+    _plan?: ExecutionPlan,
+    _conversationContext?: string,
+    signal?: AbortSignal
+  ): Promise<{
     result: {
       summary: string;
       references: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }>;
@@ -65,6 +80,7 @@ class StubSearcher {
     toolCalls: Array<{ toolName: string; args: Record<string, unknown>; result: { ok: boolean }; timestamp: string }>;
   }> {
     this.calls += 1;
+    this.signals.push(signal);
     return {
       result: {
         summary: "search-ok",
@@ -76,7 +92,10 @@ class StubSearcher {
   }
 }
 
-function createResumeState(anchor?: ToolLoopResumeState["resumeAnchor"]): ToolLoopResumeState {
+function createResumeState(
+  anchor?: ToolLoopResumeState["resumeAnchor"],
+  partialAssistantMessage: ToolLoopResumeState["partialAssistantMessage"] = null
+): ToolLoopResumeState {
   return {
     version: 1,
     messages: [{ role: "system", content: "system" }, { role: "user", content: "task" }],
@@ -85,7 +104,7 @@ function createResumeState(anchor?: ToolLoopResumeState["resumeAnchor"]): ToolLo
     temperature: 0.15,
     maxTurns: 6,
     nextTurn: 1,
-    partialAssistantMessage: null,
+    partialAssistantMessage,
     ...(anchor ? { resumeAnchor: anchor } : {})
   };
 }
@@ -173,9 +192,10 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
     steps: [{ id: "S1", title: "Edit code", owner: "code", acceptance: "done" }]
   };
   const coder = new StubCoder();
+  const planner = new StubPlanner(plan);
   const orchestrator = new PlanToDoOrchestrator(
     coder as unknown as any,
-    new StubPlanner(plan) as unknown as any,
+    planner as unknown as any,
     new StubSearcher() as unknown as any,
     createToolContext(true)
   );
@@ -183,6 +203,7 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
   const deltas: string[] = [];
   const previews: string[] = [];
   const states: ToolLoopResumeState[] = [];
+  const controller = new AbortController();
 
   const result = await orchestrator.run(
     {
@@ -190,6 +211,7 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
       forcePlanMode: true
     },
     {
+      signal: controller.signal,
       onAssistantTextDelta: (delta) => {
         deltas.push(delta);
       },
@@ -205,6 +227,7 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
   assert.equal(coder.calls.length, 1);
   assert.equal(deltas.length, 0);
   assert.equal(previews.length, 1);
+  assert.equal(planner.signals[0], controller.signal);
   assert.match(previews[0], /Goal: task/);
   assert.equal(states.length > 0, true);
   assert.deepEqual(states[0].resumeAnchor, {
@@ -231,6 +254,47 @@ test("plan mode should resume from anchored step and skip earlier code steps", a
     createToolContext(true)
   );
 
+  const resumeState = createResumeState(
+    {
+      mode: "plan",
+      stepId: "S2",
+      stepIndex: 1
+    },
+    {
+      role: "assistant",
+      content: "partial"
+    }
+  );
+
+  const result = await orchestrator.run({
+    task: "implement",
+    forcePlanMode: true,
+    resumeState
+  });
+
+  assert.equal(coder.calls.length, 1);
+  assert.equal(coder.calls[0].resumeState, resumeState);
+  assert.match(result.summary, /S1 Code 1: skipped/);
+  assert.match(result.summary, /S2 Code 2: resumed/);
+});
+
+test("plan mode should skip completed anchor step and continue next step", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [
+      { id: "S1", title: "Code 1", owner: "code", acceptance: "done" },
+      { id: "S2", title: "Code 2", owner: "code", acceptance: "done" },
+      { id: "S3", title: "Code 3", owner: "code", acceptance: "done" }
+    ]
+  };
+  const coder = new StubCoder();
+  const orchestrator = new PlanToDoOrchestrator(
+    coder as unknown as any,
+    new StubPlanner(plan) as unknown as any,
+    new StubSearcher() as unknown as any,
+    createToolContext(true)
+  );
+
   const resumeState = createResumeState({
     mode: "plan",
     stepId: "S2",
@@ -244,9 +308,10 @@ test("plan mode should resume from anchored step and skip earlier code steps", a
   });
 
   assert.equal(coder.calls.length, 1);
-  assert.equal(coder.calls[0].resumeState, resumeState);
+  assert.equal(coder.calls[0].resumeState, undefined);
   assert.match(result.summary, /S1 Code 1: skipped/);
-  assert.match(result.summary, /S2 Code 2: resumed/);
+  assert.match(result.summary, /S2 Code 2: skipped \(resume anchor step was already completed\)/);
+  assert.match(result.summary, /S3 Code 3: code execution completed/);
 });
 
 test("plan mode should ignore unmatched resume anchor", async () => {
@@ -295,19 +360,64 @@ test("plan mode should execute search steps before resume target", async () => {
     createToolContext(true)
   );
 
-  const resumeState = createResumeState({
-    mode: "plan",
-    stepId: "S3",
-    stepIndex: 2
-  });
+  const resumeState = createResumeState(
+    {
+      mode: "plan",
+      stepId: "S3",
+      stepIndex: 2
+    },
+    {
+      role: "assistant",
+      content: "partial"
+    }
+  );
 
-  await orchestrator.run({
-    task: "implement",
-    forcePlanMode: true,
-    resumeState
-  });
+  const controller = new AbortController();
+  await orchestrator.run(
+    {
+      task: "implement",
+      forcePlanMode: true,
+      resumeState
+    },
+    {
+      signal: controller.signal
+    }
+  );
 
   assert.equal(searcher.calls, 1);
+  assert.equal(searcher.signals[0], controller.signal);
   assert.equal(coder.calls.length, 1);
   assert.equal(coder.calls[0].resumeState, resumeState);
+});
+
+test("plan mode should abort before planner when signal is already aborted", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [{ id: "S1", title: "Code 1", owner: "code", acceptance: "done" }]
+  };
+  const planner = new StubPlanner(plan);
+  const orchestrator = new PlanToDoOrchestrator(
+    new StubCoder() as unknown as any,
+    planner as unknown as any,
+    new StubSearcher() as unknown as any,
+    createToolContext(true)
+  );
+
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    () =>
+      orchestrator.run(
+        {
+          task: "implement",
+          forcePlanMode: true
+        },
+        {
+          signal: controller.signal
+        }
+      ),
+    /Interrupted by user/
+  );
+  assert.equal(planner.calls, 0);
 });

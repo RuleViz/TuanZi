@@ -72,7 +72,7 @@ export class ChatResumeStore {
   }
 
   async save(snapshot: AppChatResumeSnapshot): Promise<number> {
-    const serialized = JSON.stringify(snapshot, null, 2);
+    const serialized = JSON.stringify(snapshot);
     await mkdir(dirname(this.filePath), { recursive: true });
     await writeFile(this.filePath, serialized, "utf8");
     return Buffer.byteLength(serialized, "utf8");

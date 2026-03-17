@@ -105,7 +105,12 @@ export class ReactToolAgent {
       });
     }
 
-    const emitState = (partialAssistantMessage: ChatMessage | null): void => {
+    // Frequent per-token resume snapshots can starve streaming throughput.
+    const stateEmitThrottleMs = 250;
+    let lastStateEmitAt = 0;
+    let pendingPartialAssistantMessage: ChatMessage | null | undefined;
+
+    const emitStateNow = (partialAssistantMessage: ChatMessage | null): void => {
       input.onStateChange?.({
         version: 1,
         messages: cloneMessages(messages),
@@ -117,13 +122,34 @@ export class ReactToolAgent {
         partialAssistantMessage: partialAssistantMessage ? cloneMessage(partialAssistantMessage) : null,
         ...(resumeAnchor ? { resumeAnchor } : {})
       });
+      lastStateEmitAt = Date.now();
     };
 
-    emitState(null);
+    const emitState = (partialAssistantMessage: ChatMessage | null, options?: { force?: boolean }): void => {
+      if (!input.onStateChange) {
+        return;
+      }
+
+      const force = options?.force === true;
+      if (!force && stateEmitThrottleMs > 0) {
+        const now = Date.now();
+        if (now - lastStateEmitAt < stateEmitThrottleMs) {
+          pendingPartialAssistantMessage = partialAssistantMessage;
+          return;
+        }
+      }
+
+      const effectivePartialAssistantMessage =
+        pendingPartialAssistantMessage === undefined ? partialAssistantMessage : pendingPartialAssistantMessage;
+      pendingPartialAssistantMessage = undefined;
+      emitStateNow(effectivePartialAssistantMessage ?? null);
+    };
+
+    emitState(null, { force: true });
 
     for (let turn = nextTurn; turn < maxTurns; turn += 1) {
       if (this.toolContext.signal?.aborted) {
-        emitState(null);
+        emitState(null, { force: true });
         throw new Error("Interrupted by user");
       }
 
@@ -164,9 +190,9 @@ export class ReactToolAgent {
         });
       } catch (error) {
         if (isInterruptedAssistantMessageError(error)) {
-          emitState(error.partialMessage);
+          emitState(error.partialMessage, { force: true });
         } else {
-          emitState(partialAssistantMessage);
+          emitState(partialAssistantMessage, { force: true });
         }
         throw error;
       }
@@ -174,7 +200,7 @@ export class ReactToolAgent {
       const assistantMessage = completion.message;
       messages.push(cloneMessage(assistantMessage));
       nextTurn = turn + 1;
-      emitState(null);
+      emitState(null, { force: true });
 
       const calls = assistantMessage.tool_calls ?? [];
       if (calls.length === 0) {
@@ -198,7 +224,7 @@ export class ReactToolAgent {
         this.toolContext.logger.warn(
           `[agent] no-progress breaker triggered at turn=${turn + 1} repeatedTurns=${repeatedNoProgressTurns}`
         );
-        emitState(null);
+        emitState(null, { force: true });
         return {
           finalText: "Tool loop stopped due to repeated no-progress tool calls.",
           toolCalls,
@@ -209,7 +235,7 @@ export class ReactToolAgent {
       this.toolContext.logger.info(`[agent] turn=${turn + 1} toolCalls=${calls.length}`);
       for (const call of calls) {
         if (this.toolContext.signal?.aborted) {
-          emitState(null);
+          emitState(null, { force: true });
           throw new Error("Interrupted by user");
         }
         const toolResponse = await this.invokeTool(call, input.allowedTools);
@@ -226,11 +252,11 @@ export class ReactToolAgent {
           name: call.function.name,
           content: JSON.stringify(toolResponse.result)
         });
-        emitState(null);
+        emitState(null, { force: true });
       }
     }
 
-    emitState(null);
+    emitState(null, { force: true });
     return {
       finalText: "Tool loop reached max turns without final assistant output.",
       toolCalls,

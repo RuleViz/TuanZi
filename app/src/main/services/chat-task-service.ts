@@ -107,8 +107,8 @@ function buildChatResumeSnapshot(input: {
     thinkingEnabled: input.thinkingEnabled,
     streamedText: input.streamedText,
     streamedThinking: input.streamedThinking,
-    toolCalls: cloneToolCallSnapshots(input.toolCalls),
-    resumeState: cloneResumeState(input.resumeState),
+    toolCalls: input.toolCalls,
+    resumeState: input.resumeState,
     updatedAt: new Date().toISOString()
   };
 }
@@ -648,16 +648,35 @@ export function createRunChatTask(
       const completedToolCalls = cloneToolCallSnapshots(payload.resumeState?.toolCalls ?? []);
       completedToolCallsForInterrupt = completedToolCalls;
       let latestResumeState = cloneResumeState(payload.resumeState ?? null);
-      let pendingSnapshot: AppChatResumeSnapshot | null = null;
+      let snapshotDirty = false;
       let snapshotFlushTimer: NodeJS.Timeout | null = null;
       let snapshotWriteChain: Promise<void> = Promise.resolve();
 
+      const buildPersistedSnapshot = (): AppChatResumeSnapshot => {
+        const trimmedToolCalls =
+          completedToolCalls.length > deps.snapshotMaxToolCalls
+            ? completedToolCalls.slice(completedToolCalls.length - deps.snapshotMaxToolCalls)
+            : completedToolCalls;
+        return buildChatResumeSnapshot({
+          taskId,
+          sessionId,
+          workspace,
+          message: effectiveMessage,
+          agentId: deps.normalizeOptionalString(payload.agentId ?? null),
+          thinkingEnabled: payload.thinking === true,
+          streamedText: trimPersistedStream(streamedText, deps.snapshotMaxStreamChars),
+          streamedThinking: trimPersistedStream(streamedThinking, deps.snapshotMaxStreamChars),
+          toolCalls: cloneToolCallSnapshots(trimmedToolCalls),
+          resumeState: latestResumeState
+        });
+      };
+
       const flushSnapshotNow = (): Promise<void> => {
-        const snapshot = pendingSnapshot;
-        pendingSnapshot = null;
-        if (!snapshot) {
+        if (!snapshotDirty) {
           return Promise.resolve();
         }
+        snapshotDirty = false;
+        const snapshot = buildPersistedSnapshot();
         const startedAt = Date.now();
         const summary = {
           taskId,
@@ -683,7 +702,7 @@ export function createRunChatTask(
             console.warn(`[close-perf] Failed to persist chat snapshot: ${deps.toErrorMessage(error)}`);
           });
         return snapshotWriteChain.finally(() => {
-          if (pendingSnapshot) {
+          if (snapshotDirty) {
             scheduleSnapshotFlush(true);
           }
         });
@@ -711,40 +730,18 @@ export function createRunChatTask(
         }
         await flushSnapshotNow();
         await snapshotWriteChain;
-        while (pendingSnapshot) {
+        while (snapshotDirty) {
           await flushSnapshotNow();
           await snapshotWriteChain;
         }
       };
 
-      const persistSnapshot = (): AppChatResumeSnapshot => {
-        const snapshot = buildChatResumeSnapshot({
-          taskId,
-          sessionId,
-          workspace,
-          message: effectiveMessage,
-          agentId: deps.normalizeOptionalString(payload.agentId ?? null),
-          thinkingEnabled: payload.thinking === true,
-          streamedText,
-          streamedThinking,
-          toolCalls: completedToolCalls,
-          resumeState: latestResumeState
-        });
-        const persistedSnapshot: AppChatResumeSnapshot = {
-          ...snapshot,
-          streamedText: trimPersistedStream(snapshot.streamedText, deps.snapshotMaxStreamChars),
-          streamedThinking: trimPersistedStream(snapshot.streamedThinking, deps.snapshotMaxStreamChars),
-          toolCalls:
-            snapshot.toolCalls.length > deps.snapshotMaxToolCalls
-              ? snapshot.toolCalls.slice(snapshot.toolCalls.length - deps.snapshotMaxToolCalls)
-              : snapshot.toolCalls
-        };
-        pendingSnapshot = persistedSnapshot;
+      const markSnapshotDirty = (): void => {
+        snapshotDirty = true;
         scheduleSnapshotFlush(false);
-        return persistedSnapshot;
       };
 
-      persistSnapshot();
+      markSnapshotDirty();
 
       try {
         if (deps.createTurnCheckpoint) {
@@ -773,20 +770,20 @@ export function createRunChatTask(
             onAssistantTextDelta: (delta: string) => {
               streamedText += delta;
               latestStreamedText = streamedText;
-              persistSnapshot();
+              markSnapshotDirty();
             },
             onAssistantThinkingDelta: (delta: string) => {
               streamedThinking += delta;
               latestStreamedThinking = streamedThinking;
-              persistSnapshot();
+              markSnapshotDirty();
             },
             onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
               completedToolCalls.push(cloneToolCallSnapshot(call));
-              persistSnapshot();
+              markSnapshotDirty();
             },
             onStateChange: (resumeState: ToolLoopResumeStateSnapshot) => {
               latestResumeState = cloneResumeState(resumeState);
-              persistSnapshot();
+              markSnapshotDirty();
             }
           })
         }

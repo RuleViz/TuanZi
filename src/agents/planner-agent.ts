@@ -7,15 +7,19 @@ import { plannerSystemPrompt } from "./prompts";
 export class PlannerAgent {
   constructor(
     private readonly client: ChatCompletionClient | null,
-    private readonly model: string | null
+    private readonly model: string | null,
+    private readonly workspaceRoot: string
   ) {}
 
-  async buildPlan(task: string, conversationContext = ""): Promise<ExecutionPlan> {
+  async buildPlan(task: string, conversationContext = "", signal?: AbortSignal): Promise<ExecutionPlan> {
+    throwIfAborted(signal);
     if (!this.client || !this.model) {
       return fallbackPlan(task);
     }
 
-    const messages: Array<{ role: "system" | "user"; content: string }> = [{ role: "system", content: plannerSystemPrompt() }];
+    const messages: Array<{ role: "system" | "user"; content: string }> = [
+      { role: "system", content: plannerSystemPrompt({ workspaceRoot: this.workspaceRoot }) }
+    ];
     if (conversationContext) {
       messages.push({
         role: "user",
@@ -31,8 +35,11 @@ export class PlannerAgent {
       model: this.model,
       temperature: 0.2,
       messages
+    }, {
+      signal
     });
 
+    throwIfAborted(signal);
     const parsed = parseJsonObject(messageContentToText(completion.message.content));
     if (!parsed) {
       return fallbackPlan(task);
@@ -54,6 +61,12 @@ export class PlannerAgent {
       steps,
       suggestedTestCommand
     };
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Interrupted by user");
   }
 }
 

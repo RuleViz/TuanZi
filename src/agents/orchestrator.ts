@@ -99,10 +99,13 @@ export class PlanToDoOrchestrator {
       };
     }
 
+    throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("planning");
-    const plan = await this.planner.buildPlan(task, conversationContext);
+    const plan = await this.planner.buildPlan(task, conversationContext, hooks?.signal);
+    throwIfAborted(hooks?.signal);
     hooks?.onPlanPreview?.(formatPlanPreview(plan));
 
+    throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("approval");
     const approval = await this.toolContext.approvalGate.approve({
       requestType: "plan",
@@ -122,6 +125,7 @@ export class PlanToDoOrchestrator {
       };
     }
 
+    throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("running");
     const output = await this.executePlanSteps({
       task,
@@ -151,17 +155,28 @@ export class PlanToDoOrchestrator {
     let searchContext = "";
     let lastCodeSummary = "";
     const resumeTarget = resolvePlanResumeTarget(input.resumeState, input.plan);
+    const shouldResumeAnchorStep = shouldResumeFromAnchorStep(input.resumeState);
+    const firstCodeStepIndexToExecute =
+      resumeTarget && !shouldResumeAnchorStep ? resumeTarget.stepIndex + 1 : resumeTarget?.stepIndex ?? 0;
     let resumeStateConsumed = false;
 
     if (input.resumeState && !resumeTarget) {
       followUp.add("Resume state was ignored because no matching plan step anchor was found.");
+    } else if (input.resumeState && resumeTarget && !shouldResumeAnchorStep) {
+      followUp.add("Resume anchor step was already completed; execution continued from the next step.");
     }
 
     for (let stepIndex = 0; stepIndex < input.plan.steps.length; stepIndex += 1) {
+      throwIfAborted(input.hooks?.signal);
       const step = input.plan.steps[stepIndex];
       if (step.owner === "search") {
         const searchTask = buildSearchTask(input.task, step.title, step.acceptance);
-        const searchOutput = await this.searcher.search(searchTask, input.plan, input.conversationContext);
+        const searchOutput = await this.searcher.search(
+          searchTask,
+          input.plan,
+          input.conversationContext,
+          input.hooks?.signal
+        );
         allToolCalls.push(...searchOutput.toolCalls);
         const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);
         searchContext = buildSearchContext(searchOutput.result.summary, refs);
@@ -169,14 +184,19 @@ export class PlanToDoOrchestrator {
         continue;
       }
 
-      if (resumeTarget && stepIndex < resumeTarget.stepIndex) {
-        stepSummaries.push(`- ${step.id} ${step.title}: skipped (already completed before resume target).`);
+      if (resumeTarget && stepIndex < firstCodeStepIndexToExecute) {
+        const reason =
+          stepIndex < resumeTarget.stepIndex
+            ? "skipped (already completed before resume target)."
+            : "skipped (resume anchor step was already completed).";
+        stepSummaries.push(`- ${step.id} ${step.title}: ${reason}`);
         continue;
       }
 
       const shouldResumeThisStep: boolean = Boolean(
         input.resumeState &&
         resumeTarget &&
+        shouldResumeAnchorStep &&
         !resumeStateConsumed &&
         stepIndex === resumeTarget.stepIndex
       );
@@ -226,6 +246,26 @@ export class PlanToDoOrchestrator {
       followUp: [...followUp],
       toolCalls: allToolCalls
     };
+  }
+}
+
+function shouldResumeFromAnchorStep(resumeState: ToolLoopResumeState | undefined): boolean {
+  const partial = resumeState?.partialAssistantMessage;
+  if (!partial) {
+    return false;
+  }
+  const hasTextContent =
+    (typeof partial.content === "string" && partial.content.trim().length > 0) ||
+    (Array.isArray(partial.content) &&
+      partial.content.some((part) => part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0));
+  const hasThinkingContent = typeof partial.reasoning_content === "string" && partial.reasoning_content.trim().length > 0;
+  const hasToolCalls = Array.isArray(partial.tool_calls) && partial.tool_calls.length > 0;
+  return hasTextContent || hasThinkingContent || hasToolCalls;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Interrupted by user");
   }
 }
 
@@ -426,4 +466,3 @@ export function buildConversationContext(
   }
   return context;
 }
-

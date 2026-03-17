@@ -71,7 +71,7 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
     toolRuntime.toolContext,
     runtimeConfig.agentBackend.activeAgent
   );
-  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel);
+  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel, runtimeConfig.workspaceRoot);
   const searcher = new SearcherAgent(client, runtimeConfig.model.searchModel, toolRuntime.registry, toolRuntime.toolContext);
   return new PlanToDoOrchestrator(coder, planner, searcher, toolRuntime.toolContext);
 }

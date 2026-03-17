@@ -92,30 +92,24 @@ export class TuanZiAgent {
     }
     const userPrompt = userPromptSections.join("\n");
 
-    const systemPromptParts = [
-      coderSystemPrompt({
-        workspaceRoot: this.toolContext.workspaceRoot,
-        agentName: this.activeAgent.name,
-        agentPrompt: this.activeAgent.prompt,
-        skillCatalog,
-        toolInstructions: activeTools.activeTools.map((tool) => ({
-          name: tool.name,
-          prompt: tool.prompt
-        }))
-      })
-    ];
-    if (mcpTooling.tools.length > 0) {
-      systemPromptParts.push(
-        [
-          "<mcp_guidance>",
-          "  You are connected to external MCP services.",
-          "  MCP tool names always start with mcp__ and are safe to call directly when relevant.",
-          "  Prefer MCP tools only when they improve accuracy, observability, or execution capability.",
-          "</mcp_guidance>"
-        ].join("\n")
-      );
-    }
-    const systemPrompt = systemPromptParts.join("\n\n");
+    const localToolInstructions = activeTools.activeTools.map((tool) => ({
+      name: tool.name,
+      prompt: tool.prompt
+    }));
+    const mcpToolInstructions = mcpTooling.tools.map((tool) => ({
+      name: tool.namespacedName,
+      prompt:
+        `Use ${tool.namespacedName} when external MCP capability improves correctness, observability, or execution.` +
+        ` ${tool.description || "No description provided."}`
+    }));
+
+    const systemPrompt = coderSystemPrompt({
+      workspaceRoot: this.toolContext.workspaceRoot,
+      agentName: this.activeAgent.name,
+      agentPrompt: this.activeAgent.prompt,
+      skillCatalog,
+      toolInstructions: dedupeToolInstructions([...localToolInstructions, ...mcpToolInstructions])
+    });
 
     const output = await agent.run({
       systemPrompt,
@@ -284,6 +278,23 @@ function dedupeStrings(values: string[]): string[] {
     }
     seen.add(normalized);
     output.push(normalized);
+  }
+  return output;
+}
+
+function dedupeToolInstructions(
+  values: Array<{ name: string; prompt: string }>
+): Array<{ name: string; prompt: string }> {
+  const output: Array<{ name: string; prompt: string }> = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const name = value.name.trim();
+    const prompt = value.prompt.trim();
+    if (!name || !prompt || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    output.push({ name, prompt });
   }
   return output;
 }

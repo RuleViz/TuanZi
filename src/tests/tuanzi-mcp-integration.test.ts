@@ -155,7 +155,8 @@ test("TuanZiAgent should inject MCP tool schemas and prompt guidance", async () 
   const userContent = messageContentToText(
     client.lastInput?.messages.find((message) => message.role === "user")?.content ?? ""
   );
-  assert.match(systemContent, /<mcp_guidance>/);
+  assert.match(systemContent, /<tool_policies>/);
+  assert.match(systemContent, /mcp__files__read_file/);
   assert.match(userContent, /Connected external MCP tools/);
   assert.match(userContent, /mcp__files__read_file/);
 });

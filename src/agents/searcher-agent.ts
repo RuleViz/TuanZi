@@ -32,10 +32,11 @@ export class SearcherAgent {
     private readonly toolContext: ToolExecutionContext
   ) { }
 
-  async search(task: string, plan: ExecutionPlan, conversationContext = ""): Promise<SearcherOutput> {
+  async search(task: string, plan: ExecutionPlan, conversationContext = "", signal?: AbortSignal): Promise<SearcherOutput> {
+    throwIfAborted(signal);
     if (!this.client || !this.model) {
       return {
-        result: await this.fallbackSearch(task),
+        result: await this.fallbackSearch(task, signal),
         toolCalls: []
       };
     }
@@ -60,11 +61,15 @@ export class SearcherAgent {
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
     const maxTurns = this.toolContext.agentSettings?.toolLoop.searchMaxTurns ?? 12;
     const output = await agent.run({
-      systemPrompt: searcherSystemPrompt(this.toolContext.workspaceRoot),
+      systemPrompt: searcherSystemPrompt({
+        workspaceRoot: this.toolContext.workspaceRoot,
+        enabledTools: SEARCH_TOOLS
+      }),
       userPrompt,
       allowedTools: SEARCH_TOOLS,
       maxTurns,
-      temperature: 0.1
+      temperature: 0.1,
+      signal
     });
 
     const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
@@ -113,7 +118,8 @@ export class SearcherAgent {
     };
   }
 
-  private async fallbackSearch(task: string): Promise<SearchResult> {
+  private async fallbackSearch(task: string, signal?: AbortSignal): Promise<SearchResult> {
+    throwIfAborted(signal);
     const keywords = task
       .split(/[\s,.;!?/\\]+/)
       .map((item) => item.trim())
@@ -122,6 +128,7 @@ export class SearcherAgent {
 
     const references: SearchReference[] = [];
     for (const keyword of keywords) {
+      throwIfAborted(signal);
       const result = await this.toolRegistry.execute(
         "find_by_name",
         {
@@ -140,6 +147,7 @@ export class SearcherAgent {
     if (references.length === 0) {
       const fallbackPatterns = ["*.ts", "*.js", "*.json", "*.md"];
       for (const pattern of fallbackPatterns) {
+        throwIfAborted(signal);
         const fallback = await this.toolRegistry.execute(
           "find_by_name",
           { search_path: this.toolContext.workspaceRoot, pattern, max_results: 8 },
@@ -157,6 +165,12 @@ export class SearcherAgent {
       references: uniqueByPath(references).slice(0, 20),
       webReferences: []
     };
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Interrupted by user");
   }
 }
 
