@@ -48,6 +48,9 @@ interface SettingsFeatureDeps {
   providerModelModalIdInput: HTMLInputElement;
   providerModelModalDisplayNameInput: HTMLInputElement;
   providerModelModalVisionToggle: HTMLButtonElement;
+  providerModelModalContextWindowInput: HTMLInputElement;
+  providerModelModalMaxOutputInput: HTMLInputElement;
+  providerModelModalProtocolTypeSelect: HTMLSelectElement;
   closeProviderModelModalBtn: HTMLButtonElement;
   providerModelModalCancelBtn: HTMLButtonElement;
   providerModelModalConfirmBtn: HTMLButtonElement;
@@ -115,6 +118,9 @@ export function createSettingsFeature(input: SettingsFeatureDeps): SettingsFeatu
     providerModelModalIdInput: input.providerModelModalIdInput,
     providerModelModalDisplayNameInput: input.providerModelModalDisplayNameInput,
     providerModelModalVisionToggle: input.providerModelModalVisionToggle,
+    providerModelModalContextWindowInput: input.providerModelModalContextWindowInput,
+    providerModelModalMaxOutputInput: input.providerModelModalMaxOutputInput,
+    providerModelModalProtocolTypeSelect: input.providerModelModalProtocolTypeSelect,
     normalizeOptionalString: input.normalizeOptionalString,
     escapeHtml: input.escapeHtml,
     showError: input.showError,

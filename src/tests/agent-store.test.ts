@@ -95,3 +95,58 @@ test("agent backend config should persist provider updates", () => {
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+test("provider model metadata should persist with defaults", () => {
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    withAgentHome(homeDir, () => {
+      const saved = saveAgentBackendConfigSync({
+        providers: [
+          {
+            id: "openai-main",
+            name: "OpenAI Main",
+            type: "openai",
+            apiKey: "sk-test",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4o-mini",
+            isEnabled: true,
+            models: [
+              {
+                id: "gpt-4o-mini",
+                displayName: "GPT 4o Mini",
+                isVision: true,
+                enabled: true,
+                contextWindowTokens: 128000,
+                maxOutputTokens: 4096,
+                protocolType: "openai_chat_completions",
+                tokenEstimatorType: "builtin"
+              },
+              {
+                id: "legacy-no-meta",
+                displayName: "Legacy",
+                isVision: false,
+                enabled: true
+              }
+            ]
+          }
+        ],
+        activeProviderId: "openai-main"
+      });
+
+      assert.equal(saved.providers.length, 1);
+      const model = saved.providers[0].models.find((item) => item.id === "gpt-4o-mini");
+      assert.equal(model?.contextWindowTokens, 128000);
+      assert.equal(model?.maxOutputTokens, 4096);
+      assert.equal(model?.protocolType, "openai_chat_completions");
+      assert.equal(model?.tokenEstimatorType, "builtin");
+
+      const legacy = saved.providers[0].models.find((item) => item.id === "legacy-no-meta");
+      assert.equal(legacy?.contextWindowTokens, null);
+      assert.equal(legacy?.maxOutputTokens, null);
+      assert.equal(legacy?.protocolType, "openai_chat_completions");
+      assert.equal(legacy?.tokenEstimatorType, "builtin");
+    });
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});

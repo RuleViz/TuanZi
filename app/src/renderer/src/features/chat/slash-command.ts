@@ -303,7 +303,11 @@ export function createSlashCommandController(input: SlashCommandDeps): SlashComm
         id: modelId,
         displayName: modelId,
         isVision: false,
-        enabled: true
+        enabled: true,
+        contextWindowTokens: null,
+        maxOutputTokens: null,
+        protocolType: "openai_chat_completions",
+        tokenEstimatorType: "builtin"
       });
     }
     for (const model of provider.models) {

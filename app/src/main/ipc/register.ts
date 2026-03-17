@@ -1,6 +1,7 @@
-﻿import { registerAgentHandlers, type AgentHandlersDeps } from "./agent-handlers";
+import { registerAgentHandlers, type AgentHandlersDeps } from "./agent-handlers";
 import { registerChatHandlers, type ChatHandlersDeps } from "./chat-handlers";
 import { registerCheckpointHandlers, type CheckpointHandlersDeps } from "./checkpoint-handlers";
+import { registerMemoryHandlers, type MemoryHandlersDeps } from "./memory-handlers";
 import { registerMcpHandlers, type McpHandlersDeps } from "./mcp-handlers";
 import { registerSkillHandlers, type SkillHandlersDeps } from "./skill-handlers";
 import { registerWindowHandlers, type WindowHandlersDeps } from "./window-handlers";
@@ -12,6 +13,7 @@ export interface IpcRegisterDeps {
   skills: SkillHandlersDeps;
   mcp: McpHandlersDeps;
   checkpoint: CheckpointHandlersDeps;
+  memory: MemoryHandlersDeps;
 }
 
 export function registerIpcHandlers(deps: IpcRegisterDeps): void {
@@ -21,4 +23,5 @@ export function registerIpcHandlers(deps: IpcRegisterDeps): void {
   registerSkillHandlers(deps.skills);
   registerMcpHandlers(deps.mcp);
   registerCheckpointHandlers(deps.checkpoint);
+  registerMemoryHandlers(deps.memory);
 }

@@ -15,6 +15,8 @@ import {
   type ToolLoopToolCallSnapshot
 } from "./chat-resume-store"
 import { registerIpcHandlers } from "./ipc/register"
+import { ConversationMemoryCompactor } from "./services/conversation-memory-compactor"
+import { ConversationMemoryStore } from "./services/conversation-memory-store"
 import { createRunChatTask, loadMatchingChatResumeSnapshot } from "./services/chat-task-service"
 import { TurnCheckpointManager } from "./services/turn-checkpoint-manager"
 
@@ -26,6 +28,11 @@ import { TurnCheckpointManager } from "./services/turn-checkpoint-manager"
 let mainWindow: BrowserWindow | null = null
 const activeTasks = new Map<string, AbortController>()
 const chatResumeStore = new ChatResumeStore(app.getPath("userData"))
+const conversationMemoryStore = new ConversationMemoryStore(app.getPath("userData"))
+const conversationMemoryCompactor = new ConversationMemoryCompactor(conversationMemoryStore, {
+  toErrorMessage,
+  log: (message: string) => closePerfLog("memory_compactor", { message })
+})
 const MAX_CHAT_IMAGE_COUNT = 1
 const MAX_CHAT_IMAGE_BYTES = 8 * 1024 * 1024
 const configuredShutdownTimeout = Number(process.env["TUANZI_SHUTDOWN_WAIT_MS"])
@@ -193,6 +200,7 @@ type CreateOrchestratorFn = (
     input: {
       task: string
       memoryTurns?: Array<{ user: string; assistant: string }>
+      conversationContext?: string
       resumeState?: ToolLoopResumeStateSnapshot | null
       userImages?: Array<{ dataUrl: string; mimeType: string }>
     },
@@ -832,16 +840,23 @@ function nextTurnIndex(workspace: string): number {
   return next
 }
 
-async function createTurnCheckpoint(workspace: string, _turnId: string, _turnIndex: number, userMessage: string): Promise<void> {
+async function createTurnCheckpoint(
+  workspace: string,
+  _turnId: string,
+  _turnIndex: number,
+  userMessage: string
+): Promise<string | null> {
   const mgr = getTurnCheckpointManager(workspace)
   const turnIndex = nextTurnIndex(workspace)
   const turnId = `turn-${turnIndex}`
-  await mgr.createCheckpoint(turnId, turnIndex, userMessage)
+  const checkpoint = await mgr.createCheckpoint(turnId, turnIndex, userMessage)
+  return checkpoint?.id ?? null
 }
 
 const runChatTask = createRunChatTask({
   activeTasks,
   chatResumeStore,
+  conversationMemoryStore,
   loadCoreModules,
   normalizeOptionalString,
   toErrorMessage,
@@ -902,6 +917,13 @@ registerIpcHandlers({
     probeMcpServers
   },
   checkpoint: {
+    normalizeOptionalString,
+    toErrorMessage
+  },
+  memory: {
+    conversationMemoryStore,
+    conversationMemoryCompactor,
+    loadCoreModules,
     normalizeOptionalString,
     toErrorMessage
   }

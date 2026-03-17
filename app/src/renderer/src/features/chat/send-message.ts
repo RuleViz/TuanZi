@@ -30,10 +30,6 @@ export interface SendMessageDeps {
   finalizeThinkingBlock: (thinkingBlock: ExecBlock | null) => void;
   getActiveAgent: () => { id: string } | null;
   ensureActiveSession: () => ChatSession;
-  buildModelHistory: (
-    session: ChatSession,
-    maxTurns: number
-  ) => Array<{ user: string; assistant: string }>;
   renderToolCalls: (
     contentEl: HTMLDivElement,
     toolCalls: Array<{
@@ -132,7 +128,6 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
           }
         : {}),
       workspace: active.workspace,
-      history: input.buildModelHistory(active, 10),
       agentId: activeAgent?.id ?? null,
       thinking: input.state.isThinking
     });

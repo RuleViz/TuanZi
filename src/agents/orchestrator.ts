@@ -21,6 +21,7 @@ export interface ConversationMemoryTurn {
 export interface OrchestratorRunInput {
   task: string;
   memoryTurns?: ConversationMemoryTurn[];
+  conversationContext?: string;
   resumeState?: ToolLoopResumeState;
   userImages?: ChatInputImage[];
 }
@@ -43,8 +44,9 @@ export class PlanToDoOrchestrator {
   ) { }
 
   async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
-    const { task, memoryTurns, resumeState, userImages } = normalizeRunInput(input);
-    const conversationContext = buildConversationContext(memoryTurns);
+    const { task, memoryTurns, conversationContext: explicitConversationContext, resumeState, userImages } =
+      normalizeRunInput(input);
+    const conversationContext = explicitConversationContext ?? buildConversationContext(memoryTurns);
     this.toolContext.taskId = randomUUID();
     hooks?.onPhaseChange?.("running");
     this.toolContext.signal = hooks?.signal;
@@ -75,6 +77,7 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   return {
     task: input.task,
     memoryTurns: input.memoryTurns,
+    conversationContext: input.conversationContext,
     resumeState: input.resumeState,
     userImages: input.userImages
   };

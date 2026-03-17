@@ -37,10 +37,6 @@ interface ChatRuntimeDeps {
   scrollToBottom: () => void;
   getActiveAgent: () => { id: string } | null;
   ensureActiveSession: () => ChatSession;
-  buildModelHistory: (
-    session: ChatSession,
-    maxTurns: number
-  ) => Array<{ user: string; assistant: string }>;
   renderToolCalls: (
     contentEl: HTMLDivElement,
     toolCalls: Array<{
@@ -153,7 +149,6 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       finalizeThinkingBlock,
       getActiveAgent: input.getActiveAgent,
       ensureActiveSession: input.ensureActiveSession,
-      buildModelHistory: input.buildModelHistory,
       renderToolCalls: input.renderToolCalls,
       renderMarkdownHtml: input.renderMarkdownHtml,
       syncInterruptedTurn: input.syncInterruptedTurn,

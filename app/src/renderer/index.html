@@ -392,6 +392,26 @@
           <label class="agent-field-label" for="providerModelModalDisplayNameInput">显示名称（可选）</label>
           <input id="providerModelModalDisplayNameInput" class="agent-field-input" type="text" placeholder="不填则与模型 ID 一致" />
         </div>
+        <div>
+          <label class="agent-field-label" for="providerModelModalContextWindowInput">上下文上限（tokens，可选）</label>
+          <input id="providerModelModalContextWindowInput" class="agent-field-input" type="number" min="1" step="1"
+            placeholder="例如：128000" />
+        </div>
+        <div>
+          <label class="agent-field-label" for="providerModelModalMaxOutputInput">最大输出（tokens，可选）</label>
+          <input id="providerModelModalMaxOutputInput" class="agent-field-input" type="number" min="1" step="1"
+            placeholder="例如：4096" />
+        </div>
+        <div>
+          <label class="agent-field-label" for="providerModelModalProtocolTypeSelect">协议类型</label>
+          <select id="providerModelModalProtocolTypeSelect" class="agent-field-input">
+            <option value="openai_chat_completions">OpenAI Chat Completions</option>
+            <option value="openai_responses">OpenAI Responses</option>
+            <option value="anthropic_messages">Anthropic Messages</option>
+            <option value="gemini_generate_content">Gemini Generate Content</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
         <div class="provider-enabled-row">
           <div>
             <div class="global-skill-title">支持图像输入</div>

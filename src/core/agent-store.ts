@@ -9,11 +9,24 @@ export interface AgentProviderConfig {
   model: string;
 }
 
+export type ProviderModelProtocolType =
+  | "openai_chat_completions"
+  | "openai_responses"
+  | "anthropic_messages"
+  | "gemini_generate_content"
+  | "custom";
+
+export type ProviderModelTokenEstimatorType = "builtin" | "remote_exact" | "heuristic";
+
 export interface ProviderModelItem {
   id: string;
   displayName: string;
   isVision: boolean;
   enabled: boolean;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
+  protocolType: ProviderModelProtocolType;
+  tokenEstimatorType?: ProviderModelTokenEstimatorType;
 }
 
 export interface ProviderConfig extends AgentProviderConfig {
@@ -358,7 +371,7 @@ function normalizeProviderEntry(
   const apiKey = normalizeOptionalString(input.apiKey) ?? "";
   const baseUrl = normalizeOptionalString(input.baseUrl) ?? DEFAULT_PROVIDER_CONFIG.baseUrl;
   const model = normalizeOptionalString(input.model) ?? "";
-  const models = normalizeProviderModels(input.models);
+  const models = normalizeProviderModels(input.models, type);
   const isEnabled = typeof input.isEnabled === "boolean" ? input.isEnabled : true;
 
   return {
@@ -373,12 +386,13 @@ function normalizeProviderEntry(
   };
 }
 
-function normalizeProviderModels(input: unknown): ProviderModelItem[] {
+function normalizeProviderModels(input: unknown, providerType: string): ProviderModelItem[] {
   if (!Array.isArray(input)) {
     return [];
   }
   const output: ProviderModelItem[] = [];
   const seen = new Set<string>();
+  const defaultProtocolType = defaultProtocolTypeForProvider(providerType);
 
   for (const item of input) {
     const raw = asRecord(item);
@@ -398,11 +412,72 @@ function normalizeProviderModels(input: unknown): ProviderModelItem[] {
       id,
       displayName: normalizeOptionalString(raw.displayName) ?? id,
       isVision: raw.isVision === true,
-      enabled: typeof raw.enabled === "boolean" ? raw.enabled : true
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : true,
+      contextWindowTokens: normalizeTokenLimit(raw.contextWindowTokens),
+      maxOutputTokens: normalizeTokenLimit(raw.maxOutputTokens),
+      protocolType: normalizeProtocolType(raw.protocolType) ?? defaultProtocolType,
+      tokenEstimatorType: normalizeTokenEstimatorType(raw.tokenEstimatorType) ?? "builtin"
     });
   }
 
   return output;
+}
+
+function normalizeTokenLimit(input: unknown): number | null {
+  if (typeof input === "number" && Number.isFinite(input) && input > 0) {
+    return Math.floor(input);
+  }
+  if (typeof input === "string") {
+    const parsed = Number(input.trim());
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return null;
+}
+
+function normalizeProtocolType(input: unknown): ProviderModelProtocolType | null {
+  if (input === "openai_chat_completions") {
+    return input;
+  }
+  if (input === "openai_responses") {
+    return input;
+  }
+  if (input === "anthropic_messages") {
+    return input;
+  }
+  if (input === "gemini_generate_content") {
+    return input;
+  }
+  if (input === "custom") {
+    return input;
+  }
+  return null;
+}
+
+function normalizeTokenEstimatorType(input: unknown): ProviderModelTokenEstimatorType | null {
+  if (input === "builtin" || input === "remote_exact" || input === "heuristic") {
+    return input;
+  }
+  return null;
+}
+
+function defaultProtocolTypeForProvider(providerType: string): ProviderModelProtocolType {
+  const normalized = providerType.trim().toLowerCase();
+  if (normalized === "anthropic") {
+    return "anthropic_messages";
+  }
+  if (normalized === "gemini") {
+    return "gemini_generate_content";
+  }
+  if (
+    normalized === "openai" ||
+    normalized === "openai_compatible" ||
+    normalized === "azure_openai"
+  ) {
+    return "openai_chat_completions";
+  }
+  return "custom";
 }
 
 function resolveActiveProviderId(rawId: unknown, providers: ProviderConfig[], fallbackId?: string | null): string {

@@ -53,9 +53,30 @@ export interface SendMessagePayload {
   message: string;
   images?: ChatImageInput[];
   workspace: string;
-  history: Array<{ user: string; assistant: string }>;
   agentId?: string | null;
   thinking?: boolean;
+}
+
+export interface MemoryStatusPayload {
+  workspace: string;
+  sessionId?: string;
+}
+
+export interface MemoryListCardsPayload {
+  workspace: string;
+  sessionId?: string;
+  limit?: number;
+}
+
+export interface MemoryForceCompactPayload {
+  workspace: string;
+  sessionId?: string;
+}
+
+export interface MemoryGetTurnsPayload {
+  workspace: string;
+  sessionId?: string;
+  afterSeq?: number;
 }
 
 export interface GetResumeStatePayload {
@@ -141,6 +162,65 @@ export interface TuanziAPI {
     serverId: string;
     enabled: boolean;
   }) => Promise<{ ok: boolean; error?: string }>;
+  memoryGetStatus: (
+    payload: MemoryStatusPayload
+  ) => Promise<{
+    ok: boolean;
+    status?: {
+      sessionId: string;
+      workspace: string;
+      nextSeq: number;
+      latestCardId: string | null;
+      lastCompactedSeq: number;
+      memoryCardCacheLimit: number;
+      turnCount: number;
+      cardCount: number;
+    };
+    error?: string;
+  }>;
+  memoryListCards: (
+    payload: MemoryListCardsPayload
+  ) => Promise<{
+    ok: boolean;
+    cards?: Array<{
+      id: string;
+      fromSeq: number;
+      toSeq: number;
+      title: string;
+      summary: string;
+      createdAt: string;
+      source: "model" | "fallback";
+    }>;
+    error?: string;
+  }>;
+  memoryForceCompact: (
+    payload: MemoryForceCompactPayload
+  ) => Promise<{
+    ok: boolean;
+    card?: {
+      id: string;
+      fromSeq: number;
+      toSeq: number;
+      title: string;
+      summary: string;
+      createdAt: string;
+      source: "model" | "fallback";
+    } | null;
+    error?: string;
+  }>;
+  memoryGetTurns: (
+    payload: MemoryGetTurnsPayload
+  ) => Promise<{
+    ok: boolean;
+    turns?: Array<{
+      seq: number;
+      user: string;
+      assistant: string;
+      interrupted: boolean;
+      createdAt: string;
+    }>;
+    error?: string;
+  }>;
   onDelta: (callback: (data: { taskId: string; delta: string }) => void) => () => void;
   onThinking: (callback: (data: { taskId: string; delta: string }) => void) => () => void;
   onToolCalls: (

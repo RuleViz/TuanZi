@@ -103,6 +103,22 @@ const tuanziAPI: TuanziAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.mcpDashboardSetServerEnabled, payload);
   },
 
+  memoryGetStatus: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.memoryGetStatus, payload);
+  },
+
+  memoryListCards: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.memoryListCards, payload);
+  },
+
+  memoryForceCompact: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.memoryForceCompact, payload);
+  },
+
+  memoryGetTurns: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.memoryGetTurns, payload);
+  },
+
   onDelta: (callback) => {
     const handler = (_event: Electron.IpcRendererEvent, data: { taskId: string; delta: string }): void => {
       callback(data);

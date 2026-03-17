@@ -1,5 +1,12 @@
-﻿import { IPC_CHANNELS } from "../../shared/ipc-channels";
-import type { AgentBackendConfig, ChatImageInput, ProviderConfig } from "../../shared/domain-types";
+import { IPC_CHANNELS } from "../../shared/ipc-channels";
+import type {
+  AgentBackendConfig,
+  ChatImageInput,
+  ProviderConfig,
+  ProviderModelItem,
+  ProviderModelProtocolType,
+  ProviderModelTokenEstimatorType
+} from "../../shared/domain-types";
 import type { SendMessagePayload } from "../../shared/ipc-contracts";
 import {
   type AppChatResumeSnapshot,
@@ -7,16 +14,37 @@ import {
   type ToolLoopResumeStateSnapshot,
   type ToolLoopToolCallSnapshot
 } from "../chat-resume-store";
+import { ConversationMemoryAssembler } from "./conversation-memory-assembler";
+import {
+  ConversationMemoryCompactor,
+  type CompactorModelConfig
+} from "./conversation-memory-compactor";
+import { ConversationMemoryStore } from "./conversation-memory-store";
+import type {
+  ConversationModelSnapshot,
+  ConversationTurnRecord,
+  ConversationTurnToolCallRecord
+} from "./conversation-memory-types";
 import {
   cloneResumeState,
   cloneToolCallSnapshot,
   cloneToolCallSnapshots,
   createChatStreamHooks
 } from "./chat-stream-bridge";
+import {
+  type TokenEstimateToolDefinition,
+  type TokenEstimatorAdapter
+} from "./token-estimators/base";
+import { AnthropicMessagesTokenEstimator } from "./token-estimators/anthropic-messages";
+import { CustomFallbackTokenEstimator } from "./token-estimators/custom-fallback";
+import { GeminiGenerateContentTokenEstimator } from "./token-estimators/gemini-generate-content";
+import { OpenAIChatCompletionsTokenEstimator } from "./token-estimators/openai-chat-completions";
+import { OpenAIResponsesTokenEstimator } from "./token-estimators/openai-responses";
 
 interface ChatTaskServiceDeps {
   activeTasks: Map<string, AbortController>;
   chatResumeStore: ChatResumeStore;
+  conversationMemoryStore: ConversationMemoryStore;
   loadCoreModules: () => any;
   normalizeOptionalString: (input: unknown) => string | null;
   toErrorMessage: (error: unknown) => string;
@@ -28,7 +56,21 @@ interface ChatTaskServiceDeps {
   snapshotMaxToolCalls: number;
   maxChatImageCount: number;
   maxChatImageBytes: number;
-  createTurnCheckpoint?: (workspace: string, turnId: string, turnIndex: number, userMessage: string) => Promise<void>;
+  createTurnCheckpoint?: (
+    workspace: string,
+    turnId: string,
+    turnIndex: number,
+    userMessage: string
+  ) => Promise<string | null>;
+}
+
+interface ActiveModelSelection {
+  provider: ProviderConfig | null;
+  modelItem: ProviderModelItem | null;
+  protocolType: ProviderModelProtocolType;
+  tokenEstimatorType: ProviderModelTokenEstimatorType;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
 }
 
 function cloneJson<T>(value: T): T {
@@ -47,7 +89,6 @@ function buildChatResumeSnapshot(input: {
   sessionId: string;
   workspace: string;
   message: string;
-  history: Array<{ user: string; assistant: string }>;
   agentId: string | null;
   thinkingEnabled: boolean;
   streamedText: string;
@@ -61,7 +102,7 @@ function buildChatResumeSnapshot(input: {
     sessionId: input.sessionId,
     workspace: input.workspace,
     message: input.message,
-    history: cloneJson(input.history),
+    history: [],
     agentId: input.agentId,
     thinkingEnabled: input.thinkingEnabled,
     streamedText: input.streamedText,
@@ -135,7 +176,10 @@ function normalizeChatImages(input: unknown, deps: ChatTaskServiceDeps): ChatIma
   return output;
 }
 
-function getActiveProvider(config: AgentBackendConfig, normalizeOptionalString: ChatTaskServiceDeps["normalizeOptionalString"]): ProviderConfig | null {
+function getActiveProvider(
+  config: AgentBackendConfig,
+  normalizeOptionalString: ChatTaskServiceDeps["normalizeOptionalString"]
+): ProviderConfig | null {
   const activeProviderId = normalizeOptionalString(config.activeProviderId);
   if (!activeProviderId) {
     return null;
@@ -148,6 +192,21 @@ function getActiveProvider(config: AgentBackendConfig, normalizeOptionalString: 
   return provider;
 }
 
+function getActiveModel(
+  provider: ProviderConfig,
+  normalizeOptionalString: ChatTaskServiceDeps["normalizeOptionalString"]
+): ProviderModelItem | null {
+  const activeModelId = normalizeOptionalString(provider.model);
+  if (!activeModelId) {
+    return null;
+  }
+  const model = provider.models.find((item) => item.id.toLowerCase() === activeModelId.toLowerCase()) ?? null;
+  if (!model || model.enabled === false) {
+    return null;
+  }
+  return model;
+}
+
 function supportsVisionForActiveModel(
   config: AgentBackendConfig,
   normalizeOptionalString: ChatTaskServiceDeps["normalizeOptionalString"]
@@ -156,15 +215,181 @@ function supportsVisionForActiveModel(
   if (!provider) {
     return false;
   }
-  const activeModelId = normalizeOptionalString(provider.model);
-  if (!activeModelId) {
-    return false;
-  }
-  const model = provider.models.find((item) => item.id.toLowerCase() === activeModelId.toLowerCase()) ?? null;
-  if (!model || model.enabled === false) {
+  const model = getActiveModel(provider, normalizeOptionalString);
+  if (!model) {
     return false;
   }
   return model.isVision === true;
+}
+
+function defaultProtocolTypeForProviderType(providerType: string): ProviderModelProtocolType {
+  const normalized = providerType.trim().toLowerCase();
+  if (normalized === "anthropic") {
+    return "anthropic_messages";
+  }
+  if (normalized === "gemini") {
+    return "gemini_generate_content";
+  }
+  if (
+    normalized === "openai" ||
+    normalized === "openai_compatible" ||
+    normalized === "azure_openai"
+  ) {
+    return "openai_chat_completions";
+  }
+  return "custom";
+}
+
+function normalizeProtocolType(
+  input: unknown,
+  providerType: string
+): ProviderModelProtocolType {
+  if (input === "openai_chat_completions") {
+    return input;
+  }
+  if (input === "openai_responses") {
+    return input;
+  }
+  if (input === "anthropic_messages") {
+    return input;
+  }
+  if (input === "gemini_generate_content") {
+    return input;
+  }
+  if (input === "custom") {
+    return input;
+  }
+  return defaultProtocolTypeForProviderType(providerType);
+}
+
+function normalizeTokenEstimatorType(input: unknown): ProviderModelTokenEstimatorType {
+  if (input === "heuristic") {
+    return input;
+  }
+  if (input === "remote_exact") {
+    return input;
+  }
+  return "builtin";
+}
+
+function resolveActiveModelSelection(
+  config: AgentBackendConfig,
+  normalizeOptionalString: ChatTaskServiceDeps["normalizeOptionalString"]
+): ActiveModelSelection {
+  const provider = getActiveProvider(config, normalizeOptionalString);
+  const modelItem = provider ? getActiveModel(provider, normalizeOptionalString) : null;
+  const providerType = provider?.type ?? "";
+  const protocolType = normalizeProtocolType(modelItem?.protocolType, providerType);
+
+  return {
+    provider,
+    modelItem,
+    protocolType,
+    tokenEstimatorType: normalizeTokenEstimatorType(modelItem?.tokenEstimatorType),
+    contextWindowTokens:
+      typeof modelItem?.contextWindowTokens === "number" && Number.isFinite(modelItem.contextWindowTokens)
+        ? Math.max(1, Math.floor(modelItem.contextWindowTokens))
+        : null,
+    maxOutputTokens:
+      typeof modelItem?.maxOutputTokens === "number" && Number.isFinite(modelItem.maxOutputTokens)
+        ? Math.max(1, Math.floor(modelItem.maxOutputTokens))
+        : null
+  };
+}
+
+function buildConversationModelSnapshot(selection: ActiveModelSelection): ConversationModelSnapshot | null {
+  if (!selection.provider || !selection.modelItem) {
+    return null;
+  }
+  return {
+    providerId: selection.provider.id,
+    providerType: selection.provider.type,
+    modelId: selection.modelItem.id,
+    contextWindowTokens: selection.contextWindowTokens,
+    maxOutputTokens: selection.maxOutputTokens,
+    protocolType: selection.protocolType,
+    tokenEstimatorType: selection.tokenEstimatorType,
+    capturedAt: new Date().toISOString()
+  };
+}
+
+function normalizeToolCallsFromResult(input: unknown): ConversationTurnToolCallRecord[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  const output: ConversationTurnToolCallRecord[] = [];
+  for (const item of input) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      continue;
+    }
+    const record = item as Record<string, unknown>;
+    if (typeof record.toolName !== "string") {
+      continue;
+    }
+    const timestamp = typeof record.timestamp === "string" ? record.timestamp : new Date().toISOString();
+    const args = record.args && typeof record.args === "object" && !Array.isArray(record.args)
+      ? cloneJson(record.args as Record<string, unknown>)
+      : {};
+    const resultRecord =
+      record.result && typeof record.result === "object" && !Array.isArray(record.result)
+        ? (record.result as Record<string, unknown>)
+        : {};
+    output.push({
+      toolName: record.toolName,
+      args,
+      result: {
+        ok: resultRecord.ok === true,
+        ...("data" in resultRecord ? { data: cloneJson(resultRecord.data) } : {}),
+        ...(typeof resultRecord.error === "string" ? { error: resultRecord.error } : {})
+      },
+      timestamp
+    });
+  }
+  return output;
+}
+
+function normalizeToolCallsFromResume(input: ToolLoopToolCallSnapshot[]): ConversationTurnToolCallRecord[] {
+  const now = new Date().toISOString();
+  return input.map((call) => ({
+    toolName: call.name,
+    args: cloneJson(call.args),
+    result: cloneJson(call.result),
+    timestamp: now
+  }));
+}
+
+function resolveToolDefinitions(runtime: Record<string, unknown>): TokenEstimateToolDefinition[] {
+  const registry = runtime.registry as
+    | {
+        getToolDefinitions?: () => Array<{
+          function?: {
+            name?: string;
+            description?: string;
+            parameters?: unknown;
+          };
+        }>;
+      }
+    | undefined;
+  if (!registry || typeof registry.getToolDefinitions !== "function") {
+    return [];
+  }
+  const definitions = registry.getToolDefinitions();
+  if (!Array.isArray(definitions)) {
+    return [];
+  }
+  const output: TokenEstimateToolDefinition[] = [];
+  for (const item of definitions) {
+    const fn = item?.function;
+    if (!fn || typeof fn.name !== "string") {
+      continue;
+    }
+    output.push({
+      name: fn.name,
+      ...(typeof fn.description === "string" ? { description: fn.description } : {}),
+      ...(fn.parameters !== undefined ? { parameters: cloneJson(fn.parameters) } : {})
+    });
+  }
+  return output;
 }
 
 export function loadMatchingChatResumeSnapshot(
@@ -182,33 +407,185 @@ export function loadMatchingChatResumeSnapshot(
   return snapshot;
 }
 
-export function createRunChatTask(deps: ChatTaskServiceDeps): (
+export function createRunChatTask(
+  deps: ChatTaskServiceDeps
+): (
   webContents: Electron.WebContents,
   payload: SendMessagePayload & { resumeState?: ToolLoopResumeStateSnapshot | null }
 ) => Promise<any> {
+  const assembler = new ConversationMemoryAssembler(deps.conversationMemoryStore);
+  const compactor = new ConversationMemoryCompactor(deps.conversationMemoryStore, {
+    toErrorMessage: deps.toErrorMessage,
+    log: (message: string) => deps.closePerfLog("memory_compactor", { message })
+  });
+
+  const tokenEstimators: Record<ProviderModelProtocolType, TokenEstimatorAdapter> = {
+    openai_chat_completions: new OpenAIChatCompletionsTokenEstimator(),
+    openai_responses: new OpenAIResponsesTokenEstimator(),
+    anthropic_messages: new AnthropicMessagesTokenEstimator(),
+    gemini_generate_content: new GeminiGenerateContentTokenEstimator(),
+    custom: new CustomFallbackTokenEstimator("custom")
+  };
+
+  const pickTokenEstimator = (protocolType: ProviderModelProtocolType): TokenEstimatorAdapter => {
+    const hit = tokenEstimators[protocolType];
+    if (hit) {
+      return hit;
+    }
+    return new CustomFallbackTokenEstimator(protocolType);
+  };
+
+  const appendConversationTurn = async (input: {
+    workspace: string;
+    sessionId: string;
+    taskId: string;
+    turnId: string;
+    user: string;
+    assistant: string;
+    thinkingSummary: string;
+    toolCalls: ConversationTurnToolCallRecord[];
+    checkpointId: string | null;
+    interrupted: boolean;
+    modelSelection: ActiveModelSelection;
+  }): Promise<ConversationTurnRecord> => {
+    const state = await deps.conversationMemoryStore.getSessionState(input.workspace, input.sessionId);
+    const now = new Date().toISOString();
+    const seq = state.nextSeq;
+    const record: ConversationTurnRecord = {
+      version: 1,
+      workspace: input.workspace,
+      workspaceHash: deps.conversationMemoryStore.resolveWorkspaceHash(input.workspace),
+      sessionId: input.sessionId,
+      seq,
+      turnId: input.turnId,
+      taskId: input.taskId,
+      turnIndex: seq,
+      user: input.user,
+      assistant: input.assistant,
+      thinkingSummary: input.thinkingSummary,
+      toolCalls: cloneJson(input.toolCalls),
+      checkpointId: input.checkpointId,
+      interrupted: input.interrupted,
+      createdAt: now
+    };
+    await deps.conversationMemoryStore.appendTurn(record);
+    state.nextSeq = seq + 1;
+    state.updatedAt = now;
+    state.modelSnapshot = buildConversationModelSnapshot(input.modelSelection);
+    if (!Number.isFinite(state.memoryCardCacheLimit) || state.memoryCardCacheLimit < 1) {
+      state.memoryCardCacheLimit = 10;
+    }
+    await deps.conversationMemoryStore.saveSessionState(state);
+    return record;
+  };
+
+  const maybeCompactAfterTurn = async (input: {
+    workspace: string;
+    sessionId: string;
+    runtimeConfig: any;
+    runtime: Record<string, unknown>;
+    modelSelection: ActiveModelSelection;
+    toolCalls: ConversationTurnToolCallRecord[];
+    images: ChatImageInput[];
+  }): Promise<void> => {
+    const contextWindowTokens = input.modelSelection.contextWindowTokens;
+    if (!contextWindowTokens || contextWindowTokens <= 0) {
+      return;
+    }
+
+    const assembled = await assembler.assembleContext({
+      workspace: input.workspace,
+      sessionId: input.sessionId,
+      currentUserMessage: ""
+    });
+    const estimator = pickTokenEstimator(input.modelSelection.protocolType);
+    const estimate = await estimator.estimate({
+      systemPrompt: input.runtimeConfig?.agentBackend?.activeAgent?.prompt ?? "",
+      conversationContext: assembled.contextText,
+      currentUserMessage: "",
+      tools: resolveToolDefinitions(input.runtime),
+      toolCalls: input.toolCalls,
+      images: input.images.map((item) => ({
+        mimeType: item.mimeType,
+        dataUrl: item.dataUrl
+      })),
+      maxOutputTokens: input.modelSelection.maxOutputTokens,
+      contextWindowTokens,
+      tokenEstimatorType: input.modelSelection.tokenEstimatorType
+    });
+    const threshold = Math.floor(contextWindowTokens * 0.7);
+    deps.closePerfLog("memory_token_estimate", {
+      sessionId: input.sessionId,
+      protocolType: input.modelSelection.protocolType,
+      estimatedInputTokens: estimate.estimatedInputTokens,
+      threshold,
+      contextWindowTokens
+    });
+
+    if (estimate.estimatedInputTokens < threshold) {
+      return;
+    }
+
+    const modelConfig = resolveCompactorModelConfig(input.runtimeConfig, input.modelSelection, deps.normalizeOptionalString);
+    const compactedCard = await compactor.compactToLatestCard({
+      workspace: input.workspace,
+      sessionId: input.sessionId,
+      modelConfig
+    });
+    deps.closePerfLog("memory_compacted", {
+      sessionId: input.sessionId,
+      compacted: compactedCard !== null,
+      cardId: compactedCard?.id ?? null,
+      threshold,
+      estimatedInputTokens: estimate.estimatedInputTokens
+    });
+  };
+
   return async function runChatTask(
     webContents: Electron.WebContents,
     payload: SendMessagePayload & { resumeState?: ToolLoopResumeStateSnapshot | null }
   ): Promise<any> {
     const taskId = payload.taskId || Date.now().toString(36);
     const sessionId = deps.normalizeOptionalString(payload.sessionId) ?? "default-session";
+    const workspace = payload.workspace;
     const controller = new AbortController();
     deps.activeTasks.set(taskId, controller);
+
     let flushPendingSnapshots: (() => Promise<void>) | null = null;
     let runtimeToDispose: { dispose?: () => Promise<void> } | null = null;
+    let currentRuntimeConfig: any = null;
+    let currentRuntime: Record<string, unknown> | null = null;
+    let currentModelSelection: ActiveModelSelection | null = null;
+    let currentImages: ChatImageInput[] = [];
+    let currentMessage = "";
+    let currentCheckpointId: string | null = null;
+    let completedToolCallsForInterrupt: ToolLoopToolCallSnapshot[] = [];
+    let latestStreamedText = "";
+    let latestStreamedThinking = "";
 
     try {
       const { loadRuntimeConfig, createToolRuntime, createOrchestrator } = deps.loadCoreModules();
 
       const runtimeConfig = loadRuntimeConfig({
-        workspaceRoot: payload.workspace || process.cwd(),
+        workspaceRoot: workspace || process.cwd(),
         approvalMode: "auto",
         agentOverride: deps.normalizeOptionalString(payload.agentId ?? null)
       }) as any;
-      const images = normalizeChatImages(payload.images, deps);
-      const effectiveMessage = deps.normalizeOptionalString(payload.message) ?? (
-        images.length > 0 ? "请根据我上传的图片进行分析并回答。" : ""
+      currentRuntimeConfig = runtimeConfig;
+
+      const modelSelection = resolveActiveModelSelection(
+        runtimeConfig.agentBackend.config as AgentBackendConfig,
+        deps.normalizeOptionalString
       );
+      currentModelSelection = modelSelection;
+
+      const images = normalizeChatImages(payload.images, deps);
+      currentImages = images;
+
+      const effectiveMessage =
+        deps.normalizeOptionalString(payload.message) ??
+        (images.length > 0 ? "请根据我上传的图片进行分析并回答。" : "");
+      currentMessage = effectiveMessage;
       if (!effectiveMessage) {
         return { ok: false, taskId, error: "Message cannot be empty." };
       }
@@ -232,6 +609,20 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
         runtimeConfig.agentSettings.modelRequest.thinking.type = "disabled";
       }
 
+      const sessionState = await deps.conversationMemoryStore.getSessionState(workspace, sessionId);
+      sessionState.modelSnapshot = buildConversationModelSnapshot(modelSelection);
+      sessionState.updatedAt = new Date().toISOString();
+      if (!Number.isFinite(sessionState.memoryCardCacheLimit) || sessionState.memoryCardCacheLimit < 1) {
+        sessionState.memoryCardCacheLimit = 10;
+      }
+      await deps.conversationMemoryStore.saveSessionState(sessionState);
+
+      const assembledContext = await assembler.assembleContext({
+        workspace,
+        sessionId,
+        currentUserMessage: effectiveMessage
+      });
+
       const ipcLogger = {
         info: (msg: string): void => {
           webContents.send(IPC_CHANNELS.chatLog, { taskId, level: "info", message: msg });
@@ -252,13 +643,16 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
         logger: ipcLogger,
         approvalGate: autoApprovalGate
       }) as Record<string, unknown>;
+      currentRuntime = runtime;
       runtimeToDispose = runtime as { dispose?: () => Promise<void> };
       const orchestrator = createOrchestrator(runtimeConfig, runtime);
-      const memoryTurns = (payload.history || []).slice(-10);
 
       let streamedText = payload.resumeState?.partialAssistantMessage?.content ?? "";
       let streamedThinking = payload.resumeState?.partialAssistantMessage?.thinking ?? "";
+      latestStreamedText = streamedText;
+      latestStreamedThinking = streamedThinking;
       const completedToolCalls = cloneToolCallSnapshots(payload.resumeState?.toolCalls ?? []);
+      completedToolCallsForInterrupt = completedToolCalls;
       let latestResumeState = cloneResumeState(payload.resumeState ?? null);
       let pendingSnapshot: AppChatResumeSnapshot | null = null;
       let snapshotFlushTimer: NodeJS.Timeout | null = null;
@@ -333,9 +727,8 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
         const snapshot = buildChatResumeSnapshot({
           taskId,
           sessionId,
-          workspace: payload.workspace,
+          workspace,
           message: effectiveMessage,
-          history: memoryTurns,
           agentId: deps.normalizeOptionalString(payload.agentId ?? null),
           thinkingEnabled: payload.thinking === true,
           streamedText,
@@ -359,10 +752,9 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
 
       persistSnapshot();
 
-      // Auto-create turn checkpoint before AI execution
       try {
         if (deps.createTurnCheckpoint) {
-          await deps.createTurnCheckpoint(payload.workspace, taskId, memoryTurns.length + 1, effectiveMessage);
+          currentCheckpointId = await deps.createTurnCheckpoint(workspace, taskId, sessionState.nextSeq, effectiveMessage);
         }
       } catch (cpError) {
         console.warn(`[checkpoint] Failed to create turn checkpoint: ${deps.toErrorMessage(cpError)}`);
@@ -371,7 +763,7 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
       const result = await orchestrator.run(
         {
           task: effectiveMessage,
-          memoryTurns,
+          conversationContext: assembledContext.contextText,
           userImages: images.map((item) => ({
             dataUrl: item.dataUrl,
             mimeType: item.mimeType
@@ -385,10 +777,12 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
             taskId,
             onAssistantTextDelta: (delta: string) => {
               streamedText += delta;
+              latestStreamedText = streamedText;
               persistSnapshot();
             },
             onAssistantThinkingDelta: (delta: string) => {
               streamedThinking += delta;
+              latestStreamedThinking = streamedThinking;
               persistSnapshot();
             },
             onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
@@ -412,6 +806,39 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
       }
       await deps.chatResumeStore.clear();
 
+      const normalizedToolCalls = normalizeToolCallsFromResult(result.toolCalls ?? []);
+      try {
+        await appendConversationTurn({
+          workspace,
+          sessionId,
+          taskId,
+          turnId: `${taskId}-turn`,
+          user: effectiveMessage,
+          assistant: streamedText || result.summary || "",
+          thinkingSummary: streamedThinking,
+          toolCalls: normalizedToolCalls,
+          checkpointId: currentCheckpointId,
+          interrupted: false,
+          modelSelection
+        });
+      } catch (turnError) {
+        console.warn(`[memory] failed to append completed turn: ${deps.toErrorMessage(turnError)}`);
+      }
+
+      try {
+        await maybeCompactAfterTurn({
+          workspace,
+          sessionId,
+          runtimeConfig,
+          runtime,
+          modelSelection,
+          toolCalls: normalizedToolCalls,
+          images
+        });
+      } catch (compactError) {
+        console.warn(`[memory] auto compact failed: ${deps.toErrorMessage(compactError)}`);
+      }
+
       return {
         ok: true,
         taskId,
@@ -432,7 +859,44 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
         message.includes("The operation was aborted") ||
         message.includes("This operation was aborted")
       ) {
-        const snapshot = loadMatchingChatResumeSnapshot(deps.chatResumeStore, sessionId, payload.workspace);
+        const snapshot = loadMatchingChatResumeSnapshot(deps.chatResumeStore, sessionId, workspace);
+        if (currentModelSelection) {
+          const toolCallsFromInterrupted = normalizeToolCallsFromResume(completedToolCallsForInterrupt);
+          const assistantText = snapshot?.streamedText ?? latestStreamedText;
+          const thinkingText = snapshot?.streamedThinking ?? latestStreamedThinking;
+          try {
+            await appendConversationTurn({
+              workspace,
+              sessionId,
+              taskId,
+              turnId: `${taskId}-turn`,
+              user: currentMessage,
+              assistant: assistantText,
+              thinkingSummary: thinkingText,
+              toolCalls: toolCallsFromInterrupted,
+              checkpointId: currentCheckpointId,
+              interrupted: true,
+              modelSelection: currentModelSelection
+            });
+          } catch (turnError) {
+            console.warn(`[memory] failed to append interrupted turn: ${deps.toErrorMessage(turnError)}`);
+          }
+          if (currentRuntimeConfig && currentRuntime) {
+            try {
+              await maybeCompactAfterTurn({
+                workspace,
+                sessionId,
+                runtimeConfig: currentRuntimeConfig,
+                runtime: currentRuntime,
+                modelSelection: currentModelSelection,
+                toolCalls: toolCallsFromInterrupted,
+                images: currentImages
+              });
+            } catch (compactError) {
+              console.warn(`[memory] auto compact failed after interruption: ${deps.toErrorMessage(compactError)}`);
+            }
+          }
+        }
         return {
           ok: false,
           taskId,
@@ -452,5 +916,25 @@ export function createRunChatTask(deps: ChatTaskServiceDeps): (
         }
       }
     }
+  };
+}
+
+function resolveCompactorModelConfig(
+  runtimeConfig: any,
+  modelSelection: ActiveModelSelection,
+  normalizeOptionalString: (input: unknown) => string | null
+): CompactorModelConfig | null {
+  const model = runtimeConfig?.model ?? null;
+  const baseUrl = normalizeOptionalString(model?.baseUrl);
+  const apiKey = normalizeOptionalString(model?.apiKey);
+  const modelId = normalizeOptionalString(model?.coderModel);
+  if (!baseUrl || !apiKey || !modelId) {
+    return null;
+  }
+  return {
+    baseUrl,
+    apiKey,
+    model: modelId,
+    protocolType: modelSelection.protocolType
   };
 }

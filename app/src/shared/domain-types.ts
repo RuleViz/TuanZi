@@ -7,11 +7,24 @@ export interface AgentProviderConfig {
   model: string;
 }
 
+export type ProviderModelProtocolType =
+  | "openai_chat_completions"
+  | "openai_responses"
+  | "anthropic_messages"
+  | "gemini_generate_content"
+  | "custom";
+
+export type ProviderModelTokenEstimatorType = "builtin" | "remote_exact" | "heuristic";
+
 export interface ProviderModelItem {
   id: string;
   displayName: string;
   isVision: boolean;
   enabled: boolean;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
+  protocolType: ProviderModelProtocolType;
+  tokenEstimatorType?: ProviderModelTokenEstimatorType;
 }
 
 export interface ProviderConfig extends AgentProviderConfig {
