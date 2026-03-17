@@ -5,6 +5,7 @@ export interface SendMessageDeps {
   state: StreamUiState & {
     pendingImage: PendingChatImage | null;
     isThinking: boolean;
+    planModeEnabled: boolean;
   };
   inputTextarea: HTMLTextAreaElement;
   beginStreamingUi: (taskId: string) => void;
@@ -129,7 +130,8 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
         : {}),
       workspace: active.workspace,
       agentId: activeAgent?.id ?? null,
-      thinking: input.state.isThinking
+      thinking: input.state.isThinking,
+      planMode: input.state.planModeEnabled
     });
 
     listeners.dispose();

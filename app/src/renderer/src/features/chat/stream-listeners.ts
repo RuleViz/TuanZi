@@ -1,4 +1,3 @@
-﻿
 export interface StreamUiState {
   isSending: boolean;
   currentTaskId: string;
@@ -26,6 +25,7 @@ export function beginStreamingUi(input: {
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
   thinkingBtn: HTMLButtonElement;
+  planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
 }): void {
   input.state.isSending = true;
@@ -36,6 +36,7 @@ export function beginStreamingUi(input: {
   input.sendBtn.style.display = "none";
   input.stopBtn.style.display = "flex";
   input.thinkingBtn.disabled = true;
+  input.planModeBtn.disabled = true;
   input.sendingIndicator.classList.add("visible");
 }
 
@@ -46,6 +47,7 @@ export function endStreamingUi(input: {
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
   thinkingBtn: HTMLButtonElement;
+  planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
   inputTextarea: HTMLTextAreaElement;
   smartScrollToBottom: () => void;
@@ -59,6 +61,7 @@ export function endStreamingUi(input: {
   input.sendBtn.style.display = "flex";
   input.stopBtn.style.display = "none";
   input.thinkingBtn.disabled = false;
+  input.planModeBtn.disabled = false;
   input.sendingIndicator.classList.remove("visible");
   input.smartScrollToBottom();
   input.inputTextarea.focus();
@@ -92,6 +95,7 @@ export function buildStreamingListeners(input: {
   ) => void;
 }): StreamingListeners {
   let thinkingBlock = input.existingThinkingBlock ?? null;
+  let planPreviewBlock: ExecBlock | null = null;
   let currentThinkingText = input.initialThinkingText ?? "";
   let activeTextContainer = input.textContainer;
   let segmentStart = 0;
@@ -136,6 +140,23 @@ export function buildStreamingListeners(input: {
     input.smartScrollToBottom();
   });
 
+  const removePlanPreviewListener = window.tuanzi.onPlanPreview((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return;
+    }
+    input.state.currentTaskId = data.taskId;
+    if (!planPreviewBlock) {
+      planPreviewBlock = input.createExecBlock({
+        type: "tool",
+        title: "Plan Draft"
+      });
+      planPreviewBlock.block.classList.add("expanded");
+      input.blocksContainer.appendChild(planPreviewBlock.block);
+    }
+    planPreviewBlock.output.textContent = data.preview;
+    input.smartScrollToBottom();
+  });
+
   const removeLogListener = window.tuanzi.onLog((data) => {
     if (!isCurrentTask(data.taskId)) {
       return;
@@ -177,6 +198,7 @@ export function buildStreamingListeners(input: {
       removePhaseListener();
       removeDeltaListener();
       removeThinkingListener();
+      removePlanPreviewListener();
       removeLogListener();
       removeToolCallCompletedListener();
     }
@@ -198,4 +220,3 @@ export function finalizeThinkingBlock(thinkingBlock: ExecBlock | null): void {
     title.appendChild(badge);
   }
 }
-

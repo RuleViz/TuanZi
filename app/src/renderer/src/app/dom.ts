@@ -20,6 +20,7 @@ export const sendingIndicator = byId<HTMLDivElement>("sendingIndicator");
 export const attachImageBtn = byId<HTMLButtonElement>("attachImageBtn");
 export const selectWorkspaceBtn = byId<HTMLButtonElement>("selectWorkspaceBtn");
 export const thinkingBtn = byId<HTMLButtonElement>("thinkingBtn");
+export const planModeBtn = byId<HTMLButtonElement>("planModeBtn");
 export const workspaceLabel = byId<HTMLSpanElement>("workspaceLabel");
 export const toggleSidebar = byId<HTMLButtonElement>("toggleSidebar");
 export const sidebar = byId<HTMLElement>("sidebar");

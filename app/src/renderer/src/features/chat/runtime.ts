@@ -12,6 +12,7 @@ import { sendMessage as sendMessageFeature } from "./send-message";
 interface ChatRuntimeState extends StreamUiState {
   pendingImage: PendingChatImage | null;
   isThinking: boolean;
+  planModeEnabled: boolean;
 }
 
 interface ChatRuntimeDeps {
@@ -22,6 +23,7 @@ interface ChatRuntimeDeps {
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
   thinkingBtn: HTMLButtonElement;
+  planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
   autoResizeTextarea: () => void;
   clearPendingImage: () => void;
@@ -91,6 +93,7 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       attachImageBtn: input.attachImageBtn,
       stopBtn: input.stopBtn,
       thinkingBtn: input.thinkingBtn,
+      planModeBtn: input.planModeBtn,
       sendingIndicator: input.sendingIndicator
     });
   };
@@ -103,6 +106,7 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       attachImageBtn: input.attachImageBtn,
       stopBtn: input.stopBtn,
       thinkingBtn: input.thinkingBtn,
+      planModeBtn: input.planModeBtn,
       sendingIndicator: input.sendingIndicator,
       inputTextarea: input.inputTextarea,
       smartScrollToBottom: input.smartScrollToBottom

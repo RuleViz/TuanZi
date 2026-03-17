@@ -121,6 +121,7 @@ export interface Logger {
 }
 
 export interface ApprovalRequest {
+  requestType?: "tool" | "plan" | "step";
   action: string;
   risk: "low" | "medium" | "high";
   preview?: string;

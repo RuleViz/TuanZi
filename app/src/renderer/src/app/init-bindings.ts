@@ -15,6 +15,7 @@ import {
   inputTextarea,
   mcpJsonModal,
   newChatBtn,
+  planModeBtn,
   providerModelModal,
   selectWorkspaceBtn,
   sendBtn,
@@ -44,6 +45,7 @@ interface InitBindingsState {
   isSending: boolean
   currentTaskId: string
   isThinking: boolean
+  planModeEnabled: boolean
 }
 
 interface TopbarBindingDeps {
@@ -115,6 +117,7 @@ export function createBindInitEvents(input: EventBindingDeps): () => void {
       toggleSidebar,
       sidebar,
       thinkingBtn,
+      planModeBtn,
       newChatBtn,
       activeAgentChip,
       agentLibraryModal,

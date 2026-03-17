@@ -84,5 +84,6 @@ export const state = {
   isMcpLoading: false,
   hasLoadedMcp: false,
   mcpLoadToken: 0,
-  isThinking: false
+  isThinking: false,
+  planModeEnabled: false
 };

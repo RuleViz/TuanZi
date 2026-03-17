@@ -1,4 +1,4 @@
-﻿export const IPC_CHANNELS = {
+export const IPC_CHANNELS = {
   chatSendMessage: "chat:sendMessage",
   chatGetResumeState: "chat:getResumeState",
   chatStopMessage: "chat:stopMessage",
@@ -34,5 +34,6 @@
   chatToolCalls: "chat:toolCalls",
   chatToolCallCompleted: "chat:toolCallCompleted",
   chatLog: "chat:log",
-  chatPhase: "chat:phase"
+  chatPhase: "chat:phase",
+  chatPlanPreview: "chat:planPreview"
 } as const;

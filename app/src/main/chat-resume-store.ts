@@ -30,6 +30,12 @@ export interface ChatMessageSnapshot {
   thinking?: string;
 }
 
+export interface ToolLoopResumeAnchorSnapshot {
+  mode: "plan";
+  stepId: string;
+  stepIndex: number;
+}
+
 export interface ToolLoopResumeStateSnapshot {
   version: 1;
   messages: ChatMessageSnapshot[];
@@ -39,6 +45,7 @@ export interface ToolLoopResumeStateSnapshot {
   maxTurns: number;
   nextTurn: number;
   partialAssistantMessage: ChatMessageSnapshot | null;
+  resumeAnchor?: ToolLoopResumeAnchorSnapshot;
 }
 
 export interface AppChatResumeSnapshot {
@@ -97,6 +104,20 @@ function isToolCallSnapshot(value: unknown): value is ToolLoopToolCallSnapshot {
   return typeof value.name === "string" && isObject(value.args) && isObject(value.result);
 }
 
+function isResumeAnchorSnapshot(value: unknown): value is ToolLoopResumeAnchorSnapshot {
+  if (!isObject(value)) {
+    return false;
+  }
+  return (
+    value.mode === "plan" &&
+    typeof value.stepId === "string" &&
+    value.stepId.length > 0 &&
+    typeof value.stepIndex === "number" &&
+    Number.isInteger(value.stepIndex) &&
+    value.stepIndex >= 0
+  );
+}
+
 function isResumeStateSnapshot(value: unknown): value is ToolLoopResumeStateSnapshot {
   if (!isObject(value)) {
     return false;
@@ -109,7 +130,8 @@ function isResumeStateSnapshot(value: unknown): value is ToolLoopResumeStateSnap
     typeof value.temperature === "number" &&
     typeof value.maxTurns === "number" &&
     typeof value.nextTurn === "number" &&
-    (value.partialAssistantMessage === null || isObject(value.partialAssistantMessage))
+    (value.partialAssistantMessage === null || isObject(value.partialAssistantMessage)) &&
+    (value.resumeAnchor === undefined || isResumeAnchorSnapshot(value.resumeAnchor))
   );
 }
 

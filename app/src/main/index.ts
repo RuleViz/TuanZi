@@ -1,4 +1,4 @@
-﻿import { app, shell, BrowserWindow } from "electron"
+import { app, shell, BrowserWindow } from "electron"
 import { join, resolve } from "path"
 import { electronApp, optimizer, is } from "@electron-toolkit/utils"
 import icon from "../../resources/icon.png?asset"
@@ -203,9 +203,11 @@ type CreateOrchestratorFn = (
       conversationContext?: string
       resumeState?: ToolLoopResumeStateSnapshot | null
       userImages?: Array<{ dataUrl: string; mimeType: string }>
+      forcePlanMode?: boolean
     },
     hooks?: {
       onPhaseChange?: (phase: string) => void
+      onPlanPreview?: (preview: string) => void
       onAssistantTextDelta?: (delta: string) => void
       onAssistantThinkingDelta?: (delta: string) => void
       onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void
@@ -1014,7 +1016,3 @@ app.on("quit", (_event, exitCode) => {
   closePerfLog("quit", { exitCode, activeTasks: activeTasks.size })
   closePerfLogResources("quit_resources", { exitCode, activeTasks: activeTasks.size })
 })
-
-
-
-

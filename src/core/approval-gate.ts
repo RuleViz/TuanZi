@@ -21,7 +21,8 @@ export class ConsoleApprovalGate implements ApprovalGate {
     }
 
     const riskLabel = request.risk.toUpperCase();
-    console.log(`\n[APPROVAL REQUIRED][${riskLabel}] ${request.action}`);
+    const requestType = request.requestType ? request.requestType.toUpperCase() : "TOOL";
+    console.log(`\n[APPROVAL REQUIRED][${requestType}][${riskLabel}] ${request.action}`);
     if (request.preview) {
       console.log("---- Preview ----");
       console.log(request.preview);

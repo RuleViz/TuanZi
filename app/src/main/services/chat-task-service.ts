@@ -758,6 +758,7 @@ export function createRunChatTask(
         {
           task: effectiveMessage,
           conversationContext: assembledContext.contextText,
+          forcePlanMode: payload.planMode === true,
           userImages: images.map((item) => ({
             dataUrl: item.dataUrl,
             mimeType: item.mimeType

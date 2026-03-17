@@ -4,6 +4,7 @@ interface InitEventState {
   isSending: boolean;
   currentTaskId: string;
   isThinking: boolean;
+  planModeEnabled: boolean;
 }
 
 interface InitEventsDeps {
@@ -20,6 +21,7 @@ interface InitEventsDeps {
   toggleSidebar: HTMLButtonElement;
   sidebar: HTMLElement;
   thinkingBtn: HTMLButtonElement;
+  planModeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   activeAgentChip: HTMLDivElement;
   agentLibraryModal: HTMLDivElement;
@@ -168,6 +170,12 @@ export function bindInitEvents(input: InitEventsDeps): void {
     input.state.isThinking = !input.state.isThinking;
     input.thinkingBtn.classList.toggle("active", input.state.isThinking);
     input.thinkingBtn.title = input.state.isThinking ? "关闭思考模式" : "开启思考模式";
+  });
+
+  input.planModeBtn.addEventListener("click", () => {
+    input.state.planModeEnabled = !input.state.planModeEnabled;
+    input.planModeBtn.classList.toggle("active", input.state.planModeEnabled);
+    input.planModeBtn.title = input.state.planModeEnabled ? "关闭计划模式" : "开启计划模式";
   });
 
   input.newChatBtn.addEventListener("click", () => {

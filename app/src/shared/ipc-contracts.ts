@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   AgentBackendConfig,
   AgentSavePayload,
   AgentToolProfile,
@@ -55,6 +55,7 @@ export interface SendMessagePayload {
   workspace: string;
   agentId?: string | null;
   thinking?: boolean;
+  planMode?: boolean;
 }
 
 export interface MemoryStatusPayload {
@@ -249,5 +250,6 @@ export interface TuanziAPI {
   ) => () => void;
   onLog: (callback: (data: { taskId: string; level: string; message: string }) => void) => () => void;
   onPhase: (callback: (data: { taskId: string; phase: string }) => void) => () => void;
+  onPlanPreview: (callback: (data: { taskId: string; preview: string }) => void) => () => void;
   onWindowMaximizedChanged: (callback: (data: { maximized: boolean }) => void) => () => void;
 }

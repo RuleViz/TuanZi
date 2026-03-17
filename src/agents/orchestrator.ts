@@ -1,7 +1,18 @@
 import { randomUUID } from "node:crypto";
-import type { ToolCallRecord, ToolExecutionContext } from "../core/types";
-import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "./react-tool-agent";
+import type {
+  ExecutionPlan,
+  RoutingSettings,
+  ToolCallRecord,
+  ToolExecutionContext
+} from "../core/types";
+import type {
+  ToolLoopResumeAnchor,
+  ToolLoopResumeState,
+  ToolLoopToolCallSnapshot
+} from "./react-tool-agent";
 import type { ChatInputImage } from "./model-types";
+import { PlannerAgent } from "./planner-agent";
+import { SearcherAgent } from "./searcher-agent";
 import { TuanZiAgent } from "./tuanzi";
 
 export interface OrchestrationResult {
@@ -24,12 +35,14 @@ export interface OrchestratorRunInput {
   conversationContext?: string;
   resumeState?: ToolLoopResumeState;
   userImages?: ChatInputImage[];
+  forcePlanMode?: boolean;
 }
 
-export type OrchestratorPhase = "running";
+export type OrchestratorPhase = "planning" | "approval" | "running" | "done" | "aborted";
 
 export interface OrchestratorRunHooks {
   onPhaseChange?: (phase: OrchestratorPhase) => void;
+  onPlanPreview?: (preview: string) => void;
   onAssistantTextDelta?: (delta: string) => void;
   onAssistantThinkingDelta?: (delta: string) => void;
   onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
@@ -37,35 +50,181 @@ export interface OrchestratorRunHooks {
   signal?: AbortSignal;
 }
 
+interface PlanResumeTarget {
+  stepId: string;
+  stepIndex: number;
+}
+
 export class PlanToDoOrchestrator {
   constructor(
     private readonly coder: TuanZiAgent,
+    private readonly planner: PlannerAgent,
+    private readonly searcher: SearcherAgent,
     private readonly toolContext: ToolExecutionContext
-  ) { }
+  ) {}
 
   async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
-    const { task, memoryTurns, conversationContext: explicitConversationContext, resumeState, userImages } =
-      normalizeRunInput(input);
-    const conversationContext = explicitConversationContext ?? buildConversationContext(memoryTurns);
-    this.toolContext.taskId = randomUUID();
-    hooks?.onPhaseChange?.("running");
-    this.toolContext.signal = hooks?.signal;
-    const coderOutput = await this.coder.execute(task, conversationContext, {
-      onAssistantTextDelta: hooks?.onAssistantTextDelta,
-      onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
-      onToolCallCompleted: hooks?.onToolCallCompleted,
-      onStateChange: hooks?.onStateChange,
+    const {
+      task,
+      memoryTurns,
+      conversationContext: explicitConversationContext,
       resumeState,
       userImages,
-      signal: hooks?.signal
+      forcePlanMode
+    } = normalizeRunInput(input);
+    const conversationContext = explicitConversationContext ?? buildConversationContext(memoryTurns);
+    this.toolContext.taskId = randomUUID();
+    this.toolContext.signal = hooks?.signal;
+
+    const usePlanMode = forcePlanMode === true ? true : shouldUsePlanMode(task, this.toolContext.agentSettings?.routing);
+    if (!usePlanMode) {
+      hooks?.onPhaseChange?.("running");
+      const coderOutput = await this.coder.execute(task, conversationContext, {
+        onAssistantTextDelta: hooks?.onAssistantTextDelta,
+        onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
+        onToolCallCompleted: hooks?.onToolCallCompleted,
+        onStateChange: hooks?.onStateChange,
+        resumeState,
+        userImages,
+        signal: hooks?.signal
+      });
+      hooks?.onPhaseChange?.("done");
+
+      return {
+        summary: coderOutput.result.summary,
+        changedFiles: coderOutput.result.changedFiles,
+        executedCommands: coderOutput.result.executedCommands,
+        followUp: coderOutput.result.followUp,
+        toolCalls: coderOutput.toolCalls
+      };
+    }
+
+    hooks?.onPhaseChange?.("planning");
+    const plan = await this.planner.buildPlan(task, conversationContext);
+    hooks?.onPlanPreview?.(formatPlanPreview(plan));
+
+    hooks?.onPhaseChange?.("approval");
+    const approval = await this.toolContext.approvalGate.approve({
+      requestType: "plan",
+      action: "Execute generated plan",
+      risk: "medium",
+      preview: formatPlanPreview(plan)
     });
+    if (!approval.approved) {
+      hooks?.onPhaseChange?.("aborted");
+      const reason = approval.reason ? `Reason: ${approval.reason}` : "Reason: user rejected the plan.";
+      return {
+        summary: ["Plan mode is enabled, but the plan was not approved.", reason].join("\n"),
+        changedFiles: [],
+        executedCommands: [],
+        followUp: ["I can adjust the plan and retry when you're ready."],
+        toolCalls: []
+      };
+    }
+
+    hooks?.onPhaseChange?.("running");
+    const output = await this.executePlanSteps({
+      task,
+      plan,
+      conversationContext,
+      resumeState,
+      userImages,
+      hooks
+    });
+    hooks?.onPhaseChange?.("done");
+    return output;
+  }
+
+  private async executePlanSteps(input: {
+    task: string;
+    plan: ExecutionPlan;
+    conversationContext: string;
+    resumeState?: ToolLoopResumeState;
+    userImages?: ChatInputImage[];
+    hooks?: OrchestratorRunHooks;
+  }): Promise<OrchestrationResult> {
+    const allToolCalls: ToolCallRecord[] = [];
+    const changedFiles = new Set<string>();
+    const executedCommands = new Map<string, { command: string; exitCode: number | null }>();
+    const followUp = new Set<string>();
+    const stepSummaries: string[] = [];
+    let searchContext = "";
+    let lastCodeSummary = "";
+    const resumeTarget = resolvePlanResumeTarget(input.resumeState, input.plan);
+    let resumeStateConsumed = false;
+
+    if (input.resumeState && !resumeTarget) {
+      followUp.add("Resume state was ignored because no matching plan step anchor was found.");
+    }
+
+    for (let stepIndex = 0; stepIndex < input.plan.steps.length; stepIndex += 1) {
+      const step = input.plan.steps[stepIndex];
+      if (step.owner === "search") {
+        const searchTask = buildSearchTask(input.task, step.title, step.acceptance);
+        const searchOutput = await this.searcher.search(searchTask, input.plan, input.conversationContext);
+        allToolCalls.push(...searchOutput.toolCalls);
+        const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);
+        searchContext = buildSearchContext(searchOutput.result.summary, refs);
+        stepSummaries.push(`- ${step.id} ${step.title}: search completed, matched ${searchOutput.result.references.length} candidate files.`);
+        continue;
+      }
+
+      if (resumeTarget && stepIndex < resumeTarget.stepIndex) {
+        stepSummaries.push(`- ${step.id} ${step.title}: skipped (already completed before resume target).`);
+        continue;
+      }
+
+      const shouldResumeThisStep: boolean = Boolean(
+        input.resumeState &&
+        resumeTarget &&
+        !resumeStateConsumed &&
+        stepIndex === resumeTarget.stepIndex
+      );
+      const codeTask = buildCodeTask(input.task, input.plan, step.id, step.title, step.acceptance, searchContext);
+      const coderOutput = await this.coder.execute(codeTask, input.conversationContext, {
+        onAssistantTextDelta: input.hooks?.onAssistantTextDelta,
+        onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
+        onToolCallCompleted: input.hooks?.onToolCallCompleted,
+        onStateChange: (state) => {
+          input.hooks?.onStateChange?.(applyPlanResumeAnchor(state, step.id, stepIndex));
+        },
+        resumeState: shouldResumeThisStep ? input.resumeState : undefined,
+        userImages: input.userImages,
+        signal: input.hooks?.signal
+      });
+      resumeStateConsumed = resumeStateConsumed || shouldResumeThisStep;
+      lastCodeSummary = coderOutput.result.summary;
+      allToolCalls.push(...coderOutput.toolCalls);
+      for (const file of coderOutput.result.changedFiles) {
+        changedFiles.add(file);
+      }
+      for (const command of coderOutput.result.executedCommands) {
+        executedCommands.set(`${command.command}::${String(command.exitCode)}`, command);
+      }
+      for (const note of coderOutput.result.followUp) {
+        followUp.add(note);
+      }
+      stepSummaries.push(
+        shouldResumeThisStep
+          ? `- ${step.id} ${step.title}: resumed from saved state and completed.`
+          : `- ${step.id} ${step.title}: code execution completed.`
+      );
+    }
 
     return {
-      summary: coderOutput.result.summary,
-      changedFiles: coderOutput.result.changedFiles,
-      executedCommands: coderOutput.result.executedCommands,
-      followUp: coderOutput.result.followUp,
-      toolCalls: coderOutput.toolCalls
+      summary: [
+        "Executed in plan mode.",
+        `Plan goal: ${input.plan.goal}`,
+        `Step count: ${input.plan.steps.length}`,
+        "Step results:",
+        ...stepSummaries,
+        "",
+        lastCodeSummary || "Plan steps completed."
+      ].join("\n"),
+      changedFiles: [...changedFiles],
+      executedCommands: [...executedCommands.values()],
+      followUp: [...followUp],
+      toolCalls: allToolCalls
     };
   }
 }
@@ -79,7 +238,133 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
     memoryTurns: input.memoryTurns,
     conversationContext: input.conversationContext,
     resumeState: input.resumeState,
-    userImages: input.userImages
+    userImages: input.userImages,
+    forcePlanMode: input.forcePlanMode
+  };
+}
+
+export function shouldUsePlanMode(task: string, routing?: RoutingSettings): boolean {
+  if (!routing) {
+    return false;
+  }
+
+  const normalizedTask = task.toLowerCase();
+  if (hasPlanIntent(normalizedTask)) {
+    return true;
+  }
+
+  if (!routing.enableDirectMode) {
+    return true;
+  }
+
+  const directPatternMatched = routing.directIntentPatterns.some((pattern) => {
+    const normalizedPattern = pattern.trim().toLowerCase();
+    return normalizedPattern.length > 0 && normalizedTask.includes(normalizedPattern);
+  });
+
+  if (routing.defaultEnablePlanMode && !directPatternMatched) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasPlanIntent(taskLowerText: string): boolean {
+  const intents = ["plan mode", "先计划", "先分析", "按计划", "step by step", "先出方案"];
+  return intents.some((intent) => taskLowerText.includes(intent));
+}
+
+function formatPlanPreview(plan: ExecutionPlan): string {
+  const lines = [`Goal: ${plan.goal}`, "Steps:"];
+  for (const step of plan.steps) {
+    lines.push(`- [${step.id}] (${step.owner}) ${step.title}`);
+    lines.push(`  Acceptance: ${step.acceptance}`);
+  }
+  if (plan.suggestedTestCommand) {
+    lines.push(`Suggested test command: ${plan.suggestedTestCommand}`);
+  }
+  return lines.join("\n");
+}
+
+function buildSearchTask(task: string, title: string, acceptance: string): string {
+  return [task, "", `Current step (search): ${title}`, `Acceptance criteria: ${acceptance}`].join("\n");
+}
+
+function buildSearchContext(summary: string, references: string[]): string {
+  if (references.length === 0) {
+    return `Search summary: ${summary}`;
+  }
+  return [`Search summary: ${summary}`, "Candidate files:", ...references.map((path) => `- ${path}`)].join("\n");
+}
+
+function buildCodeTask(
+  task: string,
+  plan: ExecutionPlan,
+  stepId: string,
+  title: string,
+  acceptance: string,
+  searchContext: string
+): string {
+  const sections = [
+    "You are executing one step from an approved plan.",
+    `Original task: ${task}`,
+    `Plan goal: ${plan.goal}`,
+    `Current step id: ${stepId}`,
+    `Current step: ${title}`,
+    `Acceptance criteria: ${acceptance}`
+  ];
+  if (searchContext) {
+    sections.push("", "Searcher findings:", searchContext);
+  }
+  if (plan.suggestedTestCommand) {
+    sections.push("", `Suggested validation command: ${plan.suggestedTestCommand}`);
+  }
+  return sections.join("\n");
+}
+
+function applyPlanResumeAnchor(
+  state: ToolLoopResumeState,
+  stepId: string,
+  stepIndex: number
+): ToolLoopResumeState {
+  const resumeAnchor: ToolLoopResumeAnchor = {
+    mode: "plan",
+    stepId,
+    stepIndex
+  };
+  return {
+    ...state,
+    resumeAnchor
+  };
+}
+
+function resolvePlanResumeTarget(
+  resumeState: ToolLoopResumeState | undefined,
+  plan: ExecutionPlan
+): PlanResumeTarget | null {
+  const anchor = resumeState?.resumeAnchor;
+  if (!anchor || anchor.mode !== "plan") {
+    return null;
+  }
+  if (!anchor.stepId || !Number.isInteger(anchor.stepIndex) || anchor.stepIndex < 0) {
+    return null;
+  }
+
+  const byIndex = plan.steps[anchor.stepIndex];
+  if (byIndex && byIndex.owner === "code" && byIndex.id === anchor.stepId) {
+    return {
+      stepId: anchor.stepId,
+      stepIndex: anchor.stepIndex
+    };
+  }
+
+  const byIdIndex = plan.steps.findIndex((step) => step.owner === "code" && step.id === anchor.stepId);
+  if (byIdIndex < 0) {
+    return null;
+  }
+  return {
+    stepId: anchor.stepId,
+    stepIndex: byIdIndex
   };
 }
 
@@ -141,3 +426,4 @@ export function buildConversationContext(
   }
   return context;
 }
+

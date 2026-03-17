@@ -1,4 +1,4 @@
-﻿import type { ToolRegistry } from "../core/tool-registry";
+import type { ToolRegistry } from "../core/tool-registry";
 import type {
   JsonObject,
   McpToolCallResult,
@@ -22,6 +22,12 @@ export interface ToolLoopToolCallSnapshot {
   result: ToolExecutionResult;
 }
 
+export interface ToolLoopResumeAnchor {
+  mode: "plan";
+  stepId: string;
+  stepIndex: number;
+}
+
 export interface ToolLoopResumeState {
   version: 1;
   messages: ChatMessage[];
@@ -31,6 +37,7 @@ export interface ToolLoopResumeState {
   maxTurns: number;
   nextTurn: number;
   partialAssistantMessage: ChatMessage | null;
+  resumeAnchor?: ToolLoopResumeAnchor;
 }
 
 export interface ToolLoopOutput {
@@ -88,6 +95,7 @@ export class ReactToolAgent {
     let previousRequestedCalls: string[] | null = null;
     let repeatedNoProgressTurns = 0;
     let nextTurn = clampTurnIndex(input.resumeState?.nextTurn ?? 0);
+    const resumeAnchor = input.resumeState?.resumeAnchor;
 
     if (hasCarryForwardAssistantText(input.resumeState?.partialAssistantMessage ?? null)) {
       messages.push(stripPartialAssistantMessage(input.resumeState!.partialAssistantMessage!));
@@ -106,7 +114,8 @@ export class ReactToolAgent {
         temperature,
         maxTurns,
         nextTurn,
-        partialAssistantMessage: partialAssistantMessage ? cloneMessage(partialAssistantMessage) : null
+        partialAssistantMessage: partialAssistantMessage ? cloneMessage(partialAssistantMessage) : null,
+        ...(resumeAnchor ? { resumeAnchor } : {})
       });
     };
 

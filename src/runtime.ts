@@ -1,5 +1,7 @@
 import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
+import { PlannerAgent } from "./agents/planner-agent";
+import { SearcherAgent } from "./agents/searcher-agent";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
 import { ConsoleApprovalGate } from "./core/approval-gate";
@@ -69,5 +71,7 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
     toolRuntime.toolContext,
     runtimeConfig.agentBackend.activeAgent
   );
-  return new PlanToDoOrchestrator(coder, toolRuntime.toolContext);
+  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel);
+  const searcher = new SearcherAgent(client, runtimeConfig.model.searchModel, toolRuntime.registry, toolRuntime.toolContext);
+  return new PlanToDoOrchestrator(coder, planner, searcher, toolRuntime.toolContext);
 }
