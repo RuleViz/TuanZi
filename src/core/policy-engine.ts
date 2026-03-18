@@ -8,7 +8,7 @@ export class ConfigPolicyEngine implements PolicyEngineContract {
     const configured = this.settings.tools[normalizedTool];
     const fallbackDecision = isPolicyDecision(configured) ? configured : this.settings.default;
 
-    if (normalizedTool === "run_command") {
+    if (normalizedTool === "bash") {
       const command = typeof args.command === "string" ? args.command.trim() : "";
       if (command) {
         if (matchesAnyRule(command, this.settings.commandRules.deny)) {

@@ -64,7 +64,7 @@ test("ReactToolAgent should continue from saved resume state", async () => {
             id: "call_1",
             type: "function",
             function: {
-              name: "view_file",
+              name: "read",
               arguments: "{\"path\":\"README.md\"}"
             }
           }
@@ -73,13 +73,13 @@ test("ReactToolAgent should continue from saved resume state", async () => {
       {
         role: "tool",
         tool_call_id: "call_1",
-        name: "view_file",
+        name: "read",
         content: JSON.stringify({ ok: true, data: { path: "README.md" } })
       }
     ],
     toolCalls: [
       {
-        name: "view_file",
+        name: "read",
         args: { path: "README.md" },
         result: { ok: true, data: { path: "README.md" } }
       }
@@ -100,6 +100,6 @@ test("ReactToolAgent should continue from saved resume state", async () => {
 
   assert.equal(result.finalText, "resumed done");
   assert.equal(result.toolCalls.length, 1);
-  assert.equal(result.toolCalls[0].name, "view_file");
+  assert.equal(result.toolCalls[0].name, "read");
   assert.equal(capturedMessages[capturedMessages.length - 1]?.role, "tool");
 });

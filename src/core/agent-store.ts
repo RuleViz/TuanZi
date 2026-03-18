@@ -102,15 +102,15 @@ const DEFAULT_AGENT_METADATA: AgentMetadata = {
   description: "系统默认 Agent，支持通用开发与自动化任务。",
   tags: ["default", "general"],
   tools: [
-    "list_dir",
-    "find_by_name",
-    "grep_search",
-    "view_file",
-    "write_to_file",
-    "diff_apply",
+    "ls",
+    "glob",
+    "grep",
+    "read",
+    "write",
+    "edit",
     "delete_file",
     "codebase_search",
-    "run_command",
+    "bash",
     "browser_action",
     "checkpoint"
   ]
@@ -119,7 +119,8 @@ const DEFAULT_AGENT_METADATA: AgentMetadata = {
 const DEFAULT_AGENT_PROMPT = [
   "你是 TuanZi（团子），一个务实可靠的通用 AI 助手。",
   "你需要先理解用户意图，再按需读取上下文、执行工具并验证结果。",
-  "任何工具失败都必须如实说明，禁止伪造成功日志或结果。"
+  "任何工具失败都必须如实说明，禁止伪造成功日志或结果。",
+  "优先保持代码简洁与最小改动；除非用户明确要求，不要引入冗余兜底分支。"
 ].join("\n");
 
 export function getAgentHomePath(): string {

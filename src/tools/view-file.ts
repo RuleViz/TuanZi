@@ -1,117 +1,97 @@
 import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
-import { asNumber, asString, asStringArray } from "../core/json-utils";
+import { asNumber, asString } from "../core/json-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
-const DEFAULT_WINDOW_SIZE = 800;
-const MAX_WINDOW_LINES = 2000;
+const DEFAULT_LIMIT = 800;
+const MAX_LIMIT = 2000;
 
 export class ViewFileTool implements Tool {
   readonly definition = {
-    name: "view_file",
-    description:
-      "Read one or multiple files with line numbers. Supports start_line/end_line and returns compact text blocks.",
+    name: "read",
+    description: "Read a single file with line numbers and pagination (offset/limit).",
     readOnly: true,
     parameters: {
       type: "object",
       properties: {
         path: { type: "string", description: "File path (relative to workspace root or absolute)." },
-        paths: { type: "array", items: { type: "string" }, description: "File paths (relative or absolute)." },
-        start_line: { type: "number", description: "1-indexed start line (inclusive)." },
-        end_line: { type: "number", description: "1-indexed end line (inclusive)." }
+        offset: { type: "number", description: "0-indexed line offset." },
+        limit: { type: "number", description: "Maximum number of lines (default 800, hard max 2000)." }
       },
-      required: [],
+      required: ["path"],
       additionalProperties: false
     }
   };
 
   async execute(input: JsonObject, context: ToolExecutionContext): Promise<ToolExecutionResult> {
-    const pathValues = normalizePaths(input);
-    if (pathValues.length === 0) {
-      return { ok: false, error: "paths is required and must include at least one file path." };
+    throwIfAborted(context.signal);
+    if (input.paths !== undefined || input.start_line !== undefined || input.end_line !== undefined) {
+      return {
+        ok: false,
+        error: "read no longer supports paths/start_line/end_line. Use path + offset + limit."
+      };
+    }
+    const pathValue = asString(input.path);
+    if (!pathValue) {
+      return { ok: false, error: "path is required and must be a string." };
     }
 
-    const startLine = Math.max(1, Math.floor(asNumber(input.start_line) ?? 1));
-    const requestedEnd = asNumber(input.end_line);
-    const defaultEnd = startLine + DEFAULT_WINDOW_SIZE - 1;
-    const endLine = Math.max(startLine, Math.floor(requestedEnd ?? defaultEnd));
+    const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
+    assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
-    const requestedWindow = endLine - startLine + 1;
-    const safeWindow = Math.min(requestedWindow, MAX_WINDOW_LINES);
-    const effectiveEndLine = startLine + safeWindow - 1;
-    const truncationApplied = safeWindow < requestedWindow;
+    const offset = Math.max(0, Math.floor(asNumber(input.offset) ?? 0));
+    const limit = clampInt(asNumber(input.limit) ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
 
-    const blocks = await Promise.all(
-      pathValues.map(async (pathValue) => {
-        const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
-        assertInsideWorkspace(absolutePath, context.workspaceRoot);
-        const stat = await fs.stat(absolutePath).catch(() => null);
-        if (!stat || !stat.isFile()) {
-          return {
-            absolutePath,
-            content: "",
-            metadata: {
-              totalLines: 0,
-              fileSize: 0,
-              viewedRange: `${startLine}-${startLine}`,
-              hasMore: false
-            },
-            error: "File not found."
-          };
-        }
+    throwIfAborted(context.signal);
+    const stat = await fs.stat(absolutePath).catch(() => null);
+    if (!stat || !stat.isFile()) {
+      return { ok: false, error: `File not found: ${absolutePath}` };
+    }
 
-        const content = await fs.readFile(absolutePath, "utf8");
-        const lines = content.split(/\r?\n/);
-        const safeEndLine = Math.min(effectiveEndLine, lines.length || 1);
-        const selectedLines = lines.slice(startLine - 1, safeEndLine);
-        const formattedLines = selectedLines.map((line, index) => `${startLine + index}: ${line}`);
-        return {
-          absolutePath,
-          content: formattedLines.join("\n"),
-          metadata: {
-            totalLines: lines.length,
-            fileSize: stat.size,
-            viewedRange: `${startLine}-${safeEndLine}`,
-            hasMore: safeEndLine < lines.length
-          }
-        };
-      })
-    );
+    const text = await fs.readFile(absolutePath, { encoding: "utf8", signal: context.signal });
+    throwIfAborted(context.signal);
+    const lines = text.split(/\r?\n/);
 
-    const joined = blocks
-      .map((block) => {
-        const header = `=== File: ${block.absolutePath} ===`;
-        if (block.error) {
-          return `${header}\n[Error] ${block.error}`;
-        }
-        return `${header}\n${block.content}`;
-      })
-      .join("\n\n");
-    const truncationHint = truncationApplied
-      ? "\n\n... (output truncated for safety; narrow start_line/end_line to continue reading)"
-      : "";
-    const metadata = blocks.length === 1 ? blocks[0].metadata : undefined;
+    const safeOffset = Math.min(offset, lines.length);
+    const endExclusive = Math.min(safeOffset + limit, lines.length);
+    const selected = lines.slice(safeOffset, endExclusive);
+    const contentLines = selected.map((line, index) => `${safeOffset + index + 1}: ${line}`);
+    const hasMore = endExclusive < lines.length;
+    const nextOffset = hasMore ? endExclusive : null;
+    const viewedRange =
+      selected.length === 0 ? `${safeOffset + 1}-${safeOffset + 1}` : `${safeOffset + 1}-${endExclusive}`;
+    const content = `=== File: ${absolutePath} ===\n${contentLines.join("\n")}`;
+
     return {
       ok: true,
       data: {
-        content: `${joined}${truncationHint}`,
-        files: blocks.map((block) => ({
-          path: block.absolutePath,
-          content: block.content,
-          metadata: block.metadata,
-          error: block.error
-        })),
-        metadata
+        content,
+        file: {
+          path: absolutePath,
+          content: contentLines.join("\n")
+        },
+        metadata: {
+          totalLines: lines.length,
+          fileSize: stat.size,
+          offset: safeOffset,
+          limit,
+          returnedLines: selected.length,
+          viewedRange,
+          hasMore,
+          nextOffset
+        }
       }
     };
   }
 }
 
-function normalizePaths(input: JsonObject): string[] {
-  const paths = asStringArray(input.paths);
-  if (paths && paths.length > 0) {
-    return paths;
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Interrupted by user");
   }
-  const singlePath = asString(input.path);
-  return singlePath ? [singlePath] : [];
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  const integer = Math.floor(value);
+  return Math.max(min, Math.min(max, integer));
 }

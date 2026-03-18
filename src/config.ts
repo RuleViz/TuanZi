@@ -112,9 +112,9 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   policy: {
     default: "allow",
     tools: {
-      run_command: "ask",
-      write_to_file: "ask",
-      diff_apply: "ask",
+      bash: "ask",
+      write: "ask",
+      edit: "ask",
       delete_file: "ask"
     },
     commandRules: {

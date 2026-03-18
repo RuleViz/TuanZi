@@ -8,8 +8,8 @@ test("parseSkillMarkdown should parse required fields and allowed-tools metadata
     "name: pdf-processing",
     "description: Extract text and tables from PDF files.",
     "allowed-tools:",
-    "  - run_command",
-    "  - view_file",
+    "  - bash",
+    "  - read",
     "tags: [pdf, extraction]",
     "---",
     "",
@@ -20,7 +20,7 @@ test("parseSkillMarkdown should parse required fields and allowed-tools metadata
   const parsed = parseSkillMarkdown(raw, { directoryName: "pdf-processing" });
   assert.equal(parsed.frontmatter.name, "pdf-processing");
   assert.equal(parsed.frontmatter.description, "Extract text and tables from PDF files.");
-  assert.deepEqual(parsed.frontmatter.allowedTools, ["run_command", "view_file"]);
+  assert.deepEqual(parsed.frontmatter.allowedTools, ["bash", "read"]);
   assert.deepEqual(parsed.frontmatter.tags, ["pdf", "extraction"]);
   assert.match(parsed.body, /Use script A first/);
 });

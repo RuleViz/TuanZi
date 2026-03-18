@@ -20,7 +20,7 @@ interface DiffHunk {
 
 export class DiffApplyTool implements Tool {
   readonly definition = {
-    name: "diff_apply",
+    name: "edit",
     description: "Apply a unified diff patch to a file. Supports multiple hunks for non-contiguous edits.",
     destructive: true,
     parameters: {
@@ -89,11 +89,11 @@ export class DiffApplyTool implements Tool {
       reason: "No policy engine configured."
     };
     if (policyDecision.decision === "deny") {
-      return { ok: false, error: `Policy denied diff_apply: ${policyDecision.reason}` };
+      return { ok: false, error: `Policy denied edit: ${policyDecision.reason}` };
     }
     if (policyDecision.decision === "ask") {
       const approval = await context.approvalGate.approve({
-        action: `diff_apply => ${targetFile}`,
+        action: `edit => ${targetFile}`,
         risk: "medium",
         preview
       });

@@ -11,7 +11,7 @@ const MIDDLE_TRUNCATION_MARKER = "\n[... middle output omitted ...]\n";
 
 export class RunCommandTool implements Tool {
   readonly definition = {
-    name: "run_command",
+    name: "bash",
     description: "Run a one-off terminal command with sanitized and truncated output.",
     destructive: true,
     parameters: {
@@ -78,13 +78,13 @@ export class RunCommandTool implements Tool {
       reason: "No policy engine configured."
     };
     if (policyDecision.decision === "deny") {
-      return { ok: false, error: `Policy denied run_command: ${policyDecision.reason}` };
+      return { ok: false, error: `Policy denied bash: ${policyDecision.reason}` };
     }
 
     const risk = isDangerousCommand(command) ? "high" : "medium";
     if (policyDecision.decision === "ask") {
       const approval = await context.approvalGate.approve({
-        action: `run_command => ${command}`,
+        action: `bash => ${command}`,
         risk,
         preview: `cwd: ${cwd}`
       });

@@ -69,7 +69,7 @@ test("skill_load should return structured SKILL.md data", async () => {
       "name: pdf-processing",
       "description: Parse PDF files",
       "allowed-tools:",
-      "  - run_command",
+      "  - bash",
       "---",
       "Read references first."
     ].join("\n"),

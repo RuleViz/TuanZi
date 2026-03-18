@@ -4,23 +4,23 @@ import { resolveActiveTools } from "../core/agent-tooling";
 
 test("resolveActiveTools should apply agent and runtime intersections", () => {
   const selection = resolveActiveTools(
-    ["list_dir", "run_command", "unknown_tool"],
-    ["list_dir", "skill_load", "skill_read_resource"]
+    ["ls", "bash", "unknown_tool"],
+    ["ls", "skill_load", "skill_read_resource"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["list_dir", "skill_load", "skill_read_resource"]);
-  assert.equal(selection.activeTools.map((item) => item.name).join(","), "list_dir,skill_load,skill_read_resource");
+  assert.deepEqual(selection.activeToolNames, ["ls", "skill_load", "skill_read_resource"]);
+  assert.equal(selection.activeTools.map((item) => item.name).join(","), "ls,skill_load,skill_read_resource");
 });
 
 test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable internal skill tools", () => {
   const selection = resolveActiveTools(
-    ["list_dir", "list_dir", "run_command", "skill_load"],
-    ["list_dir", "run_command", "skill_load", "skill_read_resource"]
+    ["ls", "ls", "bash", "skill_load"],
+    ["ls", "bash", "skill_load", "skill_read_resource"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["list_dir", "run_command", "skill_load", "skill_read_resource"]);
+  assert.deepEqual(selection.activeToolNames, ["ls", "bash", "skill_load", "skill_read_resource"]);
   assert.equal(
     selection.activeTools.map((item) => item.name).join(","),
-    "list_dir,run_command,skill_load,skill_read_resource"
+    "ls,bash,skill_load,skill_read_resource"
   );
 });

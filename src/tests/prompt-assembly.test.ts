@@ -20,13 +20,13 @@ test("plannerSystemPrompt should use layered xml structure", () => {
 test("searcherSystemPrompt should inject only enabled tool policies", () => {
   const prompt = searcherSystemPrompt({
     workspaceRoot: "/repo",
-    enabledTools: ["list_dir", "view_file", "list_dir"]
+    enabledTools: ["ls", "read", "ls"]
   });
 
   assert.equal(prompt.includes('<mode_policy mode="searcher">'), true);
-  assert.equal(prompt.includes('<tool name="list_dir">'), true);
-  assert.equal(prompt.includes('<tool name="view_file">'), true);
-  assert.equal(prompt.includes('<tool name="grep_search">'), false);
+  assert.equal(prompt.includes('<tool name="ls">'), true);
+  assert.equal(prompt.includes('<tool name="read">'), true);
+  assert.equal(prompt.includes('<tool name="grep">'), false);
   assert.equal(prompt.includes("summary, references, webReferences"), true);
 });
 
@@ -47,7 +47,7 @@ test("coderSystemPrompt should keep layered structure and escape dynamic values"
     agentPrompt: "Follow <strict> & safe",
     skillCatalog,
     toolInstructions: [
-      { name: "run_command", prompt: "Use run_command cautiously." },
+      { name: "bash", prompt: "Use bash cautiously." },
       { name: "mcp__web__search", prompt: "Use for new facts." }
     ]
   });

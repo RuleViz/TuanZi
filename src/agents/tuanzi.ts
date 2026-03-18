@@ -300,7 +300,7 @@ function dedupeToolInstructions(
 }
 
 function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {
-  const fileTools = new Set(["write_to_file", "diff_apply", "delete_file"]);
+  const fileTools = new Set(["write", "edit", "delete_file"]);
   const paths = new Set<string>();
 
   for (const call of toolCalls) {
@@ -327,7 +327,7 @@ function collectChangedFiles(toolCalls: ToolCallRecord[]): string[] {
 function collectExecutedCommands(toolCalls: ToolCallRecord[]): Array<{ command: string; exitCode: number | null }> {
   const commands: Array<{ command: string; exitCode: number | null }> = [];
   for (const call of toolCalls) {
-    if (call.toolName !== "run_command") {
+    if (call.toolName !== "bash") {
       continue;
     }
     const commandFromArgs = typeof call.args.command === "string" ? call.args.command : null;

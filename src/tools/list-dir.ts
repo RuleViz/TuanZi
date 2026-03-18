@@ -5,10 +5,13 @@ import { asBoolean, asNumber, asString } from "../core/json-utils";
 import { globToRegExp } from "../core/file-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
+const DEFAULT_LIMIT = 2000;
+const MAX_LIMIT = 2000;
+
 export class ListDirTool implements Tool {
   readonly definition = {
-    name: "list_dir",
-    description: "List directory entries as a compact text list. Supports optional recursive tree output.",
+    name: "ls",
+    description: "List direct entries in a directory (non-recursive).",
     readOnly: true,
     parameters: {
       type: "object",
@@ -17,13 +20,9 @@ export class ListDirTool implements Tool {
           type: "string",
           description: "Directory path (relative to workspace root or absolute)."
         },
-        recursive: {
-          type: "boolean",
-          description: "Whether to recursively list nested entries."
-        },
-        max_depth: {
+        limit: {
           type: "number",
-          description: "Maximum recursion depth (default 1). 0 means only current directory."
+          description: "Maximum number of entries to return (default 2000, hard max 2000)."
         },
         show_hidden: {
           type: "boolean",
@@ -40,6 +39,13 @@ export class ListDirTool implements Tool {
   };
 
   async execute(input: JsonObject, context: ToolExecutionContext): Promise<ToolExecutionResult> {
+    throwIfAborted(context.signal);
+    if (input.recursive !== undefined || input.max_depth !== undefined) {
+      return {
+        ok: false,
+        error: "ls no longer supports recursive/max_depth. Use glob for deep traversal."
+      };
+    }
     const pathValue = asString(input.path);
     if (!pathValue) {
       return { ok: false, error: "path is required and must be a string." };
@@ -48,92 +54,98 @@ export class ListDirTool implements Tool {
     const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
-    const recursive = asBoolean(input.recursive) ?? false;
-    const maxDepth = clampInt(asNumber(input.max_depth) ?? (recursive ? 50 : 1), 0, 200);
+    const limit = clampInt(asNumber(input.limit) ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
     const showHidden = asBoolean(input.show_hidden) ?? false;
     const pattern = asString(input.pattern);
     const matcher = pattern ? globToRegExp(pattern) : null;
 
+    throwIfAborted(context.signal);
     const stats = await fs.stat(absolutePath).catch(() => null);
     if (!stats || !stats.isDirectory()) {
       const parentHint = await buildMissingDirHint(absolutePath, context.workspaceRoot);
       return { ok: false, error: parentHint ?? `Directory not found: ${absolutePath}` };
     }
 
-    const entries: Array<{ path: string; isDirectory: boolean; depth: number }> = [];
-    const lines = await listTreeLines(absolutePath, {
-      maxDepth,
+    const listing = await listOneLevel(absolutePath, {
+      limit,
       showHidden,
-      matcher,
-      entries
-    });
+      matcher
+    }, context.signal);
+    throwIfAborted(context.signal);
+
+    const lines = listing.entries.map((entry) => `${entry.path}${entry.isDirectory ? "/" : ""}`);
+    if (listing.truncated) {
+      lines.push(`... output truncated: returned first ${limit} entries. Narrow with pattern or path.`);
+    }
+
+    const entries = listing.entries.map((entry) => ({
+      path: `${entry.path}${entry.isDirectory ? "/" : ""}`,
+      isDirectory: entry.isDirectory,
+      depth: 1
+    }));
 
     return {
       ok: true,
       data: {
         content: lines.join("\n"),
         total: entries.length,
+        truncated: listing.truncated,
         entries
       }
     };
   }
 }
 
-async function listTreeLines(
-  rootPath: string,
-  options: {
-    maxDepth: number;
-    showHidden: boolean;
-    matcher: RegExp | null;
-    entries: Array<{ path: string; isDirectory: boolean; depth: number }>;
-  }
-): Promise<string[]> {
-  const lines: string[] = [];
-  await walkDir(rootPath, "", 0, lines, options);
-  return lines;
-}
-
-async function walkDir(
+async function listOneLevel(
   absolutePath: string,
-  relativePrefix: string,
-  depth: number,
-  lines: string[],
   options: {
-    maxDepth: number;
+    limit: number;
     showHidden: boolean;
     matcher: RegExp | null;
-    entries: Array<{ path: string; isDirectory: boolean; depth: number }>;
-  }
-): Promise<void> {
-  const entries = await fs.readdir(absolutePath, { withFileTypes: true });
-  const sorted = entries.sort(
-    (left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name)
-  );
-  for (const entry of sorted) {
-    if (!options.showHidden && entry.name.startsWith(".")) {
-      continue;
-    }
+  },
+  signal?: AbortSignal
+): Promise<{ entries: Array<{ path: string; isDirectory: boolean }>; truncated: boolean }> {
+  const output: Array<{ path: string; isDirectory: boolean }> = [];
+  let truncated = false;
+  const dir = await fs.opendir(absolutePath);
+  try {
+    for await (const entry of dir) {
+      throwIfAborted(signal);
 
-    const nextRelative = `${relativePrefix}${entry.name}${entry.isDirectory() ? "/" : ""}`;
-    const normalized = nextRelative.replace(/\\/g, "/");
-    const entryDepth = depth + 1;
-    if (entryDepth > options.maxDepth) {
-      continue;
-    }
-    const include = !options.matcher || options.matcher.test(entry.name) || options.matcher.test(normalized);
-    if (include) {
-      lines.push(`${"  ".repeat(Math.max(0, entryDepth - 1))}${normalized}`);
-      options.entries.push({
-        path: normalized,
-        isDirectory: entry.isDirectory(),
-        depth: entryDepth
+      if (!options.showHidden && entry.name.startsWith(".")) {
+        continue;
+      }
+
+      const normalizedName = entry.name.replace(/\\/g, "/");
+      const normalizedWithSuffix = entry.isDirectory() ? `${normalizedName}/` : normalizedName;
+      const include =
+        !options.matcher ||
+        options.matcher.test(normalizedName) ||
+        options.matcher.test(normalizedWithSuffix);
+
+      if (!include) {
+        continue;
+      }
+
+      if (output.length >= options.limit) {
+        truncated = true;
+        break;
+      }
+
+      output.push({
+        path: normalizedName,
+        isDirectory: entry.isDirectory()
       });
     }
-
-    if (entry.isDirectory() && entryDepth < options.maxDepth) {
-      await walkDir(path.join(absolutePath, entry.name), `${relativePrefix}${entry.name}/`, entryDepth, lines, options);
-    }
+  } finally {
+    await dir.close().catch(() => null);
   }
+
+  output.sort((left, right) => Number(right.isDirectory) - Number(left.isDirectory) || left.path.localeCompare(right.path));
+  return {
+    entries: output,
+    truncated
+  };
 }
 
 async function buildMissingDirHint(absolutePath: string, workspaceRoot: string): Promise<string | null> {
@@ -160,6 +172,12 @@ function isInsideWorkspace(candidate: string, workspaceRoot: string): boolean {
   const normalizedCandidate = path.resolve(candidate).toLowerCase();
   const normalizedRoot = path.resolve(workspaceRoot).toLowerCase();
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}${path.sep}`);
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new Error("Interrupted by user");
+  }
 }
 
 function clampInt(value: number, min: number, max: number): number {

@@ -240,7 +240,7 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
 
   const renderToolCalls = (container: HTMLDivElement, toolCalls: ToolCall[]): void => {
     for (const call of toolCalls) {
-      const isCommand = call.toolName === "run_command";
+      const isCommand = call.toolName === "bash";
       const statusOk = call.result.ok;
 
       let title: string;
@@ -292,12 +292,14 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
   };
 
   const appendCompletedToolCall = (contentEl: HTMLDivElement, toolCall: ToolCall): void => {
-    const loadingBlock = contentEl.querySelector(
-      ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
+    const normalizedToolName = toolCall.toolName.trim().toLowerCase();
+    const loadingBlocks = Array.from(
+      contentEl.querySelectorAll<HTMLDivElement>(
+        ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
+      )
     );
-    if (loadingBlock) {
-      loadingBlock.remove();
-    }
+    const matchedBlock = loadingBlocks.find((block) => block.dataset.toolName === normalizedToolName) ?? null;
+    matchedBlock?.remove();
     renderToolCalls(contentEl, [toolCall]);
   };
 

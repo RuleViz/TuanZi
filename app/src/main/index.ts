@@ -583,7 +583,7 @@ function fallbackToolCategory(name: string): GlobalSkillCategory {
   if (name === 'search_web' || name === 'fetch_url') {
     return 'web_search'
   }
-  if (name === 'run_command' || name === 'browser_action') {
+  if (name === 'bash' || name === 'browser_action') {
     return 'execute_command'
   }
   return 'file_system'

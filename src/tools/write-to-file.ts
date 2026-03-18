@@ -7,7 +7,7 @@ import { createLineDiffPreview } from "../core/diff-preview";
 
 export class WriteToFileTool implements Tool {
   readonly definition = {
-    name: "write_to_file",
+    name: "write",
     description: "Write full file content to a path. Creates parent directories automatically.",
     destructive: true,
     parameters: {
@@ -42,11 +42,11 @@ export class WriteToFileTool implements Tool {
       reason: "No policy engine configured."
     };
     if (policyDecision.decision === "deny") {
-      return { ok: false, error: `Policy denied write_to_file: ${policyDecision.reason}` };
+      return { ok: false, error: `Policy denied write: ${policyDecision.reason}` };
     }
     if (policyDecision.decision === "ask") {
       const approval = await context.approvalGate.approve({
-        action: `write_to_file => ${absolutePath}`,
+        action: `write => ${absolutePath}`,
         risk: previousContent ? "medium" : "low",
         preview
       });

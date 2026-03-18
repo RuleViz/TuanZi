@@ -55,12 +55,12 @@ test("agent store should save and delete custom agents", () => {
         avatar: "💻",
         description: "全栈开发助手",
         tags: ["frontend", "backend"],
-        tools: ["view_file", "write_to_file", "run_command"],
+        tools: ["read", "write", "bash"],
         prompt: "你是一个全栈开发助手。"
       });
 
       assert.equal(saved.filename, "fullstack.md");
-      assert.equal(saved.tools.includes("run_command"), true);
+      assert.equal(saved.tools.includes("bash"), true);
 
       const loaded = getStoredAgentSync("fullstack");
       assert.equal(loaded.name, "全栈架构师");

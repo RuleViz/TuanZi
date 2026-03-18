@@ -9,29 +9,29 @@ export interface ActiveToolSelection {
 }
 
 const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
-  list_dir: {
-    name: "list_dir",
-    prompt: "Use list_dir to inspect folder structure before deep file operations."
+  ls: {
+    name: "ls",
+    prompt: "Use ls first to inspect current directory only (non-recursive). Keep results focused with path/pattern/limit."
   },
-  find_by_name: {
-    name: "find_by_name",
-    prompt: "Use find_by_name to locate files quickly by filename patterns."
+  glob: {
+    name: "glob",
+    prompt: "Use glob for cross-directory file discovery by name/path pattern when ls is not enough."
   },
-  grep_search: {
-    name: "grep_search",
-    prompt: "Use grep_search to locate text patterns and call-sites before editing."
+  grep: {
+    name: "grep",
+    prompt: "Use grep to locate content and call-sites in files after narrowing candidate paths."
   },
-  view_file: {
-    name: "view_file",
-    prompt: "Use view_file to read exact source content before making assumptions."
+  read: {
+    name: "read",
+    prompt: "Use read for single-file context. Paginate large files with offset+limit; do not attempt full-file dumps."
   },
-  write_to_file: {
-    name: "write_to_file",
-    prompt: "Use write_to_file for controlled file rewrites and report modified paths truthfully."
+  write: {
+    name: "write",
+    prompt: "Use write only for full-file create/overwrite operations when replacing entire content is intended."
   },
-  diff_apply: {
-    name: "diff_apply",
-    prompt: "Use diff_apply for precise patch-style edits instead of broad overwrites."
+  edit: {
+    name: "edit",
+    prompt: "Use edit (unified diff) for precise local modifications; prefer this over broad overwrite."
   },
   delete_file: {
     name: "delete_file",
@@ -45,9 +45,9 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     name: "checkpoint",
     prompt: "Use checkpoint before risky refactors and for rollback/review when verification fails."
   },
-  run_command: {
-    name: "run_command",
-    prompt: "Use run_command for build/test/diagnostic commands and always respect command failures."
+  bash: {
+    name: "bash",
+    prompt: "Use bash for build/test/diagnostic verification. Do not use bash to replace ls/glob/grep/read."
   },
   browser_action: {
     name: "browser_action",

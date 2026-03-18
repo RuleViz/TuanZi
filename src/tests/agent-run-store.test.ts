@@ -19,7 +19,7 @@ test("AgentRunStore should save/load/clear active run snapshots", async () => {
     streamedResponse: "partial output",
     toolCalls: [
       {
-        toolName: "view_file",
+        toolName: "read",
         args: { path: "README.md" },
         result: { ok: true, data: { path: "README.md" } },
         timestamp: new Date().toISOString()
@@ -33,12 +33,12 @@ test("AgentRunStore should save/load/clear active run snapshots", async () => {
       ],
       toolCalls: [
         {
-          name: "view_file",
+          name: "read",
           args: { path: "README.md" },
           result: { ok: true, data: { path: "README.md" } }
         }
       ],
-      allowedTools: ["view_file"],
+      allowedTools: ["read"],
       temperature: 0.15,
       maxTurns: 10,
       nextTurn: 1,

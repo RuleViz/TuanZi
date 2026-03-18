@@ -60,12 +60,12 @@ test("OpenAICompatibleClient should assemble streamed tool calls", async () => {
           const encoder = new TextEncoder();
           controller.enqueue(
             encoder.encode(
-              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"run_"}}]}}]}\n\n'
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"ba"}}]}}]}\n\n'
             )
           );
           controller.enqueue(
             encoder.encode(
-              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"command","arguments":"{\\"command\\":\\"echo"}}]}}]}\n\n'
+              'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"sh","arguments":"{\\"command\\":\\"echo"}}]}}]}\n\n'
             )
           );
           controller.enqueue(
@@ -107,7 +107,7 @@ test("OpenAICompatibleClient should assemble streamed tool calls", async () => {
     assert.equal(result.message.content, "");
     assert.equal(result.message.tool_calls?.length, 1);
     assert.equal(result.message.tool_calls?.[0]?.id, "call_1");
-    assert.equal(result.message.tool_calls?.[0]?.function.name, "run_command");
+    assert.equal(result.message.tool_calls?.[0]?.function.name, "bash");
     assert.equal(result.message.tool_calls?.[0]?.function.arguments, '{"command":"echo hi"}');
   } finally {
     globalThis.fetch = originalFetch;

@@ -25,7 +25,7 @@ const SKIP_DIR_NAMES = new Set([
 
 export class FindByNameTool implements Tool {
   readonly definition = {
-    name: "find_by_name",
+    name: "glob",
     description: "Recursively find files/directories by glob pattern from a search path.",
     readOnly: true,
     parameters: {

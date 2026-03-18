@@ -168,10 +168,11 @@ export function buildStreamingListeners(input: {
     if (data.message.startsWith("[tool] start ")) {
       const toolName = data.message.replace("[tool] start ", "").split(" ")[0];
       const { block } = input.createExecBlock({
-        type: toolName === "run_command" ? "command" : "tool",
+        type: toolName === "bash" ? "command" : "tool",
         title: `Tool Call: ${toolName}`,
         loading: true
       });
+      block.dataset.toolName = toolName.trim().toLowerCase();
       input.contentEl.appendChild(block);
       input.smartScrollToBottom();
     }

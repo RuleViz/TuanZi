@@ -13,10 +13,10 @@ import { searcherSystemPrompt } from "./prompts";
 import { ReactToolAgent } from "./react-tool-agent";
 
 const SEARCH_TOOLS = [
-  "list_dir",
-  "find_by_name",
-  "grep_search",
-  "view_file"
+  "ls",
+  "glob",
+  "grep",
+  "read"
 ];
 
 export interface SearcherOutput {
@@ -130,7 +130,7 @@ export class SearcherAgent {
     for (const keyword of keywords) {
       throwIfAborted(signal);
       const result = await this.toolRegistry.execute(
-        "find_by_name",
+        "glob",
         {
           search_path: this.toolContext.workspaceRoot,
           pattern: `*${keyword}*`,
@@ -149,7 +149,7 @@ export class SearcherAgent {
       for (const pattern of fallbackPatterns) {
         throwIfAborted(signal);
         const fallback = await this.toolRegistry.execute(
-          "find_by_name",
+          "glob",
           { search_path: this.toolContext.workspaceRoot, pattern, max_results: 8 },
           this.toolContext
         );
@@ -197,7 +197,7 @@ function fallbackSearchFromToolCalls(
 ): SearchResult {
   const references: SearchReference[] = [];
   for (const call of calls) {
-    if (call.name !== "find_by_name") {
+    if (call.name !== "glob") {
       continue;
     }
     collectSearchRefsFromFindResult(call.result, references);

@@ -31,7 +31,7 @@ const SKIP_DIR_NAMES = new Set([
 
 export class GrepSearchTool implements Tool {
   readonly definition = {
-    name: "grep_search",
+    name: "grep",
     description:
       "Search file content by plain text or regex. Returns matches with line number and around-3-line context.",
     readOnly: true,
