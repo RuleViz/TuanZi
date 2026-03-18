@@ -1,11 +1,12 @@
-﻿import { BrowserWindow, dialog, ipcMain } from "electron";
+import { BrowserWindow, dialog, ipcMain } from "electron";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
+import type { ActiveTaskEntry } from "../services/active-task";
 
 export interface WindowHandlersDeps {
   getMainWindow: () => BrowserWindow | null;
   closePerfLog: (event: string, fields?: Record<string, unknown>, options?: { highFrequency?: boolean }) => void;
   closePerfLogResources: (event: string, fields?: Record<string, unknown>) => void;
-  activeTasks: Map<string, AbortController>;
+  activeTasks: Map<string, ActiveTaskEntry>;
   abortAllActiveTasks: (reason: string) => number;
   waitForActiveTasksToDrain: (timeoutMs: number) => Promise<{ remaining: number; elapsedMs: number }>;
   shutdownWaitTimeoutMs: number;

@@ -46,9 +46,14 @@ export class McpManager implements McpBridge {
     const output: NamespacedMcpTool[] = [];
 
     for (const [serverId, server] of Object.entries(servers)) {
-      const client = await this.getClient(serverId, server);
-      const tools = await client.listTools();
-      output.push(...toNamespacedTools(serverId, tools));
+      try {
+        const client = await this.getClient(serverId, server);
+        const tools = await client.listTools();
+        output.push(...toNamespacedTools(serverId, tools));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(`[mcp] listTools skipped server=${serverId} error=${message}`);
+      }
     }
     return output;
   }
@@ -62,7 +67,11 @@ export class McpManager implements McpBridge {
     return tools.map((tool) => toFunctionToolDefinition(tool));
   }
 
-  async callNamespacedTool(namespacedName: string, args: JsonObject): Promise<McpToolCallResult> {
+  async callNamespacedTool(
+    namespacedName: string,
+    args: JsonObject,
+    options?: { signal?: AbortSignal }
+  ): Promise<McpToolCallResult> {
     const parsed = parseNamespacedToolName(namespacedName);
     if (!parsed) {
       throw new Error(
@@ -77,16 +86,20 @@ export class McpManager implements McpBridge {
     }
     const client = await this.getClient(parsed.serverId, server);
     this.logger.info(`[mcp] tools/call name=${namespacedName}`);
-    return client.callTool(parsed.toolName, args);
+    return client.callTool(parsed.toolName, args, options);
   }
 
-  async dispatchMcpToolCall(namespacedName: string, args: JsonObject): Promise<McpToolCallResult> {
-    return this.callNamespacedTool(namespacedName, args);
+  async dispatchMcpToolCall(
+    namespacedName: string,
+    args: JsonObject,
+    options?: { signal?: AbortSignal }
+  ): Promise<McpToolCallResult> {
+    return this.callNamespacedTool(namespacedName, args, options);
   }
 
-  async callTool(name: string, args: JsonObject): Promise<McpToolCallResult> {
+  async callTool(name: string, args: JsonObject, options?: { signal?: AbortSignal }): Promise<McpToolCallResult> {
     if (name.startsWith(TOOL_NAMESPACE_PREFIX)) {
-      return this.callNamespacedTool(name, args);
+      return this.callNamespacedTool(name, args, options);
     }
 
     const servers = this.loadServers();
@@ -95,7 +108,7 @@ export class McpManager implements McpBridge {
       const [serverId, server] = entries[0];
       const client = await this.getClient(serverId, server);
       this.logger.info(`[mcp] tools/call name=${serverId}::${name}`);
-      return client.callTool(name, args);
+      return client.callTool(name, args, options);
     }
     if (entries.length === 0) {
       throw new Error("No MCP server is configured.");
@@ -202,6 +215,12 @@ export class McpManager implements McpBridge {
     this.clients.set(serverId, {
       clientPromise,
       lastUsedAt: Date.now()
+    });
+    void clientPromise.catch(() => {
+      const current = this.clients.get(serverId);
+      if (current && current.clientPromise === clientPromise) {
+        this.clients.delete(serverId);
+      }
     });
     return clientPromise;
   }

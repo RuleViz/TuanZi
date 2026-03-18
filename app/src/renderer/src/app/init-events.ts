@@ -2,6 +2,7 @@ interface InitEventState {
   slashVisible: boolean;
   slashActiveIndex: number;
   isSending: boolean;
+  isStopping: boolean;
   currentTaskId: string;
   isThinking: boolean;
   planModeEnabled: boolean;
@@ -46,7 +47,7 @@ interface InitEventsDeps {
   autoResizeTextarea: () => void;
   updateSlashCommandMenu: () => void;
   attachImageFile: (file: File) => Promise<void>;
-  stopMessage: (taskId: string) => Promise<void>;
+  stopMessage: (taskId: string) => Promise<{ ok: boolean; status: "accepted" | "already_stopping" | "not_found"; error?: string }>;
   selectWorkspace: () => Promise<void>;
   showError: (message: string) => void;
   createNewSession: () => void;
@@ -148,10 +149,28 @@ export function bindInitEvents(input: InitEventsDeps): void {
   });
 
   input.stopBtn.addEventListener("click", () => {
-    console.log("Stop button clicked, state:", { isSending: input.state.isSending, currentTaskId: input.state.currentTaskId });
-    if (input.state.isSending && input.state.currentTaskId) {
-      void input.stopMessage(input.state.currentTaskId);
+    if (!input.state.isSending || !input.state.currentTaskId) {
+      return;
     }
+    if (input.state.isStopping) {
+      return;
+    }
+    input.state.isStopping = true;
+    void input.stopMessage(input.state.currentTaskId)
+      .then((result) => {
+        if (!result.ok && result.status !== "not_found") {
+          input.state.isStopping = false;
+          input.showError(result.error || "停止任务失败");
+          return;
+        }
+        if (result.status === "not_found") {
+          input.state.isStopping = false;
+        }
+      })
+      .catch((error) => {
+        input.state.isStopping = false;
+        input.showError(error instanceof Error ? error.message : String(error));
+      });
   });
 
   input.selectWorkspaceBtn.addEventListener("click", () => {

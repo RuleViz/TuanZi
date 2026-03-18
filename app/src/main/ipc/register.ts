@@ -4,6 +4,7 @@ import { registerCheckpointHandlers, type CheckpointHandlersDeps } from "./check
 import { registerMemoryHandlers, type MemoryHandlersDeps } from "./memory-handlers";
 import { registerMcpHandlers, type McpHandlersDeps } from "./mcp-handlers";
 import { registerSkillHandlers, type SkillHandlersDeps } from "./skill-handlers";
+import { registerTerminalHandlers, type TerminalHandlersDeps } from "./terminal-handlers";
 import { registerWindowHandlers, type WindowHandlersDeps } from "./window-handlers";
 
 export interface IpcRegisterDeps {
@@ -14,6 +15,7 @@ export interface IpcRegisterDeps {
   mcp: McpHandlersDeps;
   checkpoint: CheckpointHandlersDeps;
   memory: MemoryHandlersDeps;
+  terminal: TerminalHandlersDeps;
 }
 
 export function registerIpcHandlers(deps: IpcRegisterDeps): void {
@@ -24,4 +26,5 @@ export function registerIpcHandlers(deps: IpcRegisterDeps): void {
   registerMcpHandlers(deps.mcp);
   registerCheckpointHandlers(deps.checkpoint);
   registerMemoryHandlers(deps.memory);
+  registerTerminalHandlers(deps.terminal);
 }

@@ -19,6 +19,12 @@ interface ToolsListResult {
   nextCursor?: unknown;
 }
 
+interface PendingRequest {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+  cleanup: () => void;
+}
+
 export interface McpListedTool {
   name: string;
   description: string;
@@ -30,7 +36,7 @@ export class StdioMcpClient {
   private started = false;
   private nextId = 1;
   private readBuffer = Buffer.alloc(0);
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private pending = new Map<number, PendingRequest>();
   private stderrChunks: string[] = [];
 
   constructor(private readonly settings: McpSettings) { }
@@ -103,7 +109,7 @@ export class StdioMcpClient {
     this.started = true;
   }
 
-  async callTool(toolName: string, args: JsonObject): Promise<McpToolCallResult> {
+  async callTool(toolName: string, args: JsonObject, options?: { signal?: AbortSignal }): Promise<McpToolCallResult> {
     if (!this.started) {
       await this.start();
     }
@@ -114,7 +120,8 @@ export class StdioMcpClient {
         name: toolName,
         arguments: args
       },
-      this.settings.requestTimeoutMs
+      this.settings.requestTimeoutMs,
+      options
     );
 
     if (!result || typeof result !== "object" || Array.isArray(result)) {
@@ -199,30 +206,68 @@ export class StdioMcpClient {
   private onStdoutData(chunk: Buffer): void {
     this.readBuffer = Buffer.concat([this.readBuffer, chunk]);
 
-    // MCP stdio transport uses newline-delimited JSON-RPC (one JSON object per line).
     while (true) {
-      const newlineIdx = this.readBuffer.indexOf("\n");
-      if (newlineIdx < 0) {
-        // Wait for a complete line.
+      const framedPayload = this.tryReadFramedPayload();
+      if (framedPayload === undefined) {
         return;
       }
-
-      const lineBytes = this.readBuffer.slice(0, newlineIdx);
-      this.readBuffer = this.readBuffer.slice(newlineIdx + 1);
-
-      const line = lineBytes.toString("utf8").trim();
-      if (!line) {
+      if (framedPayload !== null) {
+        this.handleRpcPayload(framedPayload);
         continue;
       }
 
-      let payload: JsonRpcResponse;
-      try {
-        payload = JSON.parse(line) as JsonRpcResponse;
-      } catch {
-        // Skip non-JSON lines (e.g. startup banner written by some servers).
+      const linePayload = this.tryReadLinePayload();
+      if (linePayload === undefined) {
+        return;
+      }
+      if (linePayload === null) {
         continue;
       }
-      this.handleRpcPayload(payload);
+      this.handleRpcPayload(linePayload);
+    }
+  }
+
+  private tryReadFramedPayload(): JsonRpcResponse | null | undefined {
+    const header = readFrameHeader(this.readBuffer);
+    if (!header) {
+      return looksLikeFrameHeaderPrefix(this.readBuffer) ? undefined : null;
+    }
+    if (this.readBuffer.length < header.bodyStart + header.contentLength) {
+      return undefined;
+    }
+
+    const bodyBytes = this.readBuffer.slice(header.bodyStart, header.bodyStart + header.contentLength);
+    this.readBuffer = this.readBuffer.slice(header.bodyStart + header.contentLength);
+    const bodyText = bodyBytes.toString("utf8").trim();
+    if (!bodyText) {
+      return null;
+    }
+    try {
+      return JSON.parse(bodyText) as JsonRpcResponse;
+    } catch {
+      return null;
+    }
+  }
+
+  private tryReadLinePayload(): JsonRpcResponse | null | undefined {
+    const newlineIdx = this.readBuffer.indexOf("\n");
+    if (newlineIdx < 0) {
+      return undefined;
+    }
+
+    const lineBytes = this.readBuffer.slice(0, newlineIdx);
+    this.readBuffer = this.readBuffer.slice(newlineIdx + 1);
+
+    const line = lineBytes.toString("utf8").trim();
+    if (!line) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(line) as JsonRpcResponse;
+    } catch {
+      // Skip non-JSON lines (e.g. startup banner written by some servers).
+      return null;
     }
   }
 
@@ -243,9 +288,18 @@ export class StdioMcpClient {
     pending.resolve(payload.result);
   }
 
-  private async request(method: string, params: unknown, timeoutMs: number): Promise<unknown> {
+  private async request(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+    options?: { signal?: AbortSignal }
+  ): Promise<unknown> {
     if (!this.process) {
       throw new Error("MCP process is not running.");
+    }
+
+    if (options?.signal?.aborted) {
+      throw new Error(`MCP request aborted by user: ${method}`);
     }
 
     const id = this.nextId++;
@@ -255,11 +309,26 @@ export class StdioMcpClient {
       method,
       params
     };
-    this.writeFrame(payload);
 
     return new Promise<unknown>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      let settled = false;
+      const onAbort = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
         this.pending.delete(id);
+        cleanup();
+        reject(new Error(`MCP request aborted by user: ${method}`));
+      };
+
+      const timeout = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        this.pending.delete(id);
+        cleanup();
         const stderrTail = this.stderrChunks.slice(-5).join("").trim();
         const hint = stderrTail
           ? ` | stderr: ${stderrTail.slice(0, 500)}`
@@ -267,16 +336,44 @@ export class StdioMcpClient {
         reject(new Error(`MCP request timed out: ${method} (waited ${timeoutMs}ms)${hint}`));
       }, timeoutMs);
 
+      const cleanup = (): void => {
+        clearTimeout(timeout);
+        if (options?.signal) {
+          options.signal.removeEventListener("abort", onAbort);
+        }
+      };
+
+      if (options?.signal) {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
       this.pending.set(id, {
         resolve: (value) => {
-          clearTimeout(timeout);
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
           resolve(value);
         },
         reject: (error) => {
-          clearTimeout(timeout);
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
           reject(error);
-        }
+        },
+        cleanup
       });
+
+      try {
+        this.writeFrame(payload);
+      } catch (error) {
+        this.pending.delete(id);
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
@@ -293,17 +390,59 @@ export class StdioMcpClient {
     if (!this.process) {
       throw new Error("MCP process is not running.");
     }
-    // MCP stdio transport: each message is a single-line JSON followed by newline.
-    const line = JSON.stringify(message) + "\n";
-    this.process.stdin.write(line, "utf8");
+    const body = JSON.stringify(message);
+    const frame = `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
+    this.process.stdin.write(frame, "utf8");
   }
 
   private rejectAllPending(error: Error): void {
     for (const [id, pending] of this.pending.entries()) {
       this.pending.delete(id);
+      pending.cleanup();
       pending.reject(error);
     }
   }
+}
+
+function readFrameHeader(buffer: Buffer): { bodyStart: number; contentLength: number } | null {
+  const delimiter = findHeaderDelimiter(buffer);
+  if (!delimiter) {
+    return null;
+  }
+
+  const headerText = buffer.slice(0, delimiter.end).toString("utf8");
+  const match = headerText.match(/content-length\s*:\s*(\d+)/i);
+  if (!match) {
+    return null;
+  }
+  const contentLength = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(contentLength) || contentLength < 0) {
+    return null;
+  }
+  return {
+    bodyStart: delimiter.bodyStart,
+    contentLength
+  };
+}
+
+function findHeaderDelimiter(buffer: Buffer): { end: number; bodyStart: number } | null {
+  const crlfCrlf = buffer.indexOf("\r\n\r\n");
+  if (crlfCrlf >= 0) {
+    return { end: crlfCrlf, bodyStart: crlfCrlf + 4 };
+  }
+  const lfLf = buffer.indexOf("\n\n");
+  if (lfLf >= 0) {
+    return { end: lfLf, bodyStart: lfLf + 2 };
+  }
+  return null;
+}
+
+function looksLikeFrameHeaderPrefix(buffer: Buffer): boolean {
+  if (buffer.length === 0) {
+    return false;
+  }
+  const sample = buffer.slice(0, Math.min(buffer.length, 64)).toString("utf8").toLowerCase();
+  return sample.startsWith("content-length") || sample.startsWith("content-type");
 }
 
 function normalizeTools(input: unknown): McpListedTool[] {

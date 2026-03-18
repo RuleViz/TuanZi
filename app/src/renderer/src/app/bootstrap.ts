@@ -7,6 +7,7 @@ interface BootstrapDeps {
   refreshResumeSnapshot: () => Promise<void>;
   bindTopBarDrag: () => void;
   bindInitEvents: () => void;
+  bindWorkbench: () => void;
   refreshAgentData: (preferredAgent?: string | null) => Promise<void>;
   loadActiveAgentPreference: () => string | null;
   autoResizeTextarea: () => void;
@@ -24,6 +25,7 @@ export async function bootstrapRendererApp(input: BootstrapDeps): Promise<void> 
   input.renderActiveConversation();
   input.bindTopBarDrag();
   input.bindInitEvents();
+  input.bindWorkbench();
 
   await input.refreshAgentData(input.loadActiveAgentPreference());
   input.autoResizeTextarea();

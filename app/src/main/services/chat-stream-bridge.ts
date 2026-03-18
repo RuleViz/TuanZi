@@ -1,4 +1,5 @@
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
+import type { WorkbenchTaskItem } from "../../shared/ipc-contracts";
 import type { ToolLoopResumeStateSnapshot, ToolLoopToolCallSnapshot } from "../chat-resume-store";
 
 function cloneJson<T>(value: T): T {
@@ -39,13 +40,16 @@ export function createChatStreamHooks(input: {
   onAssistantTextDelta: (delta: string) => void;
   onAssistantThinkingDelta: (delta: string) => void;
   onPlanPreview?: (preview: string) => void;
+  onTasksChange?: (tasks: WorkbenchTaskItem[]) => void;
   onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => void;
   onStateChange: (state: ToolLoopResumeStateSnapshot) => void;
+  sessionId: string;
 }): {
   onPhaseChange: (phase: string) => void;
   onAssistantTextDelta: (delta: string) => void;
   onAssistantThinkingDelta: (delta: string) => void;
   onPlanPreview?: (preview: string) => void;
+  onTasksChange?: (tasks: WorkbenchTaskItem[]) => void;
   onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => void;
   onStateChange: (state: ToolLoopResumeStateSnapshot) => void;
 } {
@@ -73,6 +77,14 @@ export function createChatStreamHooks(input: {
       }
       input.onPlanPreview?.(preview);
       input.webContents.send(IPC_CHANNELS.chatPlanPreview, { taskId: input.taskId, preview });
+    },
+    onTasksChange: (tasks: WorkbenchTaskItem[]) => {
+      input.onTasksChange?.(tasks);
+      input.webContents.send(IPC_CHANNELS.chatTasks, {
+        taskId: input.taskId,
+        sessionId: input.sessionId,
+        tasks
+      });
     },
     onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
       input.onToolCallCompleted(call);

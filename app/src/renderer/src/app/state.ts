@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   AgentBackendConfig,
   AgentToolProfile,
   ChatImageInput,
@@ -7,6 +7,11 @@
   SkillCatalogItem,
   StoredAgent
 } from "../../../shared/domain-types";
+import type {
+  ModifiedFileEntry,
+  TerminalSessionSummary,
+  WorkbenchTaskItem
+} from "../../../shared/ipc-contracts";
 
 export interface ConversationTurn {
   user: string;
@@ -54,10 +59,22 @@ export interface PendingChatImage extends ChatImageInput {
   sizeBytes: number;
 }
 
+export interface WorkbenchTerminalState extends TerminalSessionSummary {
+  output: string;
+}
+
+export interface SessionWorkbenchState {
+  tasks: WorkbenchTaskItem[];
+  terminals: WorkbenchTerminalState[];
+  modifiedFiles: ModifiedFileEntry[];
+  selectedTerminalId: string | null;
+}
+
 export const state = {
   sessions: [] as ChatSession[],
   activeSessionId: "",
   isSending: false,
+  isStopping: false,
   currentStreamText: "",
   currentTaskId: "",
   currentRenderedToolCalls: 0,
@@ -85,5 +102,7 @@ export const state = {
   hasLoadedMcp: false,
   mcpLoadToken: 0,
   isThinking: false,
-  planModeEnabled: false
+  planModeEnabled: false,
+  workbenchOpen: false,
+  sessionWorkbench: {} as Record<string, SessionWorkbenchState>
 };

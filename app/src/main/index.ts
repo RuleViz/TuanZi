@@ -18,6 +18,8 @@ import { registerIpcHandlers } from "./ipc/register"
 import { ConversationMemoryCompactor } from "./services/conversation-memory-compactor"
 import { ConversationMemoryStore } from "./services/conversation-memory-store"
 import { createRunChatTask, loadMatchingChatResumeSnapshot } from "./services/chat-task-service"
+import type { ActiveTaskEntry } from "./services/active-task"
+import { createTerminalManager } from "./services/terminal-manager"
 import { TurnCheckpointManager } from "./services/turn-checkpoint-manager"
 
 // ── TuanZi Core Integration ────────────────────────────
@@ -26,7 +28,15 @@ import { TurnCheckpointManager } from "./services/turn-checkpoint-manager"
 // the root project. For now we reference the compiled JS output.
 
 let mainWindow: BrowserWindow | null = null
-const activeTasks = new Map<string, AbortController>()
+const activeTasks = new Map<string, ActiveTaskEntry>()
+const terminalManager = createTerminalManager({
+  sendToRenderer: (channel, payload) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+    mainWindow.webContents.send(channel, payload)
+  }
+})
 const chatResumeStore = new ChatResumeStore(app.getPath("userData"))
 const conversationMemoryStore = new ConversationMemoryStore(app.getPath("userData"))
 const conversationMemoryCompactor = new ConversationMemoryCompactor(conversationMemoryStore, {
@@ -136,9 +146,16 @@ function scheduleCloseForceDestroy(win: BrowserWindow, reason: string): void {
 
 function abortAllActiveTasks(reason: string): number {
   let abortedCount = 0
-  for (const controller of activeTasks.values()) {
+  for (const task of activeTasks.values()) {
     try {
-      controller.abort()
+      task.status = "stopping"
+      task.stopRequestedAt = Date.now()
+      task.controller.abort()
+      if (task.forceStop) {
+        void task.forceStop().catch(() => {
+          return
+        })
+      }
       abortedCount += 1
     } catch {
       // Ignore abort failures; shutdown should continue.
@@ -870,7 +887,8 @@ const runChatTask = createRunChatTask({
   snapshotMaxToolCalls: SNAPSHOT_MAX_TOOL_CALLS,
   maxChatImageCount: MAX_CHAT_IMAGE_COUNT,
   maxChatImageBytes: MAX_CHAT_IMAGE_BYTES,
-  createTurnCheckpoint
+  createTurnCheckpoint,
+  terminalManager
 })
 
 // ── IPC Handlers ───────────────────────────────────────
@@ -928,6 +946,9 @@ registerIpcHandlers({
     loadCoreModules,
     normalizeOptionalString,
     toErrorMessage
+  },
+  terminal: {
+    terminalManager
   }
 })
 // ── App Lifecycle ──────────────────────────────────────
@@ -947,6 +968,9 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  void terminalManager.closeAll().catch(() => {
+    return
+  })
   closePerfLog("window_all_closed", {
     platform: process.platform,
     activeTasks: activeTasks.size

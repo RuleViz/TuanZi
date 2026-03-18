@@ -40,9 +40,18 @@ export interface OrchestratorRunInput {
 
 export type OrchestratorPhase = "planning" | "approval" | "running" | "done" | "aborted";
 
+export interface OrchestratorTaskSnapshot {
+  id: string;
+  title: string;
+  kind: "plan" | "execution" | "search" | "coding";
+  status: "pending" | "running" | "done" | "failed";
+  detail?: string;
+}
+
 export interface OrchestratorRunHooks {
   onPhaseChange?: (phase: OrchestratorPhase) => void;
   onPlanPreview?: (preview: string) => void;
+  onTasksChange?: (tasks: OrchestratorTaskSnapshot[]) => void;
   onAssistantTextDelta?: (delta: string) => void;
   onAssistantThinkingDelta?: (delta: string) => void;
   onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
@@ -78,25 +87,56 @@ export class PlanToDoOrchestrator {
 
     const usePlanMode = forcePlanMode === true ? true : shouldUsePlanMode(task, this.toolContext.agentSettings?.routing);
     if (!usePlanMode) {
+      hooks?.onTasksChange?.([
+        {
+          id: "direct-execution",
+          title: "Execute current request",
+          kind: "execution",
+          status: "running",
+          detail: "Agent is working directly without plan mode."
+        }
+      ]);
       hooks?.onPhaseChange?.("running");
-      const coderOutput = await this.coder.execute(task, conversationContext, {
-        onAssistantTextDelta: hooks?.onAssistantTextDelta,
-        onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
-        onToolCallCompleted: hooks?.onToolCallCompleted,
-        onStateChange: hooks?.onStateChange,
-        resumeState,
-        userImages,
-        signal: hooks?.signal
-      });
-      hooks?.onPhaseChange?.("done");
+      try {
+        const coderOutput = await this.coder.execute(task, conversationContext, {
+          onAssistantTextDelta: hooks?.onAssistantTextDelta,
+          onAssistantThinkingDelta: hooks?.onAssistantThinkingDelta,
+          onToolCallCompleted: hooks?.onToolCallCompleted,
+          onStateChange: hooks?.onStateChange,
+          resumeState,
+          userImages,
+          signal: hooks?.signal
+        });
+        hooks?.onTasksChange?.([
+          {
+            id: "direct-execution",
+            title: "Execute current request",
+            kind: "execution",
+            status: "done",
+            detail: "Direct execution completed."
+          }
+        ]);
+        hooks?.onPhaseChange?.("done");
 
-      return {
-        summary: coderOutput.result.summary,
-        changedFiles: coderOutput.result.changedFiles,
-        executedCommands: coderOutput.result.executedCommands,
-        followUp: coderOutput.result.followUp,
-        toolCalls: coderOutput.toolCalls
-      };
+        return {
+          summary: coderOutput.result.summary,
+          changedFiles: coderOutput.result.changedFiles,
+          executedCommands: coderOutput.result.executedCommands,
+          followUp: coderOutput.result.followUp,
+          toolCalls: coderOutput.toolCalls
+        };
+      } catch (error) {
+        hooks?.onTasksChange?.([
+          {
+            id: "direct-execution",
+            title: "Execute current request",
+            kind: "execution",
+            status: "failed",
+            detail: error instanceof Error ? error.message : String(error)
+          }
+        ]);
+        throw error;
+      }
     }
 
     throwIfAborted(hooks?.signal);
@@ -127,6 +167,13 @@ export class PlanToDoOrchestrator {
 
     throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("running");
+    hooks?.onTasksChange?.(
+      inputPlanToTaskSnapshots(plan, {
+        activeStepId: null,
+        completedStepIds: new Set(),
+        failedStepId: null
+      })
+    );
     const output = await this.executePlanSteps({
       task,
       plan,
@@ -146,7 +193,7 @@ export class PlanToDoOrchestrator {
     resumeState?: ToolLoopResumeState;
     userImages?: ChatInputImage[];
     hooks?: OrchestratorRunHooks;
-  }): Promise<OrchestrationResult> {
+    }): Promise<OrchestrationResult> {
     const allToolCalls: ToolCallRecord[] = [];
     const changedFiles = new Set<string>();
     const executedCommands = new Map<string, { command: string; exitCode: number | null }>();
@@ -159,6 +206,7 @@ export class PlanToDoOrchestrator {
     const firstCodeStepIndexToExecute =
       resumeTarget && !shouldResumeAnchorStep ? resumeTarget.stepIndex + 1 : resumeTarget?.stepIndex ?? 0;
     let resumeStateConsumed = false;
+    const completedStepIds = new Set<string>();
 
     if (input.resumeState && !resumeTarget) {
       followUp.add("Resume state was ignored because no matching plan step anchor was found.");
@@ -169,66 +217,109 @@ export class PlanToDoOrchestrator {
     for (let stepIndex = 0; stepIndex < input.plan.steps.length; stepIndex += 1) {
       throwIfAborted(input.hooks?.signal);
       const step = input.plan.steps[stepIndex];
-      if (step.owner === "search") {
-        const searchTask = buildSearchTask(input.task, step.title, step.acceptance);
-        const searchOutput = await this.searcher.search(
-          searchTask,
-          input.plan,
-          input.conversationContext,
-          input.hooks?.signal
+      input.hooks?.onTasksChange?.(
+        inputPlanToTaskSnapshots(input.plan, {
+          activeStepId: step.id,
+          completedStepIds,
+          failedStepId: null
+        })
+      );
+
+      try {
+        if (step.owner === "search") {
+          const searchTask = buildSearchTask(input.task, step.title, step.acceptance);
+          const searchOutput = await this.searcher.search(
+            searchTask,
+            input.plan,
+            input.conversationContext,
+            input.hooks?.signal
+          );
+          allToolCalls.push(...searchOutput.toolCalls);
+          const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);
+          searchContext = buildSearchContext(searchOutput.result.summary, refs);
+          stepSummaries.push(`- ${step.id} ${step.title}: search completed, matched ${searchOutput.result.references.length} candidate files.`);
+          completedStepIds.add(step.id);
+          input.hooks?.onTasksChange?.(
+            inputPlanToTaskSnapshots(input.plan, {
+              activeStepId: null,
+              completedStepIds,
+              failedStepId: null
+            })
+          );
+          continue;
+        }
+
+        if (resumeTarget && stepIndex < firstCodeStepIndexToExecute) {
+          const reason =
+            stepIndex < resumeTarget.stepIndex
+              ? "skipped (already completed before resume target)."
+              : "skipped (resume anchor step was already completed).";
+          stepSummaries.push(`- ${step.id} ${step.title}: ${reason}`);
+          completedStepIds.add(step.id);
+          input.hooks?.onTasksChange?.(
+            inputPlanToTaskSnapshots(input.plan, {
+              activeStepId: null,
+              completedStepIds,
+              failedStepId: null
+            })
+          );
+          continue;
+        }
+
+        const shouldResumeThisStep: boolean = Boolean(
+          input.resumeState &&
+          resumeTarget &&
+          shouldResumeAnchorStep &&
+          !resumeStateConsumed &&
+          stepIndex === resumeTarget.stepIndex
         );
-        allToolCalls.push(...searchOutput.toolCalls);
-        const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);
-        searchContext = buildSearchContext(searchOutput.result.summary, refs);
-        stepSummaries.push(`- ${step.id} ${step.title}: search completed, matched ${searchOutput.result.references.length} candidate files.`);
-        continue;
+        const codeTask = buildCodeTask(input.task, input.plan, step.id, step.title, step.acceptance, searchContext);
+        const coderOutput = await this.coder.execute(codeTask, input.conversationContext, {
+          onAssistantTextDelta: input.hooks?.onAssistantTextDelta,
+          onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
+          onToolCallCompleted: input.hooks?.onToolCallCompleted,
+          onStateChange: (state) => {
+            input.hooks?.onStateChange?.(applyPlanResumeAnchor(state, step.id, stepIndex));
+          },
+          resumeState: shouldResumeThisStep ? input.resumeState : undefined,
+          userImages: input.userImages,
+          signal: input.hooks?.signal
+        });
+        resumeStateConsumed = resumeStateConsumed || shouldResumeThisStep;
+        lastCodeSummary = coderOutput.result.summary;
+        allToolCalls.push(...coderOutput.toolCalls);
+        for (const file of coderOutput.result.changedFiles) {
+          changedFiles.add(file);
+        }
+        for (const command of coderOutput.result.executedCommands) {
+          executedCommands.set(`${command.command}::${String(command.exitCode)}`, command);
+        }
+        for (const note of coderOutput.result.followUp) {
+          followUp.add(note);
+        }
+        stepSummaries.push(
+          shouldResumeThisStep
+            ? `- ${step.id} ${step.title}: resumed from saved state and completed.`
+            : `- ${step.id} ${step.title}: code execution completed.`
+        );
+        completedStepIds.add(step.id);
+        input.hooks?.onTasksChange?.(
+          inputPlanToTaskSnapshots(input.plan, {
+            activeStepId: null,
+            completedStepIds,
+            failedStepId: null
+          })
+        );
+      } catch (error) {
+        input.hooks?.onTasksChange?.(
+          inputPlanToTaskSnapshots(input.plan, {
+            activeStepId: null,
+            completedStepIds,
+            failedStepId: step.id
+          })
+        );
+        throw error;
       }
-
-      if (resumeTarget && stepIndex < firstCodeStepIndexToExecute) {
-        const reason =
-          stepIndex < resumeTarget.stepIndex
-            ? "skipped (already completed before resume target)."
-            : "skipped (resume anchor step was already completed).";
-        stepSummaries.push(`- ${step.id} ${step.title}: ${reason}`);
-        continue;
-      }
-
-      const shouldResumeThisStep: boolean = Boolean(
-        input.resumeState &&
-        resumeTarget &&
-        shouldResumeAnchorStep &&
-        !resumeStateConsumed &&
-        stepIndex === resumeTarget.stepIndex
-      );
-      const codeTask = buildCodeTask(input.task, input.plan, step.id, step.title, step.acceptance, searchContext);
-      const coderOutput = await this.coder.execute(codeTask, input.conversationContext, {
-        onAssistantTextDelta: input.hooks?.onAssistantTextDelta,
-        onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
-        onToolCallCompleted: input.hooks?.onToolCallCompleted,
-        onStateChange: (state) => {
-          input.hooks?.onStateChange?.(applyPlanResumeAnchor(state, step.id, stepIndex));
-        },
-        resumeState: shouldResumeThisStep ? input.resumeState : undefined,
-        userImages: input.userImages,
-        signal: input.hooks?.signal
-      });
-      resumeStateConsumed = resumeStateConsumed || shouldResumeThisStep;
-      lastCodeSummary = coderOutput.result.summary;
-      allToolCalls.push(...coderOutput.toolCalls);
-      for (const file of coderOutput.result.changedFiles) {
-        changedFiles.add(file);
-      }
-      for (const command of coderOutput.result.executedCommands) {
-        executedCommands.set(`${command.command}::${String(command.exitCode)}`, command);
-      }
-      for (const note of coderOutput.result.followUp) {
-        followUp.add(note);
-      }
-      stepSummaries.push(
-        shouldResumeThisStep
-          ? `- ${step.id} ${step.title}: resumed from saved state and completed.`
-          : `- ${step.id} ${step.title}: code execution completed.`
-      );
     }
 
     return {
@@ -281,6 +372,34 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
     userImages: input.userImages,
     forcePlanMode: input.forcePlanMode
   };
+}
+
+function inputPlanToTaskSnapshots(
+  plan: ExecutionPlan,
+  input: {
+    activeStepId: string | null;
+    completedStepIds: Set<string>;
+    failedStepId: string | null;
+  }
+): OrchestratorTaskSnapshot[] {
+  return plan.steps.map((step) => {
+    let status: OrchestratorTaskSnapshot["status"] = "pending";
+    if (input.failedStepId === step.id) {
+      status = "failed";
+    } else if (input.activeStepId === step.id) {
+      status = "running";
+    } else if (input.completedStepIds.has(step.id)) {
+      status = "done";
+    }
+
+    return {
+      id: step.id,
+      title: step.title,
+      kind: step.owner === "search" ? "search" : "coding",
+      status,
+      detail: step.acceptance
+    };
+  });
 }
 
 export function shouldUsePlanMode(task: string, routing?: RoutingSettings): boolean {

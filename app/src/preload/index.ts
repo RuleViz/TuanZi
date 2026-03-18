@@ -15,6 +15,22 @@ const tuanziAPI: TuanziAPI = {
     return ipcRenderer.invoke(IPC_CHANNELS.chatStopMessage, payload);
   },
 
+  createTerminal: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.terminalCreate, payload);
+  },
+
+  writeTerminal: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.terminalWrite, payload);
+  },
+
+  resizeTerminal: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.terminalResize, payload);
+  },
+
+  closeTerminal: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.terminalClose, payload);
+  },
+
   listCheckpoints: (payload) => {
     return ipcRenderer.invoke(IPC_CHANNELS.checkpointList, payload);
   },
@@ -173,6 +189,48 @@ const tuanziAPI: TuanziAPI = {
     };
     ipcRenderer.on(IPC_CHANNELS.chatPlanPreview, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.chatPlanPreview, handler);
+  },
+  onTasks: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.chatTasks, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatTasks, handler);
+  },
+  onModifiedFiles: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.chatModifiedFiles, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatModifiedFiles, handler);
+  },
+  onTerminalOpened: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.terminalOpened, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalOpened, handler);
+  },
+  onTerminalData: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.terminalData, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalData, handler);
+  },
+  onTerminalExit: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.terminalExit, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalExit, handler);
+  },
+  onTerminalClosed: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.terminalClosed, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.terminalClosed, handler);
   },
   onWindowMaximizedChanged: (callback) => {
     const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {

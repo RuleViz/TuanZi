@@ -307,7 +307,9 @@ export class ReactToolAgent {
       }
 
       try {
-        const mcpResult = await bridge.callTool(functionName, args);
+        const mcpResult = await bridge.callTool(functionName, args, {
+          signal: this.toolContext.signal
+        });
         const result = toToolExecutionResult(mcpResult);
         this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
         return { args, result };

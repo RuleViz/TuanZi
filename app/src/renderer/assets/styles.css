@@ -344,6 +344,317 @@ body {
   flex-direction: column;
   background: var(--bg-main);
   min-width: 0;
+  position: relative;
+}
+
+.workbench-drawer {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 12px);
+  right: 16px;
+  bottom: 16px;
+  width: 360px;
+  border-radius: 18px;
+  background: #141414;
+  color: #F5F5F5;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  padding: 14px;
+  gap: 10px;
+  transform: translateX(calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.workbench-drawer.open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workbench-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workbench-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.workbench-title {
+  margin-top: 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.workbench-close-btn,
+.workbench-action-btn,
+.workbench-terminal-close,
+.workbench-terminal-send {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.workbench-close-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #FFF;
+}
+
+.workbench-section {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.workbench-section-title {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.workbench-section-count {
+  color: #6EE7D8;
+  font-weight: 700;
+}
+
+.workbench-section-body {
+  padding: 0 14px 14px;
+}
+
+.workbench-section:not(.expanded) .workbench-section-body {
+  display: none;
+}
+
+.workbench-empty {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.workbench-task-list,
+.workbench-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workbench-task-item,
+.workbench-file-item {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px 12px;
+}
+
+.workbench-task-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.workbench-task-status {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  margin-top: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.workbench-task-status.done {
+  background: rgba(82, 196, 26, 0.18);
+  color: #8DE26A;
+}
+
+.workbench-task-status.running {
+  background: rgba(255, 122, 0, 0.18);
+  color: #FFB266;
+}
+
+.workbench-task-status.failed {
+  background: rgba(255, 77, 79, 0.18);
+  color: #FF8A8C;
+}
+
+.workbench-task-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #F8F8F8;
+}
+
+.workbench-task-detail,
+.workbench-file-meta,
+.workbench-terminal-meta {
+  margin-top: 3px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.workbench-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.workbench-file-path {
+  color: #D8D8D8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-file-diff {
+  flex-shrink: 0;
+}
+
+.workbench-file-diff .added {
+  color: #6EE7D8;
+}
+
+.workbench-file-diff .removed {
+  color: #FF6B8A;
+}
+
+.workbench-terminals-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.workbench-terminal-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.workbench-action-btn,
+.workbench-terminal-send {
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #F5F5F5;
+}
+
+.workbench-terminal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workbench-terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #DADADA;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.workbench-terminal-tab.active {
+  background: rgba(110, 231, 216, 0.16);
+  color: #C6FFF6;
+}
+
+.workbench-terminal-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-terminal-close {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.workbench-terminal-view {
+  border-radius: 12px;
+  background: #0C0C0C;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.workbench-terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workbench-terminal-output {
+  min-height: 180px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #EDEDED;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workbench-terminal-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.workbench-terminal-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: #F5F5F5;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.workbench-terminal-input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.workbench-terminal-input:disabled,
+.workbench-terminal-send:disabled,
+.workbench-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 顶部栏 */
@@ -392,6 +703,11 @@ body {
 
 .top-bar-btn:hover {
   background: var(--bg-hover);
+}
+
+.top-bar-btn.active {
+  background: var(--brand-light);
+  color: var(--brand-primary);
 }
 
 .top-bar-drag {

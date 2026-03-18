@@ -45,6 +45,7 @@ export interface SendMessageDeps {
     session: ChatSession,
     input: { user: string; assistant: string; thinking?: string; interrupted: boolean }
   ) => void;
+  resetSessionWorkbench: (sessionId: string) => void;
   truncateTitleFromInput: (input: string) => string;
   touchActiveSession: () => void;
   persistSessions: () => void;
@@ -92,6 +93,7 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
   const newTaskId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
   const turnIndex = active.history.length;
   const undoCallback = input.onUndoTurn ? () => input.onUndoTurn!(turnIndex) : null;
+  input.resetSessionWorkbench(active.id);
 
   input.state.currentStreamText = "";
   input.state.currentRenderedToolCalls = 0;

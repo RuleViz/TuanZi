@@ -1,5 +1,6 @@
 export interface StreamUiState {
   isSending: boolean;
+  isStopping: boolean;
   currentTaskId: string;
   currentRenderedToolCalls: number;
   currentStreamText: string;
@@ -29,6 +30,7 @@ export function beginStreamingUi(input: {
   sendingIndicator: HTMLDivElement;
 }): void {
   input.state.isSending = true;
+  input.state.isStopping = false;
   input.state.currentTaskId = input.taskId;
   input.inputBox.classList.add("disabled");
   input.sendBtn.disabled = true;
@@ -53,6 +55,7 @@ export function endStreamingUi(input: {
   smartScrollToBottom: () => void;
 }): void {
   input.state.isSending = false;
+  input.state.isStopping = false;
   input.state.currentTaskId = "";
   input.state.currentRenderedToolCalls = 0;
   input.inputBox.classList.remove("disabled");

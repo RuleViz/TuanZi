@@ -35,5 +35,15 @@ export const IPC_CHANNELS = {
   chatToolCallCompleted: "chat:toolCallCompleted",
   chatLog: "chat:log",
   chatPhase: "chat:phase",
-  chatPlanPreview: "chat:planPreview"
+  chatPlanPreview: "chat:planPreview",
+  chatTasks: "chat:tasks",
+  chatModifiedFiles: "chat:modifiedFiles",
+  terminalCreate: "terminal:create",
+  terminalWrite: "terminal:write",
+  terminalClose: "terminal:close",
+  terminalResize: "terminal:resize",
+  terminalOpened: "terminal:opened",
+  terminalData: "terminal:data",
+  terminalExit: "terminal:exit",
+  terminalClosed: "terminal:closed"
 } as const;

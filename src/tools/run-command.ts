@@ -6,6 +6,7 @@ import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_OUTPUT = 3_000;
+const FORCE_KILL_GRACE_MS = 2_500;
 const MIDDLE_TRUNCATION_MARKER = "\n[... middle output omitted ...]\n";
 
 export class RunCommandTool implements Tool {
@@ -20,6 +21,14 @@ export class RunCommandTool implements Tool {
         cwd: {
           type: "string",
           description: "Working directory (relative to workspace root or absolute). Defaults to workspace root."
+        },
+        terminal_id: {
+          type: "string",
+          description: "Optional terminal session id to reuse. If omitted in desktop mode, a new terminal container is created."
+        },
+        terminal_title: {
+          type: "string",
+          description: "Optional display title when a new terminal container is created."
         },
         timeout_ms: { type: "number", description: "Timeout in milliseconds." },
         max_output_chars: { type: "number", description: "Max stdout/stderr characters to keep." },
@@ -57,6 +66,8 @@ export class RunCommandTool implements Tool {
     const timeoutMs = clampInt(asNumber(input.timeout_ms) ?? DEFAULT_TIMEOUT_MS, 1000, 900_000);
     const maxOutputChars = clampInt(asNumber(input.max_output_chars) ?? DEFAULT_MAX_OUTPUT, 500, 20_000);
     const parseJsonOutput = input.parse_json_output === true;
+    const terminalId = asString(input.terminal_id) ?? undefined;
+    const terminalTitle = asString(input.terminal_title) ?? undefined;
     const envOverrides = parseEnvOverrides(input.env);
     if (!envOverrides.ok) {
       return { ok: false, error: envOverrides.error };
@@ -83,14 +94,29 @@ export class RunCommandTool implements Tool {
     }
 
     const startedAt = Date.now();
-    const execution = await executeShellCommand(
-      command,
-      cwd,
-      timeoutMs,
-      maxOutputChars,
-      envOverrides.value,
-      context.signal
-    );
+    const execution = context.terminalBridge && context.sessionId
+      ? await executeTerminalCommand(
+          {
+            command,
+            cwd,
+            timeoutMs,
+            signal: context.signal,
+            sessionId: context.sessionId,
+            workspaceRoot: context.workspaceRoot,
+            terminalId,
+            terminalTitle,
+            env: envOverrides.value
+          },
+          context
+        )
+      : await executeShellCommand(
+          command,
+          cwd,
+          timeoutMs,
+          maxOutputChars,
+          envOverrides.value,
+          context.signal
+        );
     const durationMs = Date.now() - startedAt;
     const stdout = sanitizeOutput(execution.stdout, maxOutputChars);
     const stderr = sanitizeOutput(execution.stderr, maxOutputChars);
@@ -102,15 +128,18 @@ export class RunCommandTool implements Tool {
       exitCode: execution.exitCode,
       signal: execution.signal,
       timedOut: execution.timedOut,
+      interrupted: execution.interrupted,
+      forceKilled: execution.forceKilled,
+      terminalId: execution.terminalId,
       durationMs,
       stdout,
       stderr,
       parsedOutput
     };
 
-    const failed = execution.timedOut || execution.exitCode !== 0;
+    const failed = execution.timedOut || execution.interrupted || execution.exitCode !== 0;
     if (failed) {
-      const exitDisplay = execution.timedOut ? "timeout" : String(execution.exitCode);
+      const exitDisplay = execution.interrupted ? "interrupted" : execution.timedOut ? "timeout" : String(execution.exitCode);
       const stdoutSection = stdout ? `\nstdout:\n${stdout}` : "";
       return {
         ok: false,
@@ -155,6 +184,9 @@ async function executeShellCommand(
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   timedOut: boolean;
+  interrupted: boolean;
+  forceKilled: boolean;
+  terminalId?: string;
   stdout: string;
   stderr: string;
 }> {
@@ -164,40 +196,121 @@ async function executeShellCommand(
       shell: true,
       env: {
         ...process.env,
+        CI: "1",
+        NPM_CONFIG_YES: "true",
         ...envOverrides
-      },
-      signal
+      }
     });
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let interrupted = false;
+    let forceKilled = false;
+    let settled = false;
+    let closeSignal: NodeJS.Signals | null = null;
+
+    const resolveOnce = (payload: {
+      exitCode: number | null;
+      signal: NodeJS.Signals | null;
+      timedOut: boolean;
+      interrupted: boolean;
+      forceKilled: boolean;
+      stdout: string;
+      stderr: string;
+    }): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(payload);
+    };
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      clearTimeout(forceKillTimer);
+      if (signal) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    };
+
+    const killChildTreeForcefully = (): void => {
+      if (forceKilled || child.pid === undefined) {
+        return;
+      }
+      forceKilled = true;
+
+      if (process.platform === "win32") {
+        void spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+          shell: false
+        });
+        return;
+      }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore kill errors
+      }
+    };
+
+    const requestStop = (reason: "timeout" | "interrupt"): void => {
+      if (reason === "timeout") {
+        timedOut = true;
+      } else {
+        interrupted = true;
+      }
+      try {
+        closeSignal = "SIGTERM";
+        child.kill("SIGTERM");
+      } catch {
+        // ignore kill errors
+      }
+      clearTimeout(forceKillTimer);
+      forceKillTimer = setTimeout(() => {
+        killChildTreeForcefully();
+      }, FORCE_KILL_GRACE_MS);
+    };
+
+    const onAbort = (): void => {
+      requestStop("interrupt");
+    };
 
     child.on("error", (err: Error) => {
-      clearTimeout(timer);
-      if (err.name === "AbortError") {
-        resolve({
-          exitCode: 1,
-          signal: "SIGTERM",
-          timedOut: false,
-          stdout,
-          stderr: stderr + "\n[Process interrupted by user]"
-        });
-      } else {
-        resolve({
-          exitCode: 1,
-          signal: null,
-          timedOut: false,
-          stdout,
-          stderr: stderr + "\n[Process error: " + err.message + "]"
-        });
+      cleanup();
+      if (err.name !== "AbortError") {
+        stderr = appendLimited(stderr, `\n[Process error: ${err.message}]`, maxOutputChars);
       }
+      if (err.name === "AbortError") {
+        interrupted = true;
+      }
+      resolveOnce({
+        exitCode: 1,
+        signal: closeSignal,
+        timedOut,
+        interrupted,
+        forceKilled,
+        stdout,
+        stderr
+      });
     });
 
     const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
+      requestStop("timeout");
     }, timeoutMs);
+    let forceKillTimer = setTimeout(() => {
+      return;
+    }, 0);
+    clearTimeout(forceKillTimer);
+
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       stdout = appendLimited(stdout, String(chunk), maxOutputChars);
@@ -208,16 +321,68 @@ async function executeShellCommand(
     });
 
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolve({
+      cleanup();
+      resolveOnce({
         exitCode,
-        signal,
+        signal: signal ?? closeSignal,
         timedOut,
+        interrupted,
+        forceKilled,
         stdout,
         stderr
       });
     });
   });
+}
+
+async function executeTerminalCommand(
+  input: {
+    sessionId: string;
+    workspaceRoot: string;
+    cwd: string;
+    command: string;
+    env: Record<string, string>;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    terminalId?: string;
+    terminalTitle?: string;
+  },
+  context: ToolExecutionContext
+): Promise<{
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  interrupted: boolean;
+  forceKilled: boolean;
+  terminalId: string;
+  stdout: string;
+  stderr: string;
+}> {
+  const bridge = context.terminalBridge;
+  if (!bridge) {
+    throw new Error("Terminal bridge is not configured.");
+  }
+  const result = await bridge.executeCommand({
+    sessionId: input.sessionId,
+    workspaceRoot: input.workspaceRoot,
+    cwd: input.cwd,
+    command: input.command,
+    env: input.env,
+    timeoutMs: input.timeoutMs,
+    signal: input.signal,
+    terminalId: input.terminalId,
+    title: input.terminalTitle
+  });
+  return {
+    exitCode: result.exitCode,
+    signal: null,
+    timedOut: result.timedOut,
+    interrupted: result.interrupted,
+    forceKilled: false,
+    terminalId: result.terminalId,
+    stdout: result.stdout,
+    stderr: result.stderr
+  };
 }
 
 function parseEnvOverrides(value: unknown): { ok: true; value: Record<string, string> } | { ok: false; error: string } {

@@ -66,10 +66,21 @@ import {
   slashCommandList,
   slashCommandMenu,
   stopBtn,
+  toggleWorkbench,
   thinkingBtn,
   welcomeAvatar,
   welcomeState,
   welcomeTitle,
+  closeWorkbenchBtn,
+  workbenchDrawer,
+  workbenchFiles,
+  workbenchFilesCount,
+  workbenchTasks,
+  workbenchTasksCount,
+  workbenchTerminalPanel,
+  workbenchTerminalTabs,
+  workbenchTerminalsCount,
+  newWorkbenchTerminalBtn,
   workspaceLabel
 } from "./dom"
 import { createChatViewport } from "./chat-viewport"
@@ -91,6 +102,7 @@ import { createChatRuntime } from "../features/chat/runtime"
 import { createSlashCommandController } from "../features/chat/slash-command"
 import { createSessionFeature } from "../features/session/session-feature"
 import { createSettingsFeature } from "../features/settings/settings-feature"
+import { createWorkbenchFeature } from "../features/workbench/workbench-feature"
 
 const SESSION_STORAGE_KEY = "tuanzi.desktop.sessions.v1"
 const AGENT_STORAGE_KEY = "tuanzi.desktop.activeAgent.v1"
@@ -166,6 +178,7 @@ export function createRendererRuntime() {
 
   // Undo turn callback — will be fully wired after sessionFeature is created
   let undoTurnImpl: ((turnIndex: number) => void) | undefined
+  let renderCurrentSessionWorkbench = (): void => {}
 
   const sessionFeature = createSessionFeature({
     state,
@@ -190,6 +203,9 @@ export function createRendererRuntime() {
     autoResizeTextarea,
     showError,
     api: window.tuanzi,
+    onSessionChanged: () => {
+      renderCurrentSessionWorkbench()
+    },
     onUndoTurn: (turnIndex: number) => {
       if (undoTurnImpl) {
         undoTurnImpl(turnIndex)
@@ -214,6 +230,26 @@ export function createRendererRuntime() {
     selectWorkspace,
     createNewSession
   } = sessionFeature
+
+  const workbenchFeature = createWorkbenchFeature({
+    state,
+    drawer: workbenchDrawer,
+    tasksContainer: workbenchTasks,
+    tasksCount: workbenchTasksCount,
+    terminalsCount: workbenchTerminalsCount,
+    filesCount: workbenchFilesCount,
+    filesContainer: workbenchFiles,
+    terminalTabs: workbenchTerminalTabs,
+    terminalPanel: workbenchTerminalPanel,
+    toggleButton: toggleWorkbench,
+    closeButton: closeWorkbenchBtn,
+    newTerminalButton: newWorkbenchTerminalBtn,
+    showError,
+    api: window.tuanzi
+  })
+  renderCurrentSessionWorkbench = () => {
+    workbenchFeature.renderCurrentSessionWorkbench()
+  }
 
   // Wire the undo turn handler now that session feature is available
   undoTurnImpl = (turnIndex: number) => {
@@ -444,7 +480,8 @@ export function createRendererRuntime() {
     escapeHtml,
     smartScrollToBottom,
     createExecBlock,
-    appendCompletedToolCall
+    appendCompletedToolCall,
+    resetSessionWorkbench: (sessionId: string) => workbenchFeature.resetSessionWorkbench(sessionId)
   })
 
   const bindInitEvents = createBindInitEvents({
@@ -484,6 +521,7 @@ export function createRendererRuntime() {
     refreshResumeSnapshot,
     bindTopBarDrag,
     bindInitEvents,
+    bindWorkbench: () => workbenchFeature.bind(),
     refreshAgentData,
     loadActiveAgentPreference,
     autoResizeTextarea,

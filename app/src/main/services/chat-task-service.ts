@@ -20,6 +20,7 @@ import {
   type CompactorModelConfig
 } from "./conversation-memory-compactor";
 import { ConversationMemoryStore } from "./conversation-memory-store";
+import type { ActiveTaskEntry } from "./active-task";
 import type {
   ConversationModelSnapshot,
   ConversationTurnRecord,
@@ -40,9 +41,11 @@ import { CustomFallbackTokenEstimator } from "./token-estimators/custom-fallback
 import { GeminiGenerateContentTokenEstimator } from "./token-estimators/gemini-generate-content";
 import { OpenAIChatCompletionsTokenEstimator } from "./token-estimators/openai-chat-completions";
 import { OpenAIResponsesTokenEstimator } from "./token-estimators/openai-responses";
+import { computeModifiedFileEntries } from "./modified-file-stats";
+import type { TerminalManager } from "./terminal-manager";
 
 interface ChatTaskServiceDeps {
-  activeTasks: Map<string, AbortController>;
+  activeTasks: Map<string, ActiveTaskEntry>;
   chatResumeStore: ChatResumeStore;
   conversationMemoryStore: ConversationMemoryStore;
   loadCoreModules: () => any;
@@ -56,6 +59,7 @@ interface ChatTaskServiceDeps {
   snapshotMaxToolCalls: number;
   maxChatImageCount: number;
   maxChatImageBytes: number;
+  terminalManager: TerminalManager;
   createTurnCheckpoint?: (
     workspace: string,
     turnId: string,
@@ -407,6 +411,24 @@ export function loadMatchingChatResumeSnapshot(
   return snapshot;
 }
 
+function findActiveTaskForSession(
+  activeTasks: Map<string, ActiveTaskEntry>,
+  sessionId: string,
+  workspace: string,
+  excludingTaskId?: string
+): ActiveTaskEntry | null {
+  for (const task of activeTasks.values()) {
+    if (excludingTaskId && task.taskId === excludingTaskId) {
+      continue;
+    }
+    if (task.sessionId !== sessionId || task.workspace !== workspace) {
+      continue;
+    }
+    return task;
+  }
+  return null;
+}
+
 export function createRunChatTask(
   deps: ChatTaskServiceDeps
 ): (
@@ -545,8 +567,27 @@ export function createRunChatTask(
     const taskId = payload.taskId || Date.now().toString(36);
     const sessionId = deps.normalizeOptionalString(payload.sessionId) ?? "default-session";
     const workspace = payload.workspace;
+    const existingSessionTask = findActiveTaskForSession(deps.activeTasks, sessionId, workspace, taskId);
+    if (existingSessionTask) {
+      return {
+        ok: false,
+        taskId,
+        error: "当前会话已有任务正在执行，请先停止或等待完成。"
+      };
+    }
+
     const controller = new AbortController();
-    deps.activeTasks.set(taskId, controller);
+    const activeTask: ActiveTaskEntry = {
+      taskId,
+      sessionId,
+      workspace,
+      controller,
+      status: "running",
+      startedAt: Date.now(),
+      stopRequestedAt: null,
+      forceStop: null
+    };
+    deps.activeTasks.set(taskId, activeTask);
 
     let flushPendingSnapshots: (() => Promise<void>) | null = null;
     let runtimeToDispose: { dispose?: () => Promise<void> } | null = null;
@@ -635,10 +676,41 @@ export function createRunChatTask(
 
       const runtime = createToolRuntime(runtimeConfig, {
         logger: ipcLogger,
-        approvalGate: autoApprovalGate
+        approvalGate: autoApprovalGate,
+        terminalBridge: {
+          executeCommand: (input: {
+            sessionId: string;
+            workspaceRoot: string;
+            cwd: string;
+            command: string;
+            env: Record<string, string>;
+            timeoutMs: number;
+            signal?: AbortSignal;
+            terminalId?: string;
+            title?: string;
+          }) => {
+            return deps.terminalManager.executeCommand({
+              sessionId: input.sessionId,
+              workspace: input.workspaceRoot,
+              cwd: input.cwd,
+              command: input.command,
+              env: input.env,
+              timeoutMs: input.timeoutMs,
+              signal: input.signal,
+              terminalId: input.terminalId,
+              title: input.title
+            })
+          }
+        },
+        sessionId
       }) as Record<string, unknown>;
       currentRuntime = runtime;
       runtimeToDispose = runtime as { dispose?: () => Promise<void> };
+      activeTask.forceStop = async () => {
+        if (runtimeToDispose && typeof runtimeToDispose.dispose === "function") {
+          await runtimeToDispose.dispose();
+        }
+      };
       const orchestrator = createOrchestrator(runtimeConfig, runtime);
 
       let streamedText = payload.resumeState?.partialAssistantMessage?.content ?? "";
@@ -777,6 +849,9 @@ export function createRunChatTask(
               latestStreamedThinking = streamedThinking;
               markSnapshotDirty();
             },
+            onTasksChange: () => {
+              return;
+            },
             onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
               completedToolCalls.push(cloneToolCallSnapshot(call));
               markSnapshotDirty();
@@ -784,7 +859,8 @@ export function createRunChatTask(
             onStateChange: (resumeState: ToolLoopResumeStateSnapshot) => {
               latestResumeState = cloneResumeState(resumeState);
               markSnapshotDirty();
-            }
+            },
+            sessionId
           })
         }
       );
@@ -830,6 +906,13 @@ export function createRunChatTask(
       } catch (compactError) {
         console.warn(`[memory] auto compact failed: ${deps.toErrorMessage(compactError)}`);
       }
+
+      const modifiedFiles = await computeModifiedFileEntries(workspace, result.changedFiles || []);
+      webContents.send(IPC_CHANNELS.chatModifiedFiles, {
+        taskId,
+        sessionId,
+        files: modifiedFiles
+      });
 
       return {
         ok: true,

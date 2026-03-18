@@ -21,6 +21,7 @@ interface SessionActionsDeps {
   persistSessions: () => void
   refreshResumeSnapshot: () => Promise<void>
   onUndoTurn?: (turnIndex: number) => void
+  onSessionChanged?: (sessionId: string) => void
 }
 
 export interface SessionActions {
@@ -78,9 +79,11 @@ export function createSessionActions(deps: SessionActionsDeps): SessionActions {
     deps.renderSessionList()
     renderWorkspaceLabel(target.workspace)
     renderActiveConversation()
+    deps.onSessionChanged?.(target.id)
     deps.persistSessions()
     void deps.refreshResumeSnapshot().then(() => {
       renderActiveConversation()
+      deps.onSessionChanged?.(target.id)
     })
   }
 
@@ -95,6 +98,9 @@ export function createSessionActions(deps: SessionActionsDeps): SessionActions {
     if (deps.state.activeSessionId === sessionId) {
       deps.state.activeSessionId = deps.state.sessions[0]?.id || ''
       renderActiveConversation()
+      if (deps.state.activeSessionId) {
+        deps.onSessionChanged?.(deps.state.activeSessionId)
+      }
     }
 
     deps.renderSessionList()

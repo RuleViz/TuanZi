@@ -40,6 +40,7 @@ interface SessionFeatureDeps {
   showError: (message: string) => void
   api: Pick<TuanziAPI, "getResumeState" | "selectWorkspace">
   onUndoTurn?: (turnIndex: number) => void
+  onSessionChanged?: (sessionId: string) => void
 }
 
 interface SyncInterruptedTurnInput {
@@ -109,9 +110,10 @@ export function createSessionFeature(input: SessionFeatureDeps): SessionFeature 
     clearPendingImage: input.clearPendingImage,
     renderSessionList,
     persistSessions: sessionStore.persistSessions,
-    refreshResumeSnapshot,
-    onUndoTurn: input.onUndoTurn
-  })
+      refreshResumeSnapshot,
+      onUndoTurn: input.onUndoTurn,
+      onSessionChanged: input.onSessionChanged
+    })
 
   function switchSession(sessionId: string): void {
     closeHistoryContextMenu()

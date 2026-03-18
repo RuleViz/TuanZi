@@ -77,6 +77,7 @@ interface ChatRuntimeDeps {
       timestamp: string;
     }
   ) => void;
+  resetSessionWorkbench: (sessionId: string) => void;
 }
 
 export interface ChatRuntime {
@@ -156,6 +157,7 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       renderToolCalls: input.renderToolCalls,
       renderMarkdownHtml: input.renderMarkdownHtml,
       syncInterruptedTurn: input.syncInterruptedTurn,
+      resetSessionWorkbench: input.resetSessionWorkbench,
       truncateTitleFromInput: input.truncateTitleFromInput,
       touchActiveSession: input.touchActiveSession,
       persistSessions: input.persistSessions,

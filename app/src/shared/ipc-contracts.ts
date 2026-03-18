@@ -88,6 +88,57 @@ export interface StopMessagePayload {
   taskId: string;
 }
 
+export interface StopMessageResult {
+  ok: boolean;
+  status: "accepted" | "already_stopping" | "not_found";
+  error?: string;
+}
+
+export interface WorkbenchTaskItem {
+  id: string;
+  title: string;
+  kind: "plan" | "execution" | "search" | "coding";
+  status: "pending" | "running" | "done" | "failed";
+  detail?: string;
+}
+
+export interface ModifiedFileEntry {
+  path: string;
+  added: number;
+  removed: number;
+}
+
+export interface TerminalSessionSummary {
+  terminalId: string;
+  sessionId: string;
+  title: string;
+  workspace: string;
+  status: "running" | "exited" | "closed";
+  createdAt: string;
+  exitCode?: number | null;
+}
+
+export interface TerminalCreatePayload {
+  sessionId: string;
+  workspace: string;
+  title?: string;
+}
+
+export interface TerminalWritePayload {
+  terminalId: string;
+  data: string;
+}
+
+export interface TerminalResizePayload {
+  terminalId: string;
+  cols: number;
+  rows: number;
+}
+
+export interface TerminalClosePayload {
+  terminalId: string;
+}
+
 export interface CheckpointListPayload {
   workspace: string;
 }
@@ -109,7 +160,15 @@ export interface TuanziAPI {
   getResumeState: (
     payload: GetResumeStatePayload
   ) => Promise<{ ok: boolean; resumeSnapshot?: ChatResumeSnapshot | null; error?: string }>;
-  stopMessage: (payload: StopMessagePayload) => Promise<{ ok: boolean; error?: string }>;
+  stopMessage: (payload: StopMessagePayload) => Promise<StopMessageResult>;
+  createTerminal: (payload: TerminalCreatePayload) => Promise<{
+    ok: boolean;
+    terminal?: TerminalSessionSummary;
+    error?: string;
+  }>;
+  writeTerminal: (payload: TerminalWritePayload) => Promise<{ ok: boolean; error?: string }>;
+  resizeTerminal: (payload: TerminalResizePayload) => Promise<{ ok: boolean; error?: string }>;
+  closeTerminal: (payload: TerminalClosePayload) => Promise<{ ok: boolean; error?: string }>;
   listCheckpoints: (
     payload: CheckpointListPayload
   ) => Promise<{ ok: boolean; checkpoints?: TurnCheckpointInfo[]; error?: string }>;
@@ -251,5 +310,21 @@ export interface TuanziAPI {
   onLog: (callback: (data: { taskId: string; level: string; message: string }) => void) => () => void;
   onPhase: (callback: (data: { taskId: string; phase: string }) => void) => () => void;
   onPlanPreview: (callback: (data: { taskId: string; preview: string }) => void) => () => void;
+  onTasks: (callback: (data: { taskId: string; sessionId: string; tasks: WorkbenchTaskItem[] }) => void) => () => void;
+  onModifiedFiles: (
+    callback: (data: { taskId: string; sessionId: string; files: ModifiedFileEntry[] }) => void
+  ) => () => void;
+  onTerminalOpened: (
+    callback: (data: { terminal: TerminalSessionSummary }) => void
+  ) => () => void;
+  onTerminalData: (
+    callback: (data: { terminalId: string; sessionId: string; chunk: string }) => void
+  ) => () => void;
+  onTerminalExit: (
+    callback: (data: { terminalId: string; sessionId: string; exitCode: number | null }) => void
+  ) => () => void;
+  onTerminalClosed: (
+    callback: (data: { terminalId: string; sessionId: string }) => void
+  ) => () => void;
   onWindowMaximizedChanged: (callback: (data: { maximized: boolean }) => void) => () => void;
 }

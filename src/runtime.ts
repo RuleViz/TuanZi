@@ -10,7 +10,7 @@ import { ConsoleLogger } from "./core/logger";
 import { ConfigPolicyEngine } from "./core/policy-engine";
 import { createSkillRuntime } from "./core/skill-store";
 import { ToolRegistry } from "./core/tool-registry";
-import type { ApprovalGate, Logger, ToolExecutionContext } from "./core/types";
+import type { ApprovalGate, Logger, TerminalBridge, ToolExecutionContext } from "./core/types";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
 
@@ -23,7 +23,7 @@ export interface ToolRuntime {
 
 export function createToolRuntime(
   runtimeConfig: RuntimeConfig,
-  overrides?: { logger?: Logger; approvalGate?: ApprovalGate }
+  overrides?: { logger?: Logger; approvalGate?: ApprovalGate; terminalBridge?: TerminalBridge; sessionId?: string }
 ): ToolRuntime {
   const logger = overrides?.logger ?? new ConsoleLogger();
   const approvalGate = overrides?.approvalGate ?? new ConsoleApprovalGate(runtimeConfig.approvalMode);
@@ -40,7 +40,9 @@ export function createToolRuntime(
     policyEngine,
     agentSettings: runtimeConfig.agentSettings,
     mcpBridge,
-    skillRuntime
+    skillRuntime,
+    terminalBridge: overrides?.terminalBridge,
+    sessionId: overrides?.sessionId
   };
 
   const dispose = async (): Promise<void> => {

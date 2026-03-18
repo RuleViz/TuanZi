@@ -1,12 +1,13 @@
-﻿import { ipcMain } from "electron";
+import { ipcMain } from "electron";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 import type { GetResumeStatePayload, SendMessagePayload, StopMessagePayload } from "../../shared/ipc-contracts";
+import type { ActiveTaskEntry } from "../services/active-task";
 
 export interface ChatHandlersDeps {
   runChatTask: (webContents: Electron.WebContents, payload: SendMessagePayload) => Promise<unknown>;
   normalizeOptionalString: (input: unknown) => string | null;
   loadMatchingChatResumeSnapshot: (sessionId: string, workspace: string) => unknown;
-  activeTasks: Map<string, AbortController>;
+  activeTasks: Map<string, ActiveTaskEntry>;
 }
 
 export function registerChatHandlers(deps: ChatHandlersDeps): void {
@@ -23,14 +24,25 @@ export function registerChatHandlers(deps: ChatHandlersDeps): void {
   });
 
   ipcMain.handle(IPC_CHANNELS.chatStopMessage, async (_event, payload: StopMessagePayload) => {
-    console.log(`[IPC] Received chat:stopMessage for taskId=${payload.taskId}`);
-    const controller = deps.activeTasks.get(payload.taskId);
-    if (controller) {
-      console.log(`[IPC] Aborting controller for taskId=${payload.taskId}`);
-      controller.abort();
-      return { ok: true };
+    const task = deps.activeTasks.get(payload.taskId);
+    if (!task) {
+      return { ok: false, status: "not_found" as const, error: "Task not found or already completed" };
     }
-    console.log(`[IPC] Task not found for taskId=${payload.taskId}`);
-    return { ok: false, error: "Task not found or already completed" };
+
+    if (task.status === "stopping") {
+      return { ok: true, status: "already_stopping" as const };
+    }
+
+    task.status = "stopping";
+    task.stopRequestedAt = Date.now();
+    task.controller.abort();
+
+    if (task.forceStop) {
+      void task.forceStop().catch(() => {
+        return;
+      });
+    }
+
+    return { ok: true, status: "accepted" as const };
   });
 }

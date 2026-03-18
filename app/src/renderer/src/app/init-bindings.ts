@@ -43,6 +43,7 @@ interface InitBindingsState {
   slashVisible: boolean
   slashActiveIndex: number
   isSending: boolean
+  isStopping: boolean
   currentTaskId: string
   isThinking: boolean
   planModeEnabled: boolean
@@ -142,7 +143,7 @@ export function createBindInitEvents(input: EventBindingDeps): () => void {
       autoResizeTextarea: input.autoResizeTextarea,
       updateSlashCommandMenu: input.updateSlashCommandMenu,
       attachImageFile: input.attachImageFile,
-      stopMessage: async (taskId: string) => input.api.stopMessage({ taskId }).then(() => {}),
+      stopMessage: (taskId: string) => input.api.stopMessage({ taskId }),
       selectWorkspace: input.selectWorkspace,
       showError: input.showError,
       createNewSession: input.createNewSession,

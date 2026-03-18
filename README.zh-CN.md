@@ -9,6 +9,10 @@
 
 历史 CLI 端代码已移除。
 
+## 最新技术文档
+
+- [Agent 卡住与无法终止问题优化说明](./docs/agent-stability-optimization.zh-CN.md)
+
 ## 环境要求
 
 - Node.js >= 20

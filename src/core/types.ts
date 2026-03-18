@@ -95,7 +95,7 @@ export interface McpDiscoveredTool {
 }
 
 export interface McpBridge {
-  callTool(name: string, args: JsonObject): Promise<McpToolCallResult>;
+  callTool(name: string, args: JsonObject, options?: { signal?: AbortSignal }): Promise<McpToolCallResult>;
   listTools?(): Promise<McpDiscoveredTool[]>;
   getModelToolDefinitions?(): Promise<ModelFunctionToolDefinition[]>;
 }
@@ -148,9 +148,34 @@ export interface ToolExecutionContext {
   policyEngine?: PolicyEngine;
   agentSettings?: AgentSettings;
   taskId?: string;
+  sessionId?: string;
   mcpBridge?: McpBridge;
   skillRuntime?: SkillRuntime;
+  terminalBridge?: TerminalBridge;
   signal?: AbortSignal;
+}
+
+export interface TerminalCommandResult {
+  terminalId: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  interrupted: boolean;
+}
+
+export interface TerminalBridge {
+  executeCommand(input: {
+    sessionId: string;
+    workspaceRoot: string;
+    cwd: string;
+    command: string;
+    env: Record<string, string>;
+    timeoutMs: number;
+    signal?: AbortSignal;
+    terminalId?: string;
+    title?: string;
+  }): Promise<TerminalCommandResult>;
 }
 
 export interface Tool {
