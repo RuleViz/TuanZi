@@ -112,6 +112,29 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
     blocksContainer: surface.blocksContainer,
     textContainer: surface.textContainer
   });
+  const markPendingToolCallsFailed = (): void => {
+    const loadingBlocks = surface.contentEl.querySelectorAll<HTMLDivElement>(
+      ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
+    );
+    loadingBlocks.forEach((block) => {
+      block.classList.remove("loading");
+      const title = block.querySelector<HTMLDivElement>(".exec-title");
+      if (!title) {
+        return;
+      }
+      const existingBadge = title.querySelector<HTMLSpanElement>(".status-badge");
+      if (existingBadge) {
+        existingBadge.classList.remove("status-ok");
+        existingBadge.classList.add("status-err");
+        existingBadge.textContent = "failed";
+        return;
+      }
+      const badge = document.createElement("span");
+      badge.className = "status-badge status-err";
+      badge.textContent = "failed";
+      title.appendChild(badge);
+    });
+  };
 
   try {
     const activeAgent = input.getActiveAgent();
@@ -175,6 +198,7 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
       input.persistSessions();
       input.renderSessionList();
     } else if (result.interrupted && result.resumeSnapshot) {
+      markPendingToolCallsFailed();
       input.syncInterruptedTurn(active, {
         user: userHistoryText,
         assistant: result.resumeSnapshot.streamedText,
@@ -185,11 +209,13 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
       input.persistSessions();
       input.renderSessionList();
     } else {
+      markPendingToolCallsFailed();
       const activeText = listeners.getActiveTextContainer();
       activeText.innerHTML = `<p style="color: var(--status-err);">${input.escapeHtml(result.error || "Execution failed")}</p>`;
     }
   } catch (error) {
     listeners.dispose();
+    markPendingToolCallsFailed();
     const msg = error instanceof Error ? error.message : String(error);
     const activeText = listeners.getActiveTextContainer();
     activeText.innerHTML = `<p style="color: var(--status-err);">${input.escapeHtml(msg)}</p>`;

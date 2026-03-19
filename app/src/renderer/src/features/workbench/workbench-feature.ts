@@ -73,6 +73,8 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     input.drawer.classList.toggle("open", input.state.workbenchOpen);
     input.drawer.setAttribute("aria-hidden", input.state.workbenchOpen ? "false" : "true");
     input.toggleButton.classList.toggle("active", input.state.workbenchOpen);
+    input.toggleButton.setAttribute("aria-expanded", input.state.workbenchOpen ? "true" : "false");
+    input.toggleButton.title = input.state.workbenchOpen ? "收起工作台" : "展开工作台";
   }
 
   function renderTasks(tasks: WorkbenchTaskItem[]): void {

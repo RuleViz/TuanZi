@@ -10,7 +10,7 @@ import type {
 } from "../core/types";
 import type { ChatCompletionClient } from "./model-types";
 import { searcherSystemPrompt } from "./prompts";
-import { ReactToolAgent } from "./react-tool-agent";
+import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
 const SEARCH_TOOLS = [
   "ls",
@@ -32,7 +32,15 @@ export class SearcherAgent {
     private readonly toolContext: ToolExecutionContext
   ) { }
 
-  async search(task: string, plan: ExecutionPlan, conversationContext = "", signal?: AbortSignal): Promise<SearcherOutput> {
+  async search(
+    task: string,
+    plan: ExecutionPlan,
+    conversationContext = "",
+    signal?: AbortSignal,
+    hooks?: {
+      onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+    }
+  ): Promise<SearcherOutput> {
     throwIfAborted(signal);
     if (!this.client || !this.model) {
       return {
@@ -69,6 +77,7 @@ export class SearcherAgent {
       allowedTools: SEARCH_TOOLS,
       maxTurns,
       temperature: 0.1,
+      onToolCallCompleted: hooks?.onToolCallCompleted,
       signal
     });
 

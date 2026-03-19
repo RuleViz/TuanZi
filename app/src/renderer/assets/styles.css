@@ -4,6 +4,8 @@
 
 :root {
   --titlebar-height: 38px;
+  --workbench-drawer-width: 360px;
+  --workbench-drawer-gap: 16px;
   /* 极简灰白风格 */
   --bg-main: #FFFFFF;
   --bg-sidebar: #FAFAFA;
@@ -350,9 +352,9 @@ body {
 .workbench-drawer {
   position: fixed;
   top: calc(var(--titlebar-height) + 12px);
-  right: 16px;
-  bottom: 16px;
-  width: 360px;
+  right: var(--workbench-drawer-gap);
+  bottom: var(--workbench-drawer-gap);
+  width: var(--workbench-drawer-width);
   border-radius: 18px;
   background: #141414;
   color: #F5F5F5;
@@ -373,6 +375,43 @@ body {
   transform: translateX(0);
   opacity: 1;
   pointer-events: auto;
+}
+
+.workbench-rail-toggle {
+  position: fixed;
+  top: calc(var(--titlebar-height) + 94px);
+  right: 0;
+  width: 34px;
+  height: 108px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-right: none;
+  border-radius: 12px 0 0 12px;
+  background: #1C1C1C;
+  color: #F4F4F4;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 41;
+  transition: right 0.22s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.workbench-rail-toggle svg {
+  transition: transform 0.22s ease;
+}
+
+.workbench-rail-toggle:hover {
+  background: #242424;
+}
+
+.workbench-rail-toggle.active {
+  right: calc(var(--workbench-drawer-width) + var(--workbench-drawer-gap));
+  background: #2A2A2A;
+}
+
+.workbench-rail-toggle.active svg {
+  transform: rotate(180deg);
 }
 
 .workbench-header {

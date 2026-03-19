@@ -232,7 +232,10 @@ export class PlanToDoOrchestrator {
             searchTask,
             input.plan,
             input.conversationContext,
-            input.hooks?.signal
+            input.hooks?.signal,
+            {
+              onToolCallCompleted: input.hooks?.onToolCallCompleted
+            }
           );
           allToolCalls.push(...searchOutput.toolCalls);
           const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);

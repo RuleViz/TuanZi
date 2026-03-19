@@ -102,8 +102,41 @@ export function buildStreamingListeners(input: {
   let currentThinkingText = input.initialThinkingText ?? "";
   let activeTextContainer = input.textContainer;
   let segmentStart = 0;
+  const completedBeforeStartCounts = new Map<string, number>();
 
   const isCurrentTask = (taskId: string): boolean => taskId === input.taskId;
+  const normalizeToolName = (toolName: string): string => toolName.trim().toLowerCase();
+  const findLoadingBlocks = (): HTMLDivElement[] =>
+    Array.from(
+      input.contentEl.querySelectorAll<HTMLDivElement>(
+        ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
+      )
+    );
+  const hasLoadingBlock = (toolName: string): boolean => {
+    const normalizedToolName = normalizeToolName(toolName);
+    return findLoadingBlocks().some((block) => block.dataset.toolName === normalizedToolName);
+  };
+  const bufferCompletedBeforeStart = (toolName: string): void => {
+    const normalizedToolName = normalizeToolName(toolName);
+    if (!normalizedToolName) {
+      return;
+    }
+    const current = completedBeforeStartCounts.get(normalizedToolName) ?? 0;
+    completedBeforeStartCounts.set(normalizedToolName, current + 1);
+  };
+  const consumeBufferedCompleted = (toolName: string): boolean => {
+    const normalizedToolName = normalizeToolName(toolName);
+    const current = completedBeforeStartCounts.get(normalizedToolName) ?? 0;
+    if (current <= 0) {
+      return false;
+    }
+    if (current === 1) {
+      completedBeforeStartCounts.delete(normalizedToolName);
+    } else {
+      completedBeforeStartCounts.set(normalizedToolName, current - 1);
+    }
+    return true;
+  };
 
   const removePhaseListener = window.tuanzi.onPhase((data) => {
     if (!isCurrentTask(data.taskId)) {
@@ -167,12 +200,19 @@ export function buildStreamingListeners(input: {
     input.state.currentTaskId = data.taskId;
     if (data.message.startsWith("[tool] start ")) {
       const toolName = data.message.replace("[tool] start ", "").split(" ")[0];
+      const normalizedToolName = normalizeToolName(toolName);
+      if (!normalizedToolName) {
+        return;
+      }
+      if (consumeBufferedCompleted(normalizedToolName)) {
+        return;
+      }
       const { block } = input.createExecBlock({
-        type: toolName === "bash" ? "command" : "tool",
-        title: `Tool Call: ${toolName}`,
+        type: normalizedToolName === "bash" ? "command" : "tool",
+        title: `Tool Call: ${normalizedToolName}`,
         loading: true
       });
-      block.dataset.toolName = toolName.trim().toLowerCase();
+      block.dataset.toolName = normalizedToolName;
       input.contentEl.appendChild(block);
       input.smartScrollToBottom();
     }
@@ -183,7 +223,12 @@ export function buildStreamingListeners(input: {
       return;
     }
     input.state.currentTaskId = data.taskId;
+    const normalizedToolName = normalizeToolName(data.toolCall.toolName);
+    const matchedLoading = hasLoadingBlock(normalizedToolName);
     input.appendCompletedToolCall(input.contentEl, data.toolCall);
+    if (!matchedLoading) {
+      bufferCompletedBeforeStart(normalizedToolName);
+    }
     input.state.currentRenderedToolCalls += 1;
 
     segmentStart = input.state.currentStreamText.length;

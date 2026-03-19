@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PlanToDoOrchestrator } from "../agents/orchestrator";
-import type { ToolLoopResumeState } from "../agents/react-tool-agent";
+import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "../agents/react-tool-agent";
 import type { ExecutionPlan, ToolExecutionContext } from "../core/types";
 
 class StubCoder {
@@ -70,7 +70,10 @@ class StubSearcher {
     _task?: string,
     _plan?: ExecutionPlan,
     _conversationContext?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    hooks?: {
+      onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+    }
   ): Promise<{
     result: {
       summary: string;
@@ -81,6 +84,11 @@ class StubSearcher {
   }> {
     this.calls += 1;
     this.signals.push(signal);
+    hooks?.onToolCallCompleted?.({
+      name: "glob",
+      args: { pattern: "*.ts" },
+      result: { ok: true }
+    });
     return {
       result: {
         summary: "search-ok",
@@ -388,6 +396,37 @@ test("plan mode should execute search steps before resume target", async () => {
   assert.equal(searcher.signals[0], controller.signal);
   assert.equal(coder.calls.length, 1);
   assert.equal(coder.calls[0].resumeState, resumeState);
+});
+
+test("plan mode should forward search tool completion callbacks", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [
+      { id: "S1", title: "Search", owner: "search", acceptance: "done" },
+      { id: "S2", title: "Code", owner: "code", acceptance: "done" }
+    ]
+  };
+  const orchestrator = new PlanToDoOrchestrator(
+    new StubCoder() as unknown as any,
+    new StubPlanner(plan) as unknown as any,
+    new StubSearcher() as unknown as any,
+    createToolContext(true)
+  );
+
+  let completedCalls = 0;
+  await orchestrator.run(
+    {
+      task: "implement",
+      forcePlanMode: true
+    },
+    {
+      onToolCallCompleted: () => {
+        completedCalls += 1;
+      }
+    }
+  );
+
+  assert.equal(completedCalls, 1);
 });
 
 test("plan mode should abort before planner when signal is already aborted", async () => {
