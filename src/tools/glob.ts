@@ -23,7 +23,7 @@ const SKIP_DIR_NAMES = new Set([
   ".vscode"
 ]);
 
-export class FindByNameTool implements Tool {
+export class GlobTool implements Tool {
   readonly definition = {
     name: "glob",
     description: "Recursively find files/directories by glob pattern from a search path.",

@@ -140,7 +140,8 @@ test("TuanZiAgent should inject MCP tool schemas and prompt guidance", async () 
     description: "demo agent",
     tags: [],
     tools: [],
-    prompt: "You are helpful."
+    prompt: "You are helpful.",
+    readOnly: false
   };
   const client = new CaptureClient();
   const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, activeAgent);

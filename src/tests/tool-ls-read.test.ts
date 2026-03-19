@@ -3,8 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { ListDirTool } from "../tools/list-dir";
-import { ViewFileTool } from "../tools/view-file";
+import { LsTool } from "../tools/ls";
+import { ReadTool } from "../tools/read";
 import type { ToolExecutionContext } from "../core/types";
 
 function createContext(workspaceRoot: string, signal?: AbortSignal): ToolExecutionContext {
@@ -42,7 +42,7 @@ test("ls should list only one directory level", async () => {
     writeFileSync(path.join(workspaceDir, "src", "index.ts"), "export {};\n", "utf8");
     writeFileSync(path.join(workspaceDir, "src", "nested", "deep.ts"), "export const deep = 1;\n", "utf8");
 
-    const tool = new ListDirTool();
+    const tool = new LsTool();
     const result = await tool.execute({ path: "src" }, createContext(workspaceDir));
 
     assert.equal(result.ok, true);
@@ -64,7 +64,7 @@ test("ls should apply limit and mark truncated", async () => {
     writeFileSync(path.join(workspaceDir, "big", "b.txt"), "b\n", "utf8");
     writeFileSync(path.join(workspaceDir, "big", "c.txt"), "c\n", "utf8");
 
-    const tool = new ListDirTool();
+    const tool = new LsTool();
     const result = await tool.execute({ path: "big", limit: 2 }, createContext(workspaceDir));
 
     assert.equal(result.ok, true);
@@ -83,7 +83,7 @@ test("ls should stop when signal is already aborted", async () => {
   try {
     const controller = new AbortController();
     controller.abort();
-    const tool = new ListDirTool();
+    const tool = new LsTool();
 
     await assert.rejects(
       () => tool.execute({ path: "." }, createContext(workspaceDir, controller.signal)),
@@ -98,7 +98,7 @@ test("ls should reject legacy recursive arguments", async () => {
   const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-ls-legacy-"));
   try {
     mkdirSync(path.join(workspaceDir, "src"), { recursive: true });
-    const tool = new ListDirTool();
+    const tool = new LsTool();
     const result = await tool.execute(
       { path: "src", recursive: true, max_depth: 10 },
       createContext(workspaceDir)
@@ -115,7 +115,7 @@ test("read should support offset and limit pagination metadata", async () => {
   try {
     writeFileSync(path.join(workspaceDir, "sample.txt"), ["a", "b", "c", "d"].join("\n"), "utf8");
 
-    const tool = new ViewFileTool();
+    const tool = new ReadTool();
     const result = await tool.execute({ path: "sample.txt", offset: 1, limit: 2 }, createContext(workspaceDir));
 
     assert.equal(result.ok, true);
@@ -137,7 +137,7 @@ test("read should support offset and limit pagination metadata", async () => {
 test("read should reject missing path and stop on aborted signal", async () => {
   const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-read-guard-"));
   try {
-    const tool = new ViewFileTool();
+    const tool = new ReadTool();
 
     const missingPath = await tool.execute({ offset: 0, limit: 10 }, createContext(workspaceDir));
     assert.equal(missingPath.ok, false);

@@ -57,6 +57,7 @@ export interface StoredAgent {
   tags: string[];
   tools: string[];
   prompt: string;
+  readOnly: boolean;
 }
 
 export interface AgentToolProfile {

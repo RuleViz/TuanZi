@@ -55,6 +55,7 @@ export interface StoredAgent extends AgentMetadata {
   id: string;
   filename: string;
   prompt: string;
+  readOnly: boolean;
 }
 
 export interface SaveStoredAgentInput {
@@ -109,10 +110,8 @@ const DEFAULT_AGENT_METADATA: AgentMetadata = {
     "write",
     "edit",
     "delete_file",
-    "codebase_search",
     "bash",
-    "browser_action",
-    "checkpoint"
+    "browser_action"
   ]
 };
 
@@ -122,6 +121,7 @@ const DEFAULT_AGENT_PROMPT = [
   "任何工具失败都必须如实说明，禁止伪造成功日志或结果。",
   "优先保持代码简洁与最小改动；除非用户明确要求，不要引入冗余兜底分支。"
 ].join("\n");
+const DEFAULT_AGENT_ID = "default";
 
 export function getAgentHomePath(): string {
   // Prefer new env var, fallback to legacy name for backward compatibility.
@@ -155,11 +155,6 @@ export function ensureAgentStoreSync(): void {
   const configPath = getAgentConfigPath();
   if (!existsSync(configPath)) {
     writeJsonFile(configPath, DEFAULT_BACKEND_CONFIG);
-  }
-
-  const defaultAgentPath = path.join(agentsPath, DEFAULT_AGENT_FILE_NAME);
-  if (!existsSync(defaultAgentPath)) {
-    writeFileSync(defaultAgentPath, serializeAgentMarkdown(DEFAULT_AGENT_METADATA, DEFAULT_AGENT_PROMPT), "utf8");
   }
 }
 
@@ -200,6 +195,9 @@ export function listStoredAgentsSync(): StoredAgent[] {
     if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md")) {
       continue;
     }
+    if (isDefaultAgentFileName(entry.name)) {
+      continue;
+    }
     const filePath = path.join(agentsPath, entry.name);
     try {
       const raw = readFileSync(filePath, "utf8");
@@ -211,22 +209,16 @@ export function listStoredAgentsSync(): StoredAgent[] {
     }
   }
 
-  output.sort((left, right) => {
-    if (left.filename === DEFAULT_AGENT_FILE_NAME && right.filename !== DEFAULT_AGENT_FILE_NAME) {
-      return -1;
-    }
-    if (right.filename === DEFAULT_AGENT_FILE_NAME && left.filename !== DEFAULT_AGENT_FILE_NAME) {
-      return 1;
-    }
-    return left.filename.localeCompare(right.filename);
-  });
-
-  return output;
+  output.sort((left, right) => left.filename.localeCompare(right.filename));
+  return [createBuiltinDefaultAgent(), ...output];
 }
 
 export function getStoredAgentSync(identifier: string | null | undefined): StoredAgent {
   ensureAgentStoreSync();
   const filename = resolveAgentFileName(identifier ?? DEFAULT_AGENT_FILE_NAME);
+  if (isDefaultAgentFileName(filename)) {
+    return createBuiltinDefaultAgent();
+  }
   const filePath = path.join(getAgentsDirectoryPath(), filename);
 
   if (!existsSync(filePath)) {
@@ -250,31 +242,16 @@ export function loadActiveAgentSync(agentOverride?: string | null): StoredAgent 
       );
     }
   }
-
-  try {
-    return getStoredAgentSync(DEFAULT_AGENT_FILE_NAME);
-  } catch {
-    const listed = listStoredAgentsSync();
-    if (listed.length > 0) {
-      return listed[0];
-    }
-  }
-
-  return saveStoredAgentSync({
-    filename: DEFAULT_AGENT_FILE_NAME,
-    name: DEFAULT_AGENT_METADATA.name,
-    avatar: DEFAULT_AGENT_METADATA.avatar,
-    description: DEFAULT_AGENT_METADATA.description,
-    tags: DEFAULT_AGENT_METADATA.tags,
-    tools: DEFAULT_AGENT_METADATA.tools,
-    prompt: DEFAULT_AGENT_PROMPT
-  });
+  return createBuiltinDefaultAgent();
 }
 
 export function saveStoredAgentSync(input: SaveStoredAgentInput): StoredAgent {
   ensureAgentStoreSync();
   const normalized = normalizeAgentInput(input);
   const filename = resolveAgentFileName(input.filename ?? normalized.name);
+  if (isDefaultAgentFileName(filename)) {
+    throw new Error(`${DEFAULT_AGENT_FILE_NAME} is built-in and read-only.`);
+  }
   const filePath = path.join(getAgentsDirectoryPath(), filename);
   writeFileSync(filePath, serializeAgentMarkdown(normalized, normalized.prompt), "utf8");
   return parseAgentMarkdown(readFileSync(filePath, "utf8"), filename);
@@ -283,8 +260,8 @@ export function saveStoredAgentSync(input: SaveStoredAgentInput): StoredAgent {
 export function deleteStoredAgentSync(identifier: string): void {
   ensureAgentStoreSync();
   const filename = resolveAgentFileName(identifier);
-  if (filename.toLowerCase() === DEFAULT_AGENT_FILE_NAME.toLowerCase()) {
-    throw new Error(`${DEFAULT_AGENT_FILE_NAME} cannot be deleted.`);
+  if (isDefaultAgentFileName(filename)) {
+    throw new Error(`${DEFAULT_AGENT_FILE_NAME} is built-in and read-only.`);
   }
   const filePath = path.join(getAgentsDirectoryPath(), filename);
   if (!existsSync(filePath)) {
@@ -610,7 +587,8 @@ function parseAgentMarkdown(rawContent: string, filename: string): StoredAgent {
     description,
     tags,
     tools,
-    prompt
+    prompt,
+    readOnly: false
   };
 }
 
@@ -802,6 +780,24 @@ function toYamlQuoted(input: string): string {
 
 function filenameToId(filename: string): string {
   return filename.toLowerCase().endsWith(".md") ? filename.slice(0, -3) : filename;
+}
+
+function isDefaultAgentFileName(filename: string): boolean {
+  return filename.toLowerCase() === DEFAULT_AGENT_FILE_NAME.toLowerCase();
+}
+
+function createBuiltinDefaultAgent(): StoredAgent {
+  return {
+    id: DEFAULT_AGENT_ID,
+    filename: DEFAULT_AGENT_FILE_NAME,
+    name: DEFAULT_AGENT_METADATA.name,
+    avatar: DEFAULT_AGENT_METADATA.avatar,
+    description: DEFAULT_AGENT_METADATA.description,
+    tags: [...DEFAULT_AGENT_METADATA.tags],
+    tools: [...DEFAULT_AGENT_METADATA.tools],
+    prompt: DEFAULT_AGENT_PROMPT,
+    readOnly: true
+  };
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {

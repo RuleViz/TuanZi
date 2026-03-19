@@ -9,7 +9,7 @@ const DEFAULT_MAX_OUTPUT = 3_000;
 const FORCE_KILL_GRACE_MS = 2_500;
 const MIDDLE_TRUNCATION_MARKER = "\n[... middle output omitted ...]\n";
 
-export class RunCommandTool implements Tool {
+export class BashTool implements Tool {
   readonly definition = {
     name: "bash",
     description: "Run a one-off terminal command with sanitized and truncated output.",

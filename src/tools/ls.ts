@@ -8,7 +8,7 @@ import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 const DEFAULT_LIMIT = 2000;
 const MAX_LIMIT = 2000;
 
-export class ListDirTool implements Tool {
+export class LsTool implements Tool {
   readonly definition = {
     name: "ls",
     description: "List direct entries in a directory (non-recursive).",

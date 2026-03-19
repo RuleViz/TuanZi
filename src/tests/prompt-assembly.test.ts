@@ -28,6 +28,10 @@ test("searcherSystemPrompt should inject only enabled tool policies", () => {
   assert.equal(prompt.includes('<tool name="read">'), true);
   assert.equal(prompt.includes('<tool name="grep">'), false);
   assert.equal(prompt.includes("summary, references, webReferences"), true);
+  assert.equal(
+    prompt.includes("Recommended exploration workflow: ls -> glob -> grep -> read; adapt as needed for the task."),
+    true
+  );
 });
 
 test("coderSystemPrompt should keep layered structure and escape dynamic values", () => {
@@ -62,4 +66,6 @@ test("coderSystemPrompt should keep layered structure and escape dynamic values"
   assert.equal(prompt.includes("Follow &lt;strict&gt; &amp; safe"), true);
   assert.equal(prompt.includes('<skill name="skill&lt;alpha&gt;">desc &amp; detail</skill>'), true);
   assert.equal(prompt.includes('<tool name="mcp__web__search">Use for new facts.</tool>'), true);
+  assert.equal(prompt.includes("Recommended workflow: ls -> glob -> grep -> read before edit/write"), true);
+  assert.equal(prompt.includes("it is recommended to call skill_load"), true);
 });

@@ -4,7 +4,7 @@ import type { AgentSavePayload, AgentToolProfile } from "../../shared/domain-typ
 import type { ProviderProbePayload } from "../../shared/ipc-contracts";
 
 export interface AgentHandlersDeps {
-  loadCoreModules: () => any;
+  loadCoreModules: (options?: { bypassCache?: boolean }) => any;
   normalizeOptionalString: (input: unknown) => string | null;
   toErrorMessage: (error: unknown) => string;
   requestProviderModels: (input: { baseUrl: string; apiKey: string }) => Promise<Array<{ id: string; displayName: string; isVision: boolean }>>;
@@ -16,9 +16,18 @@ export interface AgentHandlersDeps {
 }
 
 export function registerAgentHandlers(deps: AgentHandlersDeps): void {
+  const isBuiltinDefaultIdentifier = (value: string | null | undefined): boolean => {
+    const normalized = deps.normalizeOptionalString(value ?? null);
+    if (!normalized) {
+      return false;
+    }
+    const lowered = normalized.toLowerCase();
+    return lowered === "default" || lowered === "default.md";
+  };
+
   ipcMain.handle(IPC_CHANNELS.agentList, async () => {
     try {
-      const { listStoredAgentsSync } = deps.loadCoreModules();
+      const { listStoredAgentsSync } = deps.loadCoreModules({ bypassCache: true });
       return { ok: true, agents: listStoredAgentsSync() };
     } catch (error) {
       return { ok: false, error: deps.toErrorMessage(error) };
@@ -27,7 +36,7 @@ export function registerAgentHandlers(deps: AgentHandlersDeps): void {
 
   ipcMain.handle(IPC_CHANNELS.agentGet, async (_event, payload: { id?: string | null }) => {
     try {
-      const { getStoredAgentSync } = deps.loadCoreModules();
+      const { getStoredAgentSync } = deps.loadCoreModules({ bypassCache: true });
       return { ok: true, agent: getStoredAgentSync(payload?.id ?? "default") };
     } catch (error) {
       return { ok: false, error: deps.toErrorMessage(error) };
@@ -45,6 +54,9 @@ export function registerAgentHandlers(deps: AgentHandlersDeps): void {
       if (!prompt) {
         return { ok: false, error: "系统提示词不能为空" };
       }
+      if (isBuiltinDefaultIdentifier(payload?.filename) || isBuiltinDefaultIdentifier(payload?.previousFilename)) {
+        return { ok: false, error: "内置默认 Agent 为只读，不能修改" };
+      }
 
       const saved = saveStoredAgentSync({
         filename: deps.normalizeOptionalString(payload?.filename ?? null),
@@ -60,7 +72,7 @@ export function registerAgentHandlers(deps: AgentHandlersDeps): void {
       if (
         previousFilename &&
         previousFilename.toLowerCase() !== saved.filename.toLowerCase() &&
-        previousFilename.toLowerCase() !== "default.md"
+        !isBuiltinDefaultIdentifier(previousFilename)
       ) {
         try {
           deleteStoredAgentSync(previousFilename);
@@ -81,6 +93,9 @@ export function registerAgentHandlers(deps: AgentHandlersDeps): void {
       const id = deps.normalizeOptionalString(payload?.id ?? null);
       if (!id) {
         return { ok: false, error: "缺少 Agent 标识" };
+      }
+      if (isBuiltinDefaultIdentifier(id)) {
+        return { ok: false, error: "内置默认 Agent 为只读，不能删除" };
       }
       deleteStoredAgentSync(id);
       return { ok: true };
@@ -164,7 +179,7 @@ export function registerAgentHandlers(deps: AgentHandlersDeps): void {
   ipcMain.handle(IPC_CHANNELS.agentListTools, async (_event, payload: { workspace?: string | null }) => {
     let runtime: any = null;
     try {
-      const { loadRuntimeConfig, createToolRuntime, getSystemToolProfile } = deps.loadCoreModules();
+      const { loadRuntimeConfig, createToolRuntime, getSystemToolProfile } = deps.loadCoreModules({ bypassCache: true });
       const runtimeConfig = loadRuntimeConfig({
         workspaceRoot: deps.resolveWorkspaceFromInput(payload?.workspace),
         approvalMode: "auto"

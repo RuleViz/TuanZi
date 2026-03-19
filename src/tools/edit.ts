@@ -18,7 +18,7 @@ interface DiffHunk {
   operations: DiffOperation[];
 }
 
-export class DiffApplyTool implements Tool {
+export class EditTool implements Tool {
   readonly definition = {
     name: "edit",
     description: "Apply a unified diff patch to a file. Supports multiple hunks for non-contiguous edits.",

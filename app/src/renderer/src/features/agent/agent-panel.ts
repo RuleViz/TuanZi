@@ -151,7 +151,9 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
     if (byId) {
       return byId;
     }
-    const byDefault = input.state.agents.find((agent) => agent.filename.toLowerCase() === "default.md");
+    const byDefault =
+      input.state.agents.find((agent) => agent.readOnly) ??
+      input.state.agents.find((agent) => agent.filename.toLowerCase() === "default.md");
     if (byDefault) {
       return byDefault;
     }
@@ -178,6 +180,7 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
       : null;
     const selected =
       target ??
+      input.state.agents.find((agent) => agent.readOnly) ??
       input.state.agents.find((agent) => agent.filename.toLowerCase() === "default.md") ??
       input.state.agents[0] ??
       null;
@@ -287,6 +290,10 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
         input.showError("找不到要编辑的 Agent");
         return;
       }
+      if (target.readOnly) {
+        input.showError("内置默认 Agent 为只读，不能编辑");
+        return;
+      }
       input.state.editor.mode = "edit";
       input.state.editor.previousFilename = target.filename;
       input.state.editor.filenameTouched = true;
@@ -294,11 +301,11 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
       input.agentEditorAvatarInput.value = target.avatar;
       input.agentEditorName.value = target.name;
       input.agentEditorFilename.value = target.filename;
-      input.agentEditorFilename.disabled = target.filename.toLowerCase() === "default.md";
+      input.agentEditorFilename.disabled = target.readOnly;
       input.agentEditorDescription.value = target.description;
       input.agentEditorTags.value = formatTagsInput(target.tags);
       input.agentEditorPrompt.value = target.prompt;
-      input.agentEditorDeleteBtn.classList.toggle("hidden", target.filename.toLowerCase() === "default.md");
+      input.agentEditorDeleteBtn.classList.toggle("hidden", target.readOnly);
       input.agentEditorSaveBtn.textContent = "保存 Agent";
     }
 
@@ -334,10 +341,15 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
     `;
 
     const editBtn = card.querySelector(".agent-card-edit") as HTMLButtonElement;
-    editBtn.addEventListener("click", (event) => {
-      event.stopPropagation();
-      openAgentEditor("edit", agent.filename);
-    });
+    if (agent.readOnly) {
+      editBtn.classList.add("hidden");
+      editBtn.disabled = true;
+    } else {
+      editBtn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openAgentEditor("edit", agent.filename);
+      });
+    }
 
     card.addEventListener("click", () => {
       applyActiveAgent(agent.id);
@@ -394,6 +406,13 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
     if (input.state.editor.mode === "edit" && input.agentEditorFilename.disabled && input.state.editor.previousFilename) {
       filename = input.state.editor.previousFilename;
     }
+    if (input.state.editor.mode === "edit" && input.state.editor.previousFilename) {
+      const target = input.state.agents.find((agent) => agent.filename === input.state.editor.previousFilename);
+      if (target?.readOnly) {
+        input.showError("内置默认 Agent 为只读，不能编辑");
+        return;
+      }
+    }
 
     const tags = parseTagsInput(input.agentEditorTags.value);
     const tools = Array.from(input.state.editor.selectedTools);
@@ -423,8 +442,9 @@ export function createAgentPanelController(input: AgentPanelDeps): AgentPanelCon
     if (!target) {
       return;
     }
-    if (target.toLowerCase() === "default.md") {
-      input.showError("默认 Agent 不允许删除");
+    const targetAgent = input.state.agents.find((agent) => agent.filename === target || agent.id === target);
+    if (targetAgent?.readOnly) {
+      input.showError("内置默认 Agent 为只读，不能删除");
       return;
     }
     const confirmed = window.confirm(`确认删除 Agent: ${target} ?`);

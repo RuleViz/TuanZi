@@ -303,21 +303,33 @@ interface McpClientLike {
 
 let cachedCoreModules: CoreModules | null = null
 
-function loadCoreModules(): CoreModules {
+function loadCoreModules(options?: { bypassCache?: boolean }): CoreModules {
+  const bypassCache = options?.bypassCache === true
   const disableCache = process.env["TUANZI_DISABLE_CORE_MODULE_CACHE"] === "1"
-  if (!disableCache && cachedCoreModules) {
+  if (!disableCache && !bypassCache && cachedCoreModules) {
     return cachedCoreModules
   }
 
   const corePath = app.isPackaged
     ? join(process.resourcesPath, "backend")
     : resolve(__dirname, "../../..")
-  const configMod = require(join(corePath, 'dist/config'))
-  const runtimeMod = require(join(corePath, 'dist/runtime'))
-  const agentStoreMod = require(join(corePath, 'dist/core/agent-store'))
-  const agentToolingMod = require(join(corePath, 'dist/core/agent-tooling'))
-  const mcpConfigMod = require(join(corePath, 'dist/mcp/config-store'))
-  const mcpClientMod = require(join(corePath, 'dist/mcp/stdio-mcp-client'))
+  const requireCoreModule = (relativePath: string): any => {
+    const absolutePath = join(corePath, relativePath)
+    if (bypassCache) {
+      try {
+        delete require.cache[require.resolve(absolutePath)]
+      } catch {
+        // ignore cache eviction failures
+      }
+    }
+    return require(absolutePath)
+  }
+  const configMod = requireCoreModule('dist/config')
+  const runtimeMod = requireCoreModule('dist/runtime')
+  const agentStoreMod = requireCoreModule('dist/core/agent-store')
+  const agentToolingMod = requireCoreModule('dist/core/agent-tooling')
+  const mcpConfigMod = requireCoreModule('dist/mcp/config-store')
+  const mcpClientMod = requireCoreModule('dist/mcp/stdio-mcp-client')
 
   const modules: CoreModules = {
     loadRuntimeConfig: configMod.loadRuntimeConfig as LoadRuntimeConfigFn,
@@ -339,12 +351,12 @@ function loadCoreModules(): CoreModules {
     loadMcpConfigSync: mcpConfigMod.loadMcpConfigSync as () => McpConfigFile,
     saveMcpConfigSync: mcpConfigMod.saveMcpConfigSync as (input: unknown) => McpConfigFile,
     StdioMcpClient: mcpClientMod.StdioMcpClient as new (settings: McpClientSettings) => McpClientLike,
-    RemoteMcpClient: require(join(corePath, 'dist/mcp/remote-mcp-client')).RemoteMcpClient as new (
+    RemoteMcpClient: requireCoreModule('dist/mcp/remote-mcp-client').RemoteMcpClient as new (
       settings: any
     ) => McpClientLike
   }
 
-  if (!disableCache) {
+  if (!disableCache && !bypassCache) {
     cachedCoreModules = modules
   }
 

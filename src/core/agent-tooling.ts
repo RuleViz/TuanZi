@@ -11,43 +11,37 @@ export interface ActiveToolSelection {
 const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
   ls: {
     name: "ls",
-    prompt: "Use ls first to inspect current directory only (non-recursive). Keep results focused with path/pattern/limit."
+    prompt:
+      "Recommended first step: use ls to inspect the current directory only (non-recursive). Keep results focused with path/pattern/limit."
   },
   glob: {
     name: "glob",
-    prompt: "Use glob for cross-directory file discovery by name/path pattern when ls is not enough."
+    prompt: "Use glob for cross-directory file discovery by name/path pattern when ls output is not sufficient."
   },
   grep: {
     name: "grep",
-    prompt: "Use grep to locate content and call-sites in files after narrowing candidate paths."
+    prompt: "Use grep to locate content and call-sites after narrowing candidate paths."
   },
   read: {
     name: "read",
-    prompt: "Use read for single-file context. Paginate large files with offset+limit; do not attempt full-file dumps."
+    prompt:
+      "Use read for single-file context. For large files, paginate with offset+limit instead of trying full-file dumps."
   },
   write: {
     name: "write",
-    prompt: "Use write only for full-file create/overwrite operations when replacing entire content is intended."
+    prompt: "Use write for full-file create/overwrite operations when replacing entire content is intentional."
   },
   edit: {
     name: "edit",
-    prompt: "Use edit (unified diff) for precise local modifications; prefer this over broad overwrite."
+    prompt: "Use edit (unified diff) for precise local modifications; this is usually better than broad overwrite."
   },
   delete_file: {
     name: "delete_file",
     prompt: "Use delete_file only when deletion is necessary and clearly intended by the task."
   },
-  codebase_search: {
-    name: "codebase_search",
-    prompt: "Use codebase_search to find symbols and semantic references across the repository."
-  },
-  checkpoint: {
-    name: "checkpoint",
-    prompt: "Use checkpoint before risky refactors and for rollback/review when verification fails."
-  },
   bash: {
     name: "bash",
-    prompt: "Use bash for build/test/diagnostic verification. Do not use bash to replace ls/glob/grep/read."
+    prompt: "Use bash mainly for build/test/diagnostic verification, not as a replacement for ls/glob/grep/read."
   },
   browser_action: {
     name: "browser_action",

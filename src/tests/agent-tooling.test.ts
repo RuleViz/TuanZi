@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { resolveActiveTools } from "../core/agent-tooling";
+import { getSystemToolProfile, resolveActiveTools } from "../core/agent-tooling";
 
 test("resolveActiveTools should apply agent and runtime intersections", () => {
   const selection = resolveActiveTools(
@@ -23,4 +23,9 @@ test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable i
     selection.activeTools.map((item) => item.name).join(","),
     "ls,bash,skill_load,skill_read_resource"
   );
+});
+
+test("getSystemToolProfile should not expose removed checkpoint/codebase_search tool profiles", () => {
+  assert.equal(getSystemToolProfile("checkpoint"), null);
+  assert.equal(getSystemToolProfile("codebase_search"), null);
 });

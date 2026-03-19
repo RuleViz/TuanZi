@@ -1,31 +1,27 @@
 import type { Tool } from "../core/types";
 import { BrowserActionTool } from "./browser-action";
-import { CheckpointTool } from "./checkpoint";
-import { CodebaseSearchTool } from "./codebase-search";
+import { BashTool } from "./bash";
 import { DeleteFileTool } from "./delete-file";
-import { DiffApplyTool } from "./diff-apply";
-import { FindByNameTool } from "./find-by-name";
-import { GrepSearchTool } from "./grep-search";
-import { ListDirTool } from "./list-dir";
-import { RunCommandTool } from "./run-command";
+import { EditTool } from "./edit";
+import { GlobTool } from "./glob";
+import { GrepTool } from "./grep";
+import { LsTool } from "./ls";
+import { ReadTool } from "./read";
 import { SkillLoadTool } from "./skill-load";
 import { SkillReadResourceTool } from "./skill-read-resource";
-import { ViewFileTool } from "./view-file";
-import { WriteToFileTool } from "./write-to-file";
+import { WriteTool } from "./write";
 
 export function createDefaultTools(): Tool[] {
   return [
-    new ListDirTool(),
-    new ViewFileTool(),
-    new WriteToFileTool(),
+    new LsTool(),
+    new ReadTool(),
+    new WriteTool(),
     new DeleteFileTool(),
-    new FindByNameTool(),
-    new GrepSearchTool(),
-    new RunCommandTool(),
-    new DiffApplyTool(),
-    new CodebaseSearchTool(),
+    new GlobTool(),
+    new GrepTool(),
+    new BashTool(),
+    new EditTool(),
     new BrowserActionTool(),
-    new CheckpointTool(),
     new SkillLoadTool(),
     new SkillReadResourceTool()
   ];

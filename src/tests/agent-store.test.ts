@@ -1,5 +1,5 @@
 ﻿import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -7,6 +7,7 @@ import {
   deleteStoredAgentSync,
   getStoredAgentSync,
   listStoredAgentsSync,
+  loadActiveAgentSync,
   loadAgentBackendConfigSync,
   saveAgentBackendConfigSync,
   saveStoredAgentSync
@@ -26,7 +27,7 @@ function withAgentHome(homePath: string, fn: () => void): void {
   }
 }
 
-test("agent store should bootstrap default config and default agent", () => {
+test("agent store should bootstrap default config and built-in default agent", () => {
   const homeDir = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
   try {
     withAgentHome(homeDir, () => {
@@ -38,7 +39,43 @@ test("agent store should bootstrap default config and default agent", () => {
       const agents = listStoredAgentsSync();
       assert.equal(agents.length >= 1, true);
       assert.equal(agents[0].filename, "default.md");
+      assert.equal(agents[0].readOnly, true);
       assert.equal(agents[0].prompt.length > 0, true);
+      assert.equal(existsSync(path.join(homeDir, "agents", "default.md")), false);
+    });
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("agent store should ignore default.md file for built-in default agent", () => {
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    withAgentHome(homeDir, () => {
+      loadAgentBackendConfigSync();
+      const defaultFilePath = path.join(homeDir, "agents", "default.md");
+      writeFileSync(
+        defaultFilePath,
+        [
+          "---",
+          'name: "Legacy Default"',
+          "tools:",
+          "  - run_command",
+          "---",
+          "",
+          "legacy prompt"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const active = loadActiveAgentSync();
+      assert.equal(active.readOnly, true);
+      assert.equal(active.name, "默认助手");
+      assert.equal(active.tools.includes("run_command"), false);
+
+      const listed = listStoredAgentsSync();
+      assert.equal(listed.some((item) => item.filename === "default.md" && item.readOnly === false), false);
+      assert.equal(listed[0].readOnly, true);
     });
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
@@ -68,7 +105,17 @@ test("agent store should save and delete custom agents", () => {
 
       deleteStoredAgentSync("fullstack");
       assert.throws(() => getStoredAgentSync("fullstack"), /not found/i);
-      assert.throws(() => deleteStoredAgentSync("default"), /cannot be deleted/i);
+      assert.throws(() => deleteStoredAgentSync("default"), /read-only/i);
+      assert.throws(
+        () =>
+          saveStoredAgentSync({
+            filename: "default.md",
+            name: "override",
+            tools: [],
+            prompt: "nope"
+          }),
+        /read-only/i
+      );
     });
   } finally {
     rmSync(homeDir, { recursive: true, force: true });

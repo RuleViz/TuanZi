@@ -6,7 +6,7 @@ import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 const DEFAULT_LIMIT = 800;
 const MAX_LIMIT = 2000;
 
-export class ViewFileTool implements Tool {
+export class ReadTool implements Tool {
   readonly definition = {
     name: "read",
     description: "Read a single file with line numbers and pagination (offset/limit).",

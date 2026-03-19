@@ -5,7 +5,7 @@ import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 import { atomicWriteTextFile } from "../core/file-utils";
 import { createLineDiffPreview } from "../core/diff-preview";
 
-export class WriteToFileTool implements Tool {
+export class WriteTool implements Tool {
   readonly definition = {
     name: "write",
     description: "Write full file content to a path. Creates parent directories automatically.",
