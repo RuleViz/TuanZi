@@ -62,6 +62,7 @@ export interface AppChatResumeSnapshot {
   streamedThinking: string;
   toolCalls: ToolLoopToolCallSnapshot[];
   resumeState: ToolLoopResumeStateSnapshot | null;
+  checkpointId?: string | null;
   updatedAt: string;
 }
 
@@ -159,6 +160,7 @@ function isAppChatResumeSnapshot(value: unknown): value is AppChatResumeSnapshot
     Array.isArray(value.toolCalls) &&
     value.toolCalls.every((item) => isToolCallSnapshot(item)) &&
     (value.resumeState === null || isResumeStateSnapshot(value.resumeState)) &&
+    (value.checkpointId === undefined || value.checkpointId === null || typeof value.checkpointId === "string") &&
     typeof value.updatedAt === "string"
   );
 }

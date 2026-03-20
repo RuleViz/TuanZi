@@ -21,6 +21,7 @@ interface SyncInterruptedTurnInput {
   thinking?: string
   interrupted: boolean
   toolCalls?: ConversationToolCall[]
+  checkpointId?: string | null
 }
 
 export interface SessionStore {
@@ -90,11 +91,12 @@ function isConversationTurn(value: unknown): value is ConversationTurn {
   }
   const record = value as Record<string, unknown>
   return (
-    typeof record.user === 'string' &&
-    typeof record.assistant === 'string' &&
-    (record.thinking === undefined || typeof record.thinking === 'string') &&
-    (record.interrupted === undefined || typeof record.interrupted === 'boolean') &&
-    (record.toolCalls === undefined || (Array.isArray(record.toolCalls) && record.toolCalls.every(isConversationToolCall)))
+      typeof record.user === 'string' &&
+      typeof record.assistant === 'string' &&
+      (record.thinking === undefined || typeof record.thinking === 'string') &&
+      (record.interrupted === undefined || typeof record.interrupted === 'boolean') &&
+      (record.toolCalls === undefined || (Array.isArray(record.toolCalls) && record.toolCalls.every(isConversationToolCall))) &&
+      (record.checkpointId === undefined || typeof record.checkpointId === 'string')
   )
 }
 
@@ -130,7 +132,8 @@ function normalizeSession(
     assistant: turn.assistant,
     thinking: turn.thinking,
     interrupted: turn.interrupted === true,
-    toolCalls: turn.toolCalls?.map(cloneToolCall)
+    toolCalls: turn.toolCalls?.map(cloneToolCall),
+    checkpointId: turn.checkpointId
   }))
   return {
     id: record.id,
@@ -224,7 +227,8 @@ export function createSessionStore(config: SessionStoreConfig): SessionStore {
       assistant: input.assistant,
       thinking: input.thinking,
       interrupted: input.interrupted,
-      toolCalls: input.toolCalls?.map(cloneToolCall)
+      toolCalls: input.toolCalls?.map(cloneToolCall),
+      checkpointId: input.checkpointId ?? undefined
     }
     const existingIndex = findInterruptedTurnIndex(session, input.user)
     if (existingIndex >= 0) {

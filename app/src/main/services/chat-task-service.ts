@@ -746,6 +746,7 @@ export function createRunChatTask(
           streamedText,
           streamedThinking,
           toolCalls: completedToolCalls,
+          checkpointId: currentCheckpointId,
           resumeState: latestResumeState
         });
       };
@@ -928,7 +929,8 @@ export function createRunChatTask(
         summary: streamedText || result.summary,
         toolCalls: result.toolCalls || [],
         changedFiles: result.changedFiles || [],
-        executedCommands: result.executedCommands || []
+        executedCommands: result.executedCommands || [],
+        checkpointId: currentCheckpointId
       };
     } catch (error) {
       if (flushPendingSnapshots && !deps.isShutdownDrainInProgress() && !deps.isShutdownDrainCompleted()) {
@@ -985,7 +987,8 @@ export function createRunChatTask(
           taskId,
           error: "Task interrupted by user",
           interrupted: true,
-          resumeSnapshot: snapshot
+          resumeSnapshot: snapshot,
+          checkpointId: currentCheckpointId
         };
       }
       return { ok: false, taskId, error: message };

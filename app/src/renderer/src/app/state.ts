@@ -19,6 +19,7 @@ export interface ConversationTurn {
   thinking?: string;
   interrupted?: boolean;
   toolCalls?: ConversationToolCall[];
+  checkpointId?: string;
 }
 
 export interface ConversationToolCall {

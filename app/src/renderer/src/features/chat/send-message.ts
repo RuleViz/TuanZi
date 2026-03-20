@@ -49,6 +49,7 @@ export interface SendMessageDeps {
       thinking?: string;
       interrupted: boolean;
       toolCalls?: ConversationToolCall[];
+      checkpointId?: string | null;
     }
   ) => void;
   resetSessionWorkbench: (sessionId: string) => void;
@@ -199,7 +200,8 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
           args: { ...toolCall.args },
           result: { ...toolCall.result },
           timestamp: toolCall.timestamp
-        }))
+        })),
+        checkpointId: result.checkpointId
       });
 
       if (active.history.length === 1 && (!active.title || active.title === input.defaultSessionTitle)) {
@@ -221,7 +223,8 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
           toolName: toolCall.name,
           args: { ...toolCall.args },
           result: { ...toolCall.result }
-        }))
+        })),
+        checkpointId: result.checkpointId
       });
       input.touchActiveSession();
       input.persistSessions();

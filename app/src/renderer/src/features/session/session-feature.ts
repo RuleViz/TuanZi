@@ -49,6 +49,7 @@ interface SyncInterruptedTurnInput {
   thinking?: string
   interrupted: boolean
   toolCalls?: ConversationToolCall[]
+  checkpointId?: string | null
 }
 
 export interface SessionFeature {

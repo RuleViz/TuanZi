@@ -18,6 +18,7 @@ export function buildPersistedResumeSnapshot(input: {
   streamedText: string;
   streamedThinking: string;
   toolCalls: ToolLoopToolCallSnapshot[];
+  checkpointId?: string | null;
   resumeState: ToolLoopResumeStateSnapshot | null;
 }): AppChatResumeSnapshot {
   return {
@@ -33,6 +34,7 @@ export function buildPersistedResumeSnapshot(input: {
     streamedThinking: input.streamedThinking,
     toolCalls: cloneJson(input.toolCalls),
     resumeState: cloneJson(input.resumeState),
+    checkpointId: input.checkpointId,
     updatedAt: new Date().toISOString()
   };
 }

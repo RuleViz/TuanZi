@@ -267,37 +267,30 @@ export function createRendererRuntime() {
       return
     }
 
-    // List checkpoints and find the one matching this turn
-    window.tuanzi.listCheckpoints({ workspace: active.workspace }).then((listResult) => {
-      if (!listResult.ok || !listResult.checkpoints) {
-        showError("无法获取检查点列表")
+    // Use checkpointId stored directly on the turn
+    const turn = active.history[turnIndex]
+    const checkpointId = turn?.checkpointId
+    if (!checkpointId) {
+      showError("该轮次没有关联的检查点，无法撤回")
+      return
+    }
+
+    window.tuanzi.undoToCheckpoint({
+      sessionId: active.id,
+      workspace: active.workspace,
+      checkpointId
+    }).then((result) => {
+      if (!result.ok) {
+        showError(result.error || "撤回失败")
         return
       }
-
-      // The checkpoint at position turnIndex corresponds to the state before that turn
-      const checkpoints = listResult.checkpoints
-      if (turnIndex >= checkpoints.length) {
-        showError("没有对应的检查点（可能检查点已过期）")
-        return
-      }
-      const checkpoint = checkpoints[turnIndex]
-
-      return window.tuanzi.undoToCheckpoint({
-        workspace: active.workspace,
-        checkpointId: checkpoint.id
-      }).then((result) => {
-        if (!result.ok) {
-          showError(result.error || "撤回失败")
-          return
-        }
-        // Remove turns from turnIndex onward
-        active.history.splice(turnIndex)
-        touchActiveSession()
-        persistSessions()
-        renderActiveConversation()
-        renderSessionList()
-        showSuccess(`✓ 已撤回到第 ${turnIndex} 轮（恢复 ${result.restoredFiles ?? 0} 文件，移除 ${result.removedFiles ?? 0} 文件）`)
-      })
+      // Remove turns from turnIndex onward
+      active.history.splice(turnIndex)
+      touchActiveSession()
+      persistSessions()
+      renderActiveConversation()
+      renderSessionList()
+      showSuccess(`✓ 已撤回到第 ${turnIndex} 轮（恢复 ${result.restoredFiles ?? 0} 文件，移除 ${result.removedFiles ?? 0} 文件）`)
     }).catch((err) => {
       showError(`撤回失败: ${err instanceof Error ? err.message : String(err)}`)
     })

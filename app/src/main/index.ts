@@ -879,9 +879,8 @@ async function probeMcpServers(
 // ── Turn Checkpoint Helper ─────────────────────────────
 
 const turnCheckpointManagers = new Map<string, TurnCheckpointManager>()
-const workspaceTurnCounters = new Map<string, number>()
 
-function getTurnCheckpointManager(workspace: string): TurnCheckpointManager {
+export function getTurnCheckpointManager(workspace: string): TurnCheckpointManager {
   const key = workspace.toLowerCase()
   const existing = turnCheckpointManagers.get(key)
   if (existing) {
@@ -897,23 +896,13 @@ function getTurnCheckpointManager(workspace: string): TurnCheckpointManager {
   return mgr
 }
 
-function nextTurnIndex(workspace: string): number {
-  const key = workspace.toLowerCase()
-  const current = workspaceTurnCounters.get(key) ?? 0
-  const next = current + 1
-  workspaceTurnCounters.set(key, next)
-  return next
-}
-
 async function createTurnCheckpoint(
   workspace: string,
-  _turnId: string,
-  _turnIndex: number,
+  turnId: string,
+  turnIndex: number,
   userMessage: string
 ): Promise<string | null> {
   const mgr = getTurnCheckpointManager(workspace)
-  const turnIndex = nextTurnIndex(workspace)
-  const turnId = `turn-${turnIndex}`
   const checkpoint = await mgr.createCheckpoint(turnId, turnIndex, userMessage)
   return checkpoint?.id ?? null
 }
@@ -984,7 +973,11 @@ registerIpcHandlers({
   },
   checkpoint: {
     normalizeOptionalString,
-    toErrorMessage
+    toErrorMessage,
+    getCheckpointManager: getTurnCheckpointManager,
+    rollbackConversationMemoryToCheckpoint: (workspace: string, sessionId: string, checkpointId: string) =>
+      conversationMemoryStore.rollbackToCheckpoint(workspace, sessionId, checkpointId),
+    clearResumeSnapshot: () => chatResumeStore.clear()
   },
   memory: {
     conversationMemoryStore,

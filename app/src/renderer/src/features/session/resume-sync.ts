@@ -5,7 +5,14 @@ interface RefreshResumeDeps {
   showError: (message: string) => void;
   syncInterruptedTurn: (
     session: ChatSession,
-    input: { user: string; assistant: string; thinking?: string; interrupted: boolean; toolCalls?: ConversationToolCall[] }
+    input: {
+      user: string;
+      assistant: string;
+      thinking?: string;
+      interrupted: boolean;
+      toolCalls?: ConversationToolCall[];
+      checkpointId?: string | null;
+    }
   ) => void;
   touchActiveSession: () => void;
   persistSessions: () => void;
@@ -43,7 +50,8 @@ export async function refreshResumeSnapshot(input: RefreshResumeDeps): Promise<v
       toolName: toolCall.name,
       args: { ...toolCall.args },
       result: { ...toolCall.result }
-    }))
+    })),
+    checkpointId: snapshot.checkpointId
   });
   input.touchActiveSession();
   input.persistSessions();

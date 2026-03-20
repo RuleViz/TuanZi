@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { type Dirent, promises as fs } from "node:fs";
 import path from "node:path";
 import type { Logger } from "./types";
@@ -6,24 +6,28 @@ import type { Logger } from "./types";
 export interface TurnCheckpoint {
   id: string;
   turnIndex: number;
-  commitHash: string;
   userMessage: string;
   createdAt: string;
   toolCalls: string[];
 }
 
 export interface TurnCheckpointIndex {
-  version: 1;
-  workspaceRoot: string;
+  version: 2;
   checkpoints: TurnCheckpoint[];
 }
 
-const SHADOW_DIR_NAME = "turn-checkpoints";
-const INDEX_FILE_NAME = "checkpoints.json";
+export interface CheckpointManifest {
+  files: Record<string, { hash: string; size: number }>;
+}
+
+const CHECKPOINTS_DIR = "checkpoints";
+const INDEX_FILE = "index.json";
+const MANIFESTS_DIR = "manifests";
+const BLOBS_DIR = "blobs";
 const MAX_CHECKPOINTS_DEFAULT = 50;
 const MESSAGE_PREVIEW_LENGTH = 200;
 
-const SYNC_EXCLUDES = [
+const WORKSPACE_EXCLUDES = [
   ".git",
   ".tuanzi",
   "node_modules",
@@ -35,136 +39,107 @@ const SYNC_EXCLUDES = [
 ];
 
 export class TurnCheckpointManager {
-  private readonly shadowRoot: string;
+  private readonly checkpointRoot: string;
   private readonly workspaceRoot: string;
   private readonly logger: Logger;
   private readonly maxCheckpoints: number;
   private initialized = false;
+  private mutexChain: Promise<void> = Promise.resolve();
+  private lastManifest: CheckpointManifest | null = null;
 
   constructor(workspaceRoot: string, logger: Logger, maxCheckpoints?: number) {
     this.workspaceRoot = workspaceRoot;
-    this.shadowRoot = path.join(workspaceRoot, ".tuanzi", SHADOW_DIR_NAME);
+    this.checkpointRoot = path.join(workspaceRoot, ".tuanzi", CHECKPOINTS_DIR);
     this.logger = logger;
     this.maxCheckpoints = maxCheckpoints ?? MAX_CHECKPOINTS_DEFAULT;
   }
 
   async createCheckpoint(turnId: string, turnIndex: number, userMessage: string): Promise<TurnCheckpoint | null> {
-    try {
-      await this.ensureInitialized();
-      await this.syncWorkspaceToShadow();
+    return this.withMutex(async () => {
+      try {
+        await this.ensureInitialized();
+        const manifest = await this.snapshotWorkspace();
 
-      const addResult = await this.runGit(["add", "-A"], this.shadowRoot);
-      if (!addResult.ok) {
-        this.logger.warn(`Checkpoint git add failed: ${addResult.stderr.trim()}`);
-        return null;
-      }
-
-      const statusResult = await this.runGit(["status", "--porcelain"], this.shadowRoot);
-      if (statusResult.ok && !statusResult.stdout.trim()) {
-        // No changes since last checkpoint; reuse previous
+        // Check if identical to last checkpoint
         const index = await this.loadIndex();
-        const last = index.checkpoints[index.checkpoints.length - 1];
-        if (last) {
-          return last;
+        if (index.checkpoints.length > 0) {
+          const lastCp = index.checkpoints[index.checkpoints.length - 1];
+          const lastManifest = await this.loadManifest(lastCp.id);
+          if (lastManifest && manifestsEqual(manifest, lastManifest)) {
+            return lastCp;
+          }
         }
-      }
 
-      const preview = truncateMessage(userMessage, MESSAGE_PREVIEW_LENGTH);
-      const message = `turn-${turnIndex}: ${preview}`;
-      const commitResult = await this.runGit(
-        ["commit", "-m", message, "--allow-empty"],
-        this.shadowRoot
-      );
-      if (!commitResult.ok) {
-        this.logger.warn(`Checkpoint commit failed: ${commitResult.stderr.trim()}`);
+        const preview = truncateMessage(userMessage, MESSAGE_PREVIEW_LENGTH);
+        const checkpoint: TurnCheckpoint = {
+          id: turnId,
+          turnIndex,
+          userMessage: preview,
+          createdAt: new Date().toISOString(),
+          toolCalls: []
+        };
+
+        await this.saveManifest(turnId, manifest);
+        index.checkpoints.push(checkpoint);
+        await this.pruneAndGc(index);
+        await this.saveIndex(index);
+        this.lastManifest = manifest;
+
+        return checkpoint;
+      } catch (error) {
+        this.logger.warn(`Failed to create checkpoint: ${toErrorMessage(error)}`);
         return null;
       }
-
-      const hashResult = await this.runGit(["rev-parse", "HEAD"], this.shadowRoot);
-      if (!hashResult.ok) {
-        this.logger.warn(`Checkpoint rev-parse failed: ${hashResult.stderr.trim()}`);
-        return null;
-      }
-      const commitHash = hashResult.stdout.trim();
-
-      const checkpoint: TurnCheckpoint = {
-        id: turnId,
-        turnIndex,
-        commitHash,
-        userMessage: preview,
-        createdAt: new Date().toISOString(),
-        toolCalls: []
-      };
-
-      const index = await this.loadIndex();
-      index.checkpoints.push(checkpoint);
-      await this.pruneIfNeeded(index);
-      await this.saveIndex(index);
-
-      return checkpoint;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`Failed to create checkpoint: ${msg}`);
-      return null;
-    }
+    });
   }
 
   async updateCheckpointToolCalls(turnId: string, toolCalls: string[]): Promise<void> {
-    try {
-      const index = await this.loadIndex();
-      const checkpoint = index.checkpoints.find((cp) => cp.id === turnId);
-      if (checkpoint) {
-        checkpoint.toolCalls = toolCalls;
-        await this.saveIndex(index);
+    return this.withMutex(async () => {
+      try {
+        const index = await this.loadIndex();
+        const checkpoint = index.checkpoints.find((cp) => cp.id === turnId);
+        if (checkpoint) {
+          checkpoint.toolCalls = toolCalls;
+          await this.saveIndex(index);
+        }
+      } catch {
+        // Non-critical; silently ignore
       }
-    } catch {
-      // Non-critical; silently ignore
-    }
+    });
   }
 
   async restore(turnId: string): Promise<{ restoredFiles: number; removedFiles: number } | null> {
-    try {
-      const index = await this.loadIndex();
-      const checkpoint = index.checkpoints.find((cp) => cp.id === turnId);
-      if (!checkpoint) {
+    return this.withMutex(async () => {
+      try {
+        const index = await this.loadIndex();
+        const checkpoint = index.checkpoints.find((cp) => cp.id === turnId);
+        if (!checkpoint) {
+          this.logger.error(`Checkpoint not found: ${turnId}`);
+          return null;
+        }
+
+        const manifest = await this.loadManifest(turnId);
+        if (!manifest) {
+          this.logger.error(`Manifest not found for checkpoint: ${turnId}`);
+          return null;
+        }
+
+        const stats = await this.restoreFromManifest(manifest);
+
+        // Remove checkpoints after the restored one
+        const cpIndex = index.checkpoints.findIndex((cp) => cp.id === turnId);
+        if (cpIndex >= 0) {
+          index.checkpoints.splice(cpIndex + 1);
+          await this.saveIndex(index);
+        }
+
+        this.lastManifest = manifest;
+        return stats;
+      } catch (error) {
+        this.logger.error(`Failed to restore checkpoint: ${toErrorMessage(error)}`);
         return null;
       }
-
-      const checkoutResult = await this.runGit(
-        ["checkout", checkpoint.commitHash, "--", "."],
-        this.shadowRoot
-      );
-      if (!checkoutResult.ok) {
-        this.logger.error(`Checkpoint restore checkout failed: ${checkoutResult.stderr.trim()}`);
-        return null;
-      }
-
-      const cleanResult = await this.runGit(
-        ["clean", "-fd"],
-        this.shadowRoot
-      );
-      if (!cleanResult.ok) {
-        this.logger.warn(`Checkpoint restore clean warning: ${cleanResult.stderr.trim()}`);
-      }
-
-      const stats = await this.syncShadowToWorkspace();
-
-      // Remove checkpoints after the restored one
-      const cpIndex = index.checkpoints.findIndex((cp) => cp.id === turnId);
-      if (cpIndex >= 0) {
-        index.checkpoints.splice(cpIndex + 1);
-        await this.saveIndex(index);
-      }
-
-      // Reset shadow HEAD to the restored commit
-      await this.runGit(["reset", "--hard", checkpoint.commitHash], this.shadowRoot);
-
-      return stats;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to restore checkpoint: ${msg}`);
-      return null;
-    }
+    });
   }
 
   async restoreCodeOnly(turnId: string): Promise<{ restoredFiles: number; removedFiles: number } | null> {
@@ -187,23 +162,12 @@ export class TurnCheckpointManager {
       if (!checkpoint) {
         return null;
       }
-
-      // First sync current workspace into shadow
-      await this.syncWorkspaceToShadow();
-      await this.runGit(["add", "-A"], this.shadowRoot);
-
-      const diffResult = await this.runGit(
-        ["diff", "--cached", checkpoint.commitHash],
-        this.shadowRoot
-      );
-      if (!diffResult.ok) {
+      const oldManifest = await this.loadManifest(turnId);
+      if (!oldManifest) {
         return null;
       }
-
-      // Reset the staging area after diff
-      await this.runGit(["reset", "HEAD"], this.shadowRoot);
-
-      return diffResult.stdout || "(no changes)";
+      const currentManifest = await this.snapshotWorkspace();
+      return buildDiffSummary(oldManifest, currentManifest);
     } catch {
       return null;
     }
@@ -211,76 +175,108 @@ export class TurnCheckpointManager {
 
   // -- Private helpers --
 
+  private async withMutex<T>(fn: () => Promise<T>): Promise<T> {
+    let resolve!: () => void;
+    const next = new Promise<void>((r) => { resolve = r; });
+    const prev = this.mutexChain;
+    this.mutexChain = next;
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  }
+
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) {
       return;
     }
-
-    await fs.mkdir(this.shadowRoot, { recursive: true });
-
-    const gitDir = path.join(this.shadowRoot, ".git");
-    const gitDirExists = await fs.stat(gitDir).then((s) => s.isDirectory()).catch(() => false);
-
-    if (!gitDirExists) {
-      const initResult = await this.runGit(["init"], this.shadowRoot);
-      if (!initResult.ok) {
-        throw new Error(`Shadow git init failed: ${initResult.stderr.trim()}`);
-      }
-
-      // Create gitignore inside shadow repo to keep it small
-      const gitignorePath = path.join(this.shadowRoot, ".gitignore");
-      await fs.writeFile(gitignorePath, "", "utf8");
-
-      // Set user name/email for the shadow repo
-      await this.runGit(["config", "user.name", "TuanZi-Checkpoint"], this.shadowRoot);
-      await this.runGit(["config", "user.email", "checkpoint@tuanzi.local"], this.shadowRoot);
-
-      // Initial commit
-      await this.runGit(["add", "-A"], this.shadowRoot);
-      await this.runGit(["commit", "-m", "init", "--allow-empty"], this.shadowRoot);
-    }
-
+    await fs.mkdir(path.join(this.checkpointRoot, MANIFESTS_DIR), { recursive: true });
+    await fs.mkdir(path.join(this.checkpointRoot, BLOBS_DIR), { recursive: true });
     this.initialized = true;
   }
 
-  private async syncWorkspaceToShadow(): Promise<void> {
-    await syncDirectory(this.workspaceRoot, this.shadowRoot, SYNC_EXCLUDES);
-  }
+  private async snapshotWorkspace(): Promise<CheckpointManifest> {
+    const files = await collectFiles(this.workspaceRoot, WORKSPACE_EXCLUDES);
+    const manifest: CheckpointManifest = { files: {} };
 
-  private async syncShadowToWorkspace(): Promise<{ restoredFiles: number; removedFiles: number }> {
-    const stats = { restoredFiles: 0, removedFiles: 0 };
+    for (const relPath of files) {
+      const absPath = path.join(this.workspaceRoot, relPath);
+      try {
+        const content = await fs.readFile(absPath);
+        const hash = createHash("sha256").update(content).digest("hex");
+        const normalizedRel = relPath.replace(/\\/g, "/");
+        manifest.files[normalizedRel] = { hash, size: content.length };
 
-    // 1) Copy all files from shadow to workspace
-    const shadowFiles = await collectFiles(this.shadowRoot, SYNC_EXCLUDES.concat([".git"]));
-    for (const relPath of shadowFiles) {
-      const src = path.join(this.shadowRoot, relPath);
-      const dest = path.join(this.workspaceRoot, relPath);
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.copyFile(src, dest);
-      stats.restoredFiles += 1;
+        // Store blob if not already stored
+        const blobPath = this.blobPath(hash);
+        const blobExists = await fs.stat(blobPath).then(() => true).catch(() => false);
+        if (!blobExists) {
+          await fs.mkdir(path.dirname(blobPath), { recursive: true });
+          const tmpPath = `${blobPath}.tmp.${Date.now()}`;
+          await fs.writeFile(tmpPath, content);
+          await fs.rename(tmpPath, blobPath);
+        }
+      } catch {
+        // Skip files that can't be read
+      }
     }
 
-    // 2) Remove files in workspace that don't exist in shadow
-    const shadowSet = new Set(shadowFiles.map((f) => normalizePath(f)));
-    const workspaceFiles = await collectFiles(this.workspaceRoot, SYNC_EXCLUDES.concat([".git"]));
+    return manifest;
+  }
+
+  private async restoreFromManifest(manifest: CheckpointManifest): Promise<{ restoredFiles: number; removedFiles: number }> {
+    const stats = { restoredFiles: 0, removedFiles: 0 };
+    const manifestPaths = new Set<string>();
+
+    // 1) Restore all files from manifest
+    for (const [relPath, entry] of Object.entries(manifest.files)) {
+      manifestPaths.add(normalizePath(relPath));
+      const destPath = path.join(this.workspaceRoot, relPath);
+      const blobPath = this.blobPath(entry.hash);
+
+      try {
+        // Only copy if content differs
+        const currentContent = await fs.readFile(destPath).catch(() => null);
+        if (currentContent !== null) {
+          const currentHash = createHash("sha256").update(currentContent).digest("hex");
+          if (currentHash === entry.hash) {
+            continue;
+          }
+        }
+        await fs.mkdir(path.dirname(destPath), { recursive: true });
+        await fs.copyFile(blobPath, destPath);
+        stats.restoredFiles += 1;
+      } catch (err) {
+        this.logger.warn(`Failed to restore file ${relPath}: ${toErrorMessage(err)}`);
+      }
+    }
+
+    // 2) Remove files in workspace that don't exist in manifest
+    const workspaceFiles = await collectFiles(this.workspaceRoot, WORKSPACE_EXCLUDES);
     for (const relPath of workspaceFiles) {
-      if (!shadowSet.has(normalizePath(relPath))) {
+      if (!manifestPaths.has(normalizePath(relPath))) {
         const target = path.join(this.workspaceRoot, relPath);
         await fs.rm(target, { force: true }).catch(() => undefined);
         stats.removedFiles += 1;
       }
     }
 
-    // 3) Remove empty directories in workspace that resulted from file removal
+    // 3) Remove empty directories
     if (stats.removedFiles > 0) {
-      await removeEmptyDirs(this.workspaceRoot, SYNC_EXCLUDES.concat([".git"]));
+      await removeEmptyDirs(this.workspaceRoot, WORKSPACE_EXCLUDES);
     }
 
     return stats;
   }
 
+  private blobPath(hash: string): string {
+    return path.join(this.checkpointRoot, BLOBS_DIR, hash.slice(0, 2), hash);
+  }
+
   private async loadIndex(): Promise<TurnCheckpointIndex> {
-    const indexPath = path.join(this.workspaceRoot, ".tuanzi", INDEX_FILE_NAME);
+    const indexPath = path.join(this.checkpointRoot, INDEX_FILE);
     try {
       const content = await fs.readFile(indexPath, "utf8");
       const parsed = JSON.parse(content) as unknown;
@@ -290,46 +286,69 @@ export class TurnCheckpointManager {
     } catch {
       // Index missing or corrupt; create fresh
     }
-
-    return {
-      version: 1,
-      workspaceRoot: this.workspaceRoot,
-      checkpoints: []
-    };
+    return { version: 2, checkpoints: [] };
   }
 
   private async saveIndex(index: TurnCheckpointIndex): Promise<void> {
-    const indexPath = path.join(this.workspaceRoot, ".tuanzi", INDEX_FILE_NAME);
-    await fs.writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+    const indexPath = path.join(this.checkpointRoot, INDEX_FILE);
+    const tmpPath = `${indexPath}.tmp.${Date.now()}`;
+    await fs.writeFile(tmpPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+    await fs.rename(tmpPath, indexPath);
   }
 
-  private async pruneIfNeeded(index: TurnCheckpointIndex): Promise<void> {
+  private async loadManifest(checkpointId: string): Promise<CheckpointManifest | null> {
+    const manifestPath = path.join(this.checkpointRoot, MANIFESTS_DIR, `${checkpointId}.json`);
+    try {
+      const content = await fs.readFile(manifestPath, "utf8");
+      const parsed = JSON.parse(content) as unknown;
+      if (parsed && typeof parsed === "object" && "files" in parsed) {
+        return parsed as CheckpointManifest;
+      }
+    } catch {
+      // Missing or corrupt
+    }
+    return null;
+  }
+
+  private async saveManifest(checkpointId: string, manifest: CheckpointManifest): Promise<void> {
+    const manifestPath = path.join(this.checkpointRoot, MANIFESTS_DIR, `${checkpointId}.json`);
+    const tmpPath = `${manifestPath}.tmp.${Date.now()}`;
+    await fs.writeFile(tmpPath, JSON.stringify(manifest), "utf8");
+    await fs.rename(tmpPath, manifestPath);
+  }
+
+  private async pruneAndGc(index: TurnCheckpointIndex): Promise<void> {
     if (index.checkpoints.length <= this.maxCheckpoints) {
       return;
     }
     const excess = index.checkpoints.length - this.maxCheckpoints;
-    index.checkpoints.splice(0, excess);
-  }
+    const removed = index.checkpoints.splice(0, excess);
 
-  private runGit(args: string[], cwd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
-    return new Promise((resolve) => {
-      const child = spawn("git", args, { cwd, shell: false, env: process.env });
-      let stdout = "";
-      let stderr = "";
+    // Collect hashes still referenced by remaining checkpoints
+    const referencedHashes = new Set<string>();
+    for (const cp of index.checkpoints) {
+      const manifest = await this.loadManifest(cp.id);
+      if (manifest) {
+        for (const entry of Object.values(manifest.files)) {
+          referencedHashes.add(entry.hash);
+        }
+      }
+    }
 
-      child.stdout.on("data", (chunk: Buffer | string) => {
-        stdout += String(chunk);
-      });
-      child.stderr.on("data", (chunk: Buffer | string) => {
-        stderr += String(chunk);
-      });
-      child.on("close", (code) => {
-        resolve({ ok: code === 0, stdout, stderr });
-      });
-      child.on("error", (error) => {
-        resolve({ ok: false, stdout, stderr: `${stderr}${stderr ? "\n" : ""}${error.message}` });
-      });
-    });
+    // Delete manifests and orphaned blobs for removed checkpoints
+    for (const cp of removed) {
+      const manifest = await this.loadManifest(cp.id);
+      const manifestPath = path.join(this.checkpointRoot, MANIFESTS_DIR, `${cp.id}.json`);
+      await fs.rm(manifestPath, { force: true }).catch(() => undefined);
+      if (manifest) {
+        for (const entry of Object.values(manifest.files)) {
+          if (!referencedHashes.has(entry.hash)) {
+            const blobFile = this.blobPath(entry.hash);
+            await fs.rm(blobFile, { force: true }).catch(() => undefined);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -348,7 +367,7 @@ function isValidIndex(value: unknown): value is TurnCheckpointIndex {
     return false;
   }
   const record = value as Record<string, unknown>;
-  return record.version === 1 && Array.isArray(record.checkpoints);
+  return record.version === 2 && Array.isArray(record.checkpoints);
 }
 
 function normalizePath(p: string): string {
@@ -360,7 +379,6 @@ function shouldExclude(relativePath: string, excludes: string[]): boolean {
   for (const part of parts) {
     for (const exclude of excludes) {
       if (exclude.startsWith("*.")) {
-        // Glob pattern like *.log
         if (part.endsWith(exclude.slice(1))) {
           return true;
         }
@@ -401,39 +419,6 @@ async function collectFiles(rootDir: string, excludes: string[]): Promise<string
   return results;
 }
 
-async function syncDirectory(src: string, dest: string, excludes: string[]): Promise<void> {
-  const files = await collectFiles(src, excludes);
-  for (const relPath of files) {
-    const srcFile = path.join(src, relPath);
-    const destFile = path.join(dest, relPath);
-    await fs.mkdir(path.dirname(destFile), { recursive: true });
-
-    // Only copy if content differs
-    const srcContent = await fs.readFile(srcFile).catch(() => null);
-    if (srcContent === null) {
-      continue;
-    }
-    const destContent = await fs.readFile(destFile).catch(() => null);
-    if (destContent !== null && srcContent.equals(destContent)) {
-      continue;
-    }
-    await fs.writeFile(destFile, srcContent);
-  }
-
-  // Remove files in dest that no longer exist in src
-  const srcSet = new Set(files.map((f) => normalizePath(f)));
-  const destFiles = await collectFiles(dest, excludes.concat([".git"]));
-  for (const relPath of destFiles) {
-    if (relPath === INDEX_FILE_NAME) {
-      continue;
-    }
-    if (!srcSet.has(normalizePath(relPath))) {
-      const target = path.join(dest, relPath);
-      await fs.rm(target, { force: true }).catch(() => undefined);
-    }
-  }
-}
-
 async function removeEmptyDirs(rootDir: string, excludes: string[]): Promise<void> {
   let entries: Dirent[];
   try {
@@ -456,4 +441,42 @@ async function removeEmptyDirs(rootDir: string, excludes: string[]): Promise<voi
       await fs.rmdir(dirPath).catch(() => undefined);
     }
   }
+}
+
+function manifestsEqual(a: CheckpointManifest, b: CheckpointManifest): boolean {
+  const keysA = Object.keys(a.files).sort();
+  const keysB = Object.keys(b.files).sort();
+  if (keysA.length !== keysB.length) {
+    return false;
+  }
+  for (let i = 0; i < keysA.length; i++) {
+    if (keysA[i] !== keysB[i]) {
+      return false;
+    }
+    if (a.files[keysA[i]].hash !== b.files[keysB[i]].hash) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function buildDiffSummary(oldManifest: CheckpointManifest, newManifest: CheckpointManifest): string {
+  const lines: string[] = [];
+  const allPaths = new Set([...Object.keys(oldManifest.files), ...Object.keys(newManifest.files)]);
+  for (const p of [...allPaths].sort()) {
+    const oldEntry = oldManifest.files[p];
+    const newEntry = newManifest.files[p];
+    if (!oldEntry && newEntry) {
+      lines.push(`A ${p}`);
+    } else if (oldEntry && !newEntry) {
+      lines.push(`D ${p}`);
+    } else if (oldEntry && newEntry && oldEntry.hash !== newEntry.hash) {
+      lines.push(`M ${p}`);
+    }
+  }
+  return lines.length > 0 ? lines.join("\n") : "(no changes)";
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

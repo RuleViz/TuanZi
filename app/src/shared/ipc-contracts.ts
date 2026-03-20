@@ -28,6 +28,7 @@ export interface ChatResumeSnapshot {
   streamedText: string;
   streamedThinking: string;
   toolCalls: ChatResumeToolCall[];
+  checkpointId?: string | null;
   updatedAt: string;
 }
 
@@ -46,6 +47,7 @@ export interface ChatResult {
   }>;
   changedFiles?: string[];
   executedCommands?: Array<{ command: string; exitCode: number | null }>;
+  checkpointId?: string | null;
 }
 
 export interface SendMessagePayload {
@@ -145,6 +147,7 @@ export interface CheckpointListPayload {
 }
 
 export interface CheckpointUndoPayload {
+  sessionId: string;
   workspace: string;
   checkpointId: string;
 }

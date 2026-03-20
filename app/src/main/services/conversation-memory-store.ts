@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ConversationModelSnapshot,
@@ -61,6 +61,34 @@ export class ConversationMemoryStore {
       return turns;
     }
     return turns.filter((turn) => turn.seq > afterSeq);
+  }
+
+  async rollbackToCheckpoint(workspace: string, sessionId: string, checkpointId: string): Promise<boolean> {
+    const paths = this.resolveSessionPaths(workspace, sessionId);
+    const turns = await this.readJsonl<ConversationTurnRecord>(paths.turnsFile, isConversationTurnRecord);
+    const targetIndex = turns.findIndex((turn) => turn.checkpointId === checkpointId);
+    if (targetIndex < 0) {
+      return false;
+    }
+
+    const targetTurn = turns[targetIndex];
+    const keptTurns = turns.slice(0, targetIndex);
+    await mkdir(paths.dir, { recursive: true });
+    const serializedTurns = keptTurns.map((turn) => JSON.stringify(turn)).join("\n");
+    await writeFile(paths.turnsFile, serializedTurns ? `${serializedTurns}\n` : "", "utf8");
+
+    const state = await this.loadOrCreateSessionState(paths, workspace, sessionId);
+    state.nextSeq = targetTurn.seq;
+    state.updatedAt = new Date().toISOString();
+
+    const summary = await this.getSummary(workspace, sessionId);
+    if (summary && summary.toSeq >= targetTurn.seq) {
+      state.lastCompactedSeq = 0;
+      await rm(paths.summaryFile, { force: true }).catch(() => undefined);
+    }
+
+    await this.saveSessionState(state);
+    return true;
   }
 
   async getSummary(workspace: string, sessionId: string): Promise<ConversationSummaryRecord | null> {
