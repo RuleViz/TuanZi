@@ -1,5 +1,5 @@
 import type { TuanziAPI } from "../../../../shared/ipc-contracts"
-import type { ChatSession } from "../../app/state"
+import type { ChatSession, ConversationToolCall } from "../../app/state"
 import { createSessionActions } from "./session-actions"
 import { createSessionListView } from "./session-list-view"
 import { refreshResumeSnapshot as refreshResumeSnapshotFeature } from "./resume-sync"
@@ -33,7 +33,7 @@ interface SessionFeatureDeps {
   historyList: HTMLDivElement
   inputTextarea: HTMLTextAreaElement
   addUserMessage: (text: string, image?: null, undoCallback?: (() => void) | null) => void
-  addAssistantMessage: (text: string, thinking?: string) => void
+  addAssistantMessage: (text: string, thinking?: string, toolCalls?: ConversationToolCall[]) => void
   scrollToBottom: () => void
   clearPendingImage: () => void
   autoResizeTextarea: () => void
@@ -48,6 +48,7 @@ interface SyncInterruptedTurnInput {
   assistant: string
   thinking?: string
   interrupted: boolean
+  toolCalls?: ConversationToolCall[]
 }
 
 export interface SessionFeature {

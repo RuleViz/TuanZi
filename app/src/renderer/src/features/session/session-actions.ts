@@ -1,4 +1,4 @@
-﻿import type { ChatSession } from '../../app/state'
+import type { ChatSession, ConversationToolCall } from '../../app/state'
 
 interface SessionActionState {
   sessions: ChatSession[]
@@ -14,7 +14,7 @@ interface SessionActionsDeps {
   emptyWorkspaceTitle: string
   getActiveSession: () => ChatSession | null
   addUserMessage: (text: string, image?: null, undoCallback?: (() => void) | null) => void
-  addAssistantMessage: (text: string, thinking?: string) => void
+  addAssistantMessage: (text: string, thinking?: string, toolCalls?: ConversationToolCall[]) => void
   scrollToBottom: () => void
   clearPendingImage: () => void
   renderSessionList: () => void
@@ -64,7 +64,7 @@ export function createSessionActions(deps: SessionActionsDeps): SessionActions {
         ? () => deps.onUndoTurn!(turnIndex)
         : null
       deps.addUserMessage(turn.user, null, undoCallback)
-      deps.addAssistantMessage(turn.assistant, turn.thinking)
+      deps.addAssistantMessage(turn.assistant, turn.thinking, turn.toolCalls)
     }
     deps.scrollToBottom()
   }

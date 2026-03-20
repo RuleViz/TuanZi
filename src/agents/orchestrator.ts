@@ -571,8 +571,7 @@ export function buildConversationContext(
       for (const call of turn.toolCalls) {
         let resultStr = "";
         try {
-          const rawResult = JSON.stringify(call.result);
-          resultStr = rawResult.length > 1500 ? rawResult.slice(0, 1500) + "...(truncated)" : rawResult;
+          resultStr = JSON.stringify(call.result);
         } catch {
           resultStr = "[Unserializable result]";
         }

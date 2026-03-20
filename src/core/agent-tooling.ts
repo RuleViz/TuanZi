@@ -47,6 +47,21 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     name: "browser_action",
     prompt: "Use browser_action for browser-driven verification only when UI evidence is needed."
   },
+  spawn_subagent: {
+    name: "spawn_subagent",
+    prompt:
+      "Use spawn_subagent to offload broad repository search or lightweight web research when the result can come back as a short summary."
+  },
+  wait_subagents: {
+    name: "wait_subagents",
+    prompt:
+      "Use wait_subagents after dispatching one or more subagents. Prefer waiting after creating a small parallel batch."
+  },
+  list_subagents: {
+    name: "list_subagents",
+    prompt:
+      "Use list_subagents to inspect current child status before deciding whether to wait, continue, or summarize."
+  },
   skill_load: {
     name: "skill_load",
     prompt:
@@ -59,7 +74,13 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
   }
 };
 
-const ALWAYS_ENABLED_INTERNAL_TOOLS = ["skill_load", "skill_read_resource"] as const;
+const ALWAYS_ENABLED_INTERNAL_TOOLS = [
+  "skill_load",
+  "skill_read_resource",
+  "spawn_subagent",
+  "wait_subagents",
+  "list_subagents"
+] as const;
 
 export function getSystemToolProfile(name: string): SystemToolProfile | null {
   return SYSTEM_TOOL_REGISTRY[name] ?? null;

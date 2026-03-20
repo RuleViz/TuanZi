@@ -85,6 +85,7 @@ class StubSearcher {
     this.calls += 1;
     this.signals.push(signal);
     hooks?.onToolCallCompleted?.({
+      id: "call-glob-1",
       name: "glob",
       args: { pattern: "*.ts" },
       result: { ok: true }

@@ -1,11 +1,11 @@
-import type { ChatSession } from "../../app/state";
+import type { ChatSession, ConversationToolCall } from "../../app/state";
 
 interface RefreshResumeDeps {
   getActiveSession: () => ChatSession | null;
   showError: (message: string) => void;
   syncInterruptedTurn: (
     session: ChatSession,
-    input: { user: string; assistant: string; thinking?: string; interrupted: boolean }
+    input: { user: string; assistant: string; thinking?: string; interrupted: boolean; toolCalls?: ConversationToolCall[] }
   ) => void;
   touchActiveSession: () => void;
   persistSessions: () => void;
@@ -37,7 +37,13 @@ export async function refreshResumeSnapshot(input: RefreshResumeDeps): Promise<v
     user: snapshot.message,
     assistant: snapshot.streamedText,
     thinking: snapshot.streamedThinking || undefined,
-    interrupted: true
+    interrupted: true,
+    toolCalls: snapshot.toolCalls.map((toolCall) => ({
+      id: toolCall.id,
+      toolName: toolCall.name,
+      args: { ...toolCall.args },
+      result: { ...toolCall.result }
+    }))
   });
   input.touchActiveSession();
   input.persistSessions();

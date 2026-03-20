@@ -244,10 +244,43 @@ type CreateOrchestratorFn = (
   }>
 }
 
+type CreateSubagentBridgeFn = (
+  config: unknown,
+  runtime: unknown,
+  input?: {
+    taskId?: string | null
+    onTasksChange?: (tasks: Array<{
+      id: string
+      title: string
+      kind: "subagent"
+      status: "pending" | "running" | "done" | "failed"
+      detail?: string
+    }>) => void
+  }
+) => {
+  spawn: (input: {
+    task: string
+    context?: string
+    agentType?: "explorer"
+  }) => Promise<{ subagentId: string; status: string }>
+  wait: (input?: {
+    ids?: string[]
+    waitMode?: "all" | "any"
+    timeoutMs?: number
+  }) => Promise<{
+    completed: unknown[]
+    pending: unknown[]
+    timedOut: boolean
+  }>
+  list: (status?: string) => Promise<unknown[]>
+  dispose: () => Promise<void>
+}
+
 interface CoreModules {
   loadRuntimeConfig: LoadRuntimeConfigFn
   createToolRuntime: CreateToolRuntimeFn
   createOrchestrator: CreateOrchestratorFn
+  createSubagentBridge: CreateSubagentBridgeFn
   listStoredAgentsSync: () => StoredAgent[]
   getStoredAgentSync: (identifier: string | null | undefined) => StoredAgent
   saveStoredAgentSync: (input: {
@@ -335,6 +368,7 @@ function loadCoreModules(options?: { bypassCache?: boolean }): CoreModules {
     loadRuntimeConfig: configMod.loadRuntimeConfig as LoadRuntimeConfigFn,
     createToolRuntime: runtimeMod.createToolRuntime as CreateToolRuntimeFn,
     createOrchestrator: runtimeMod.createOrchestrator as CreateOrchestratorFn,
+    createSubagentBridge: runtimeMod.createSubagentBridge as CreateSubagentBridgeFn,
     listStoredAgentsSync: agentStoreMod.listStoredAgentsSync as () => StoredAgent[],
     getStoredAgentSync: agentStoreMod.getStoredAgentSync as (
       identifier: string | null | undefined

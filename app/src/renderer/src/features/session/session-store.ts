@@ -1,4 +1,4 @@
-﻿import type { ChatSession, ConversationTurn, StoredSessionPayload } from '../../app/state'
+import type { ChatSession, ConversationToolCall, ConversationTurn, StoredSessionPayload } from '../../app/state'
 
 interface SessionStoreState {
   sessions: ChatSession[]
@@ -20,6 +20,7 @@ interface SyncInterruptedTurnInput {
   assistant: string
   thinking?: string
   interrupted: boolean
+  toolCalls?: ConversationToolCall[]
 }
 
 export interface SessionStore {
@@ -55,6 +56,34 @@ function findInterruptedTurnIndex(session: ChatSession, userText: string): numbe
   return -1
 }
 
+function cloneToolCall(toolCall: ConversationToolCall): ConversationToolCall {
+  return {
+    id: toolCall.id,
+    toolName: toolCall.toolName,
+    args: { ...toolCall.args },
+    result: { ...toolCall.result },
+    timestamp: toolCall.timestamp
+  }
+}
+
+function isConversationToolCall(value: unknown): value is ConversationToolCall {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  const record = value as Record<string, unknown>
+  return (
+    (record.id === undefined || typeof record.id === 'string') &&
+    typeof record.toolName === 'string' &&
+    record.args !== null &&
+    typeof record.args === 'object' &&
+    !Array.isArray(record.args) &&
+    record.result !== null &&
+    typeof record.result === 'object' &&
+    !Array.isArray(record.result) &&
+    (record.timestamp === undefined || typeof record.timestamp === 'string')
+  )
+}
+
 function isConversationTurn(value: unknown): value is ConversationTurn {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
@@ -64,7 +93,8 @@ function isConversationTurn(value: unknown): value is ConversationTurn {
     typeof record.user === 'string' &&
     typeof record.assistant === 'string' &&
     (record.thinking === undefined || typeof record.thinking === 'string') &&
-    (record.interrupted === undefined || typeof record.interrupted === 'boolean')
+    (record.interrupted === undefined || typeof record.interrupted === 'boolean') &&
+    (record.toolCalls === undefined || (Array.isArray(record.toolCalls) && record.toolCalls.every(isConversationToolCall)))
   )
 }
 
@@ -99,7 +129,8 @@ function normalizeSession(
     user: turn.user,
     assistant: turn.assistant,
     thinking: turn.thinking,
-    interrupted: turn.interrupted === true
+    interrupted: turn.interrupted === true,
+    toolCalls: turn.toolCalls?.map(cloneToolCall)
   }))
   return {
     id: record.id,
@@ -192,7 +223,8 @@ export function createSessionStore(config: SessionStoreConfig): SessionStore {
       user: input.user,
       assistant: input.assistant,
       thinking: input.thinking,
-      interrupted: input.interrupted
+      interrupted: input.interrupted,
+      toolCalls: input.toolCalls?.map(cloneToolCall)
     }
     const existingIndex = findInterruptedTurnIndex(session, input.user)
     if (existingIndex >= 0) {

@@ -2,6 +2,7 @@ import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlannerAgent } from "./agents/planner-agent";
 import { SearcherAgent } from "./agents/searcher-agent";
+import { SubagentExplorerAgent } from "./agents/subagent-explorer";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
 import { ConsoleApprovalGate } from "./core/approval-gate";
@@ -9,8 +10,16 @@ import { LocalBackupManager } from "./core/backup-manager";
 import { ConsoleLogger } from "./core/logger";
 import { ConfigPolicyEngine } from "./core/policy-engine";
 import { createSkillRuntime } from "./core/skill-store";
+import { SubagentManager } from "./core/subagent-manager";
 import { ToolRegistry } from "./core/tool-registry";
-import type { ApprovalGate, Logger, TerminalBridge, ToolExecutionContext } from "./core/types";
+import type {
+  ApprovalGate,
+  Logger,
+  SubagentBridge,
+  SubagentSnapshot,
+  TerminalBridge,
+  ToolExecutionContext
+} from "./core/types";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
 
@@ -57,14 +66,7 @@ export function createToolRuntime(
 }
 
 export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: ToolRuntime): PlanToDoOrchestrator {
-  const client =
-    runtimeConfig.model.apiKey !== null
-      ? new OpenAICompatibleClient({
-          baseUrl: runtimeConfig.model.baseUrl,
-          apiKey: runtimeConfig.model.apiKey,
-          defaultRequestOptions: runtimeConfig.model.requestOptions ?? undefined
-        })
-      : null;
+  const client = createModelClient(runtimeConfig);
 
   const coder = new TuanZiAgent(
     client,
@@ -76,4 +78,97 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
   const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel, runtimeConfig.workspaceRoot);
   const searcher = new SearcherAgent(client, runtimeConfig.model.searchModel, toolRuntime.registry, toolRuntime.toolContext);
   return new PlanToDoOrchestrator(coder, planner, searcher, toolRuntime.toolContext);
+}
+
+export function createSubagentBridge(
+  runtimeConfig: RuntimeConfig,
+  toolRuntime: ToolRuntime,
+  input?: {
+    taskId?: string | null;
+    onTasksChange?: (tasks: Array<{
+      id: string;
+      title: string;
+      kind: "subagent";
+      status: "pending" | "running" | "done" | "failed";
+      detail?: string;
+    }>) => void;
+  }
+): SubagentBridge {
+  const client = createModelClient(runtimeConfig);
+  const explorer = new SubagentExplorerAgent(
+    client,
+    runtimeConfig.model.searchModel,
+    toolRuntime.registry,
+    toolRuntime.toolContext
+  );
+  return new SubagentManager({
+    maxConcurrent: 3,
+    taskId: input?.taskId ?? null,
+    runExplorer: async ({ task, context, signal }) => explorer.run({ task, context, signal }),
+    onSnapshotsChange: (snapshots) => {
+      input?.onTasksChange?.(snapshots.map(toWorkbenchTaskItem));
+    }
+  });
+}
+
+function createModelClient(runtimeConfig: RuntimeConfig): OpenAICompatibleClient | null {
+  return runtimeConfig.model.apiKey !== null
+    ? new OpenAICompatibleClient({
+        baseUrl: runtimeConfig.model.baseUrl,
+        apiKey: runtimeConfig.model.apiKey,
+        defaultRequestOptions: runtimeConfig.model.requestOptions ?? undefined
+      })
+    : null;
+}
+
+function toWorkbenchTaskItem(snapshot: SubagentSnapshot): {
+  id: string;
+  title: string;
+  kind: "subagent";
+  status: "pending" | "running" | "done" | "failed";
+  detail?: string;
+} {
+  return {
+    id: snapshot.id,
+    title: `Subagent: ${truncate(snapshot.task, 72)}`,
+    kind: "subagent",
+    status: toWorkbenchStatus(snapshot.status),
+    detail: buildTaskDetail(snapshot)
+  };
+}
+
+function toWorkbenchStatus(status: SubagentSnapshot["status"]): "pending" | "running" | "done" | "failed" {
+  if (status === "queued") {
+    return "pending";
+  }
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "completed") {
+    return "done";
+  }
+  return "failed";
+}
+
+function buildTaskDetail(snapshot: SubagentSnapshot): string {
+  if (snapshot.status === "queued") {
+    return "Queued for read-only discovery.";
+  }
+  if (snapshot.status === "running") {
+    return "Collecting evidence in a child context.";
+  }
+  if (snapshot.status === "completed") {
+    return snapshot.result?.summary || "Subagent completed.";
+  }
+  if (snapshot.status === "cancelled") {
+    return snapshot.result?.error || "Cancelled.";
+  }
+  return snapshot.result?.error || "Subagent failed.";
+}
+
+function truncate(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(1, maxLength - 3))}...`;
 }

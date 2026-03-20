@@ -18,6 +18,15 @@ export interface ConversationTurn {
   assistant: string;
   thinking?: string;
   interrupted?: boolean;
+  toolCalls?: ConversationToolCall[];
+}
+
+export interface ConversationToolCall {
+  id?: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  result: { ok: boolean; data?: unknown; error?: string };
+  timestamp?: string;
 }
 
 export interface ChatSession {

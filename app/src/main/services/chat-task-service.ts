@@ -602,7 +602,12 @@ export function createRunChatTask(
     let latestStreamedThinking = "";
 
     try {
-      const { loadRuntimeConfig, createToolRuntime, createOrchestrator } = deps.loadCoreModules();
+      const {
+        loadRuntimeConfig,
+        createToolRuntime,
+        createOrchestrator,
+        createSubagentBridge
+      } = deps.loadCoreModules();
 
       const runtimeConfig = loadRuntimeConfig({
         workspaceRoot: workspace || process.cwd(),
@@ -674,6 +679,31 @@ export function createRunChatTask(
         approve: async (): Promise<{ approved: boolean }> => ({ approved: true })
       };
 
+      let primaryTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }> = [];
+      let subagentTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }> = [];
+
+      const emitCombinedTasks = (): void => {
+        webContents.send(IPC_CHANNELS.chatTasks, {
+          taskId,
+          sessionId,
+          tasks: [...primaryTasks, ...subagentTasks]
+        });
+      };
+
+      const updatePrimaryTasks = (
+        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }>
+      ): void => {
+        primaryTasks = tasks;
+        emitCombinedTasks();
+      };
+
+      const updateSubagentTasks = (
+        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }>
+      ): void => {
+        subagentTasks = tasks;
+        emitCombinedTasks();
+      };
+
       const runtime = createToolRuntime(runtimeConfig, {
         logger: ipcLogger,
         approvalGate: autoApprovalGate,
@@ -705,8 +735,24 @@ export function createRunChatTask(
         sessionId
       }) as Record<string, unknown>;
       currentRuntime = runtime;
+      const runtimeWithContext = runtime as Record<string, unknown> & {
+        toolContext?: { subagentBridge?: unknown };
+      };
+      const subagentBridge =
+        typeof createSubagentBridge === "function"
+          ? createSubagentBridge(runtimeConfig, runtime as any, {
+            taskId,
+            onTasksChange: updateSubagentTasks
+          })
+          : null;
+      if (subagentBridge && runtimeWithContext.toolContext && typeof runtimeWithContext.toolContext === "object") {
+        runtimeWithContext.toolContext.subagentBridge = subagentBridge;
+      }
       runtimeToDispose = runtime as { dispose?: () => Promise<void> };
       activeTask.forceStop = async () => {
+        if (subagentBridge && typeof subagentBridge.dispose === "function") {
+          await subagentBridge.dispose();
+        }
         if (runtimeToDispose && typeof runtimeToDispose.dispose === "function") {
           await runtimeToDispose.dispose();
         }
@@ -852,6 +898,7 @@ export function createRunChatTask(
             onTasksChange: () => {
               return;
             },
+            emitTasks: updatePrimaryTasks,
             onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => {
               completedToolCalls.push(cloneToolCallSnapshot(call));
               markSnapshotDirty();

@@ -79,6 +79,7 @@ test("ReactToolAgent should continue from saved resume state", async () => {
     ],
     toolCalls: [
       {
+        id: "call_1",
         name: "read",
         args: { path: "README.md" },
         result: { ok: true, data: { path: "README.md" } }

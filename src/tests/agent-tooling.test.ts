@@ -15,13 +15,21 @@ test("resolveActiveTools should apply agent and runtime intersections", () => {
 test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable internal skill tools", () => {
   const selection = resolveActiveTools(
     ["ls", "ls", "bash", "skill_load"],
-    ["ls", "bash", "skill_load", "skill_read_resource"]
+    ["ls", "bash", "skill_load", "skill_read_resource", "spawn_subagent", "wait_subagents", "list_subagents"]
   );
 
-  assert.deepEqual(selection.activeToolNames, ["ls", "bash", "skill_load", "skill_read_resource"]);
+  assert.deepEqual(selection.activeToolNames, [
+    "ls",
+    "bash",
+    "skill_load",
+    "skill_read_resource",
+    "spawn_subagent",
+    "wait_subagents",
+    "list_subagents"
+  ]);
   assert.equal(
     selection.activeTools.map((item) => item.name).join(","),
-    "ls,bash,skill_load,skill_read_resource"
+    "ls,bash,skill_load,skill_read_resource,spawn_subagent,wait_subagents,list_subagents"
   );
 });
 

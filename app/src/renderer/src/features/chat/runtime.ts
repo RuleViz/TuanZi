@@ -1,4 +1,4 @@
-import type { ChatSession, PendingChatImage } from "../../app/state";
+import type { ChatSession, ConversationToolCall, PendingChatImage } from "../../app/state";
 import {
   buildStreamingListeners as buildStreamingListenersFeature,
   beginStreamingUi as beginStreamingUiFeature,
@@ -51,7 +51,13 @@ interface ChatRuntimeDeps {
   renderMarkdownHtml: (text: string) => string;
   syncInterruptedTurn: (
     session: ChatSession,
-    input: { user: string; assistant: string; thinking?: string; interrupted: boolean }
+    input: {
+      user: string;
+      assistant: string;
+      thinking?: string;
+      interrupted: boolean;
+      toolCalls?: ConversationToolCall[];
+    }
   ) => void;
   truncateTitleFromInput: (input: string) => string;
   touchActiveSession: () => void;

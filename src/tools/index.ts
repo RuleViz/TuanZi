@@ -7,8 +7,11 @@ import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
 import { LsTool } from "./ls";
 import { ReadTool } from "./read";
+import { ListSubagentsTool } from "./list-subagents";
 import { SkillLoadTool } from "./skill-load";
 import { SkillReadResourceTool } from "./skill-read-resource";
+import { SpawnSubagentTool } from "./spawn-subagent";
+import { WaitSubagentsTool } from "./wait-subagents";
 import { WriteTool } from "./write";
 
 export function createDefaultTools(): Tool[] {
@@ -22,6 +25,9 @@ export function createDefaultTools(): Tool[] {
     new BashTool(),
     new EditTool(),
     new BrowserActionTool(),
+    new SpawnSubagentTool(),
+    new WaitSubagentsTool(),
+    new ListSubagentsTool(),
     new SkillLoadTool(),
     new SkillReadResourceTool()
   ];

@@ -21,12 +21,14 @@ export function cloneResumeState(
 }
 
 export function toRendererToolCall(call: ToolLoopToolCallSnapshot): {
+  id?: string;
   toolName: string;
   args: Record<string, unknown>;
   result: { ok: boolean; data?: unknown; error?: string };
   timestamp: string;
 } {
   return {
+    ...(typeof call.id === "string" ? { id: call.id } : {}),
     toolName: call.name,
     args: cloneJson(call.args),
     result: cloneJson(call.result),
@@ -41,6 +43,7 @@ export function createChatStreamHooks(input: {
   onAssistantThinkingDelta: (delta: string) => void;
   onPlanPreview?: (preview: string) => void;
   onTasksChange?: (tasks: WorkbenchTaskItem[]) => void;
+  emitTasks?: (tasks: WorkbenchTaskItem[]) => void;
   onToolCallCompleted: (call: ToolLoopToolCallSnapshot) => void;
   onStateChange: (state: ToolLoopResumeStateSnapshot) => void;
   sessionId: string;
@@ -80,6 +83,10 @@ export function createChatStreamHooks(input: {
     },
     onTasksChange: (tasks: WorkbenchTaskItem[]) => {
       input.onTasksChange?.(tasks);
+      if (input.emitTasks) {
+        input.emitTasks(tasks);
+        return;
+      }
       input.webContents.send(IPC_CHANNELS.chatTasks, {
         taskId: input.taskId,
         sessionId: input.sessionId,

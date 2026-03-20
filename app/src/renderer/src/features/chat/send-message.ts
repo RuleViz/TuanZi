@@ -1,5 +1,5 @@
 ﻿import type { ExecBlock, StreamingListeners, StreamUiState } from "./stream-listeners";
-import type { ChatSession, PendingChatImage } from "../../app/state";
+import type { ChatSession, ConversationToolCall, PendingChatImage } from "../../app/state";
 
 export interface SendMessageDeps {
   state: StreamUiState & {
@@ -43,7 +43,13 @@ export interface SendMessageDeps {
   renderMarkdownHtml: (text: string) => string;
   syncInterruptedTurn: (
     session: ChatSession,
-    input: { user: string; assistant: string; thinking?: string; interrupted: boolean }
+    input: {
+      user: string;
+      assistant: string;
+      thinking?: string;
+      interrupted: boolean;
+      toolCalls?: ConversationToolCall[];
+    }
   ) => void;
   resetSessionWorkbench: (sessionId: string) => void;
   truncateTitleFromInput: (input: string) => string;
@@ -187,7 +193,13 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
         user: userHistoryText,
         assistant: assistantText,
         thinking: listeners.getCurrentThinkingText() || undefined,
-        interrupted: false
+        interrupted: false,
+        toolCalls: result.toolCalls?.map((toolCall) => ({
+          toolName: toolCall.toolName,
+          args: { ...toolCall.args },
+          result: { ...toolCall.result },
+          timestamp: toolCall.timestamp
+        }))
       });
 
       if (active.history.length === 1 && (!active.title || active.title === input.defaultSessionTitle)) {
@@ -203,7 +215,13 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
         user: userHistoryText,
         assistant: result.resumeSnapshot.streamedText,
         thinking: result.resumeSnapshot.streamedThinking || undefined,
-        interrupted: true
+        interrupted: true,
+        toolCalls: result.resumeSnapshot.toolCalls.map((toolCall) => ({
+          id: toolCall.id,
+          toolName: toolCall.name,
+          args: { ...toolCall.args },
+          result: { ...toolCall.result }
+        }))
       });
       input.touchActiveSession();
       input.persistSessions();

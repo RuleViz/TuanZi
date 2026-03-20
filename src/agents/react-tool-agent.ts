@@ -17,6 +17,7 @@ import {
 } from "./model-types";
 
 export interface ToolLoopToolCallSnapshot {
+  id: string;
   name: string;
   args: JsonObject;
   result: ToolExecutionResult;
@@ -240,6 +241,7 @@ export class ReactToolAgent {
         }
         const toolResponse = await this.invokeTool(call, input.allowedTools);
         const toolCallSnapshot: ToolLoopToolCallSnapshot = {
+          id: call.id,
           name: call.function.name,
           args: toolResponse.args,
           result: toolResponse.result
@@ -294,7 +296,7 @@ export class ReactToolAgent {
       };
     }
 
-    this.toolContext.logger.info(`[tool] start ${functionName} args=${safePreview(args)}`);
+    this.toolContext.logger.info(`[tool] start ${functionName} id=${call.id} args=${safePreview(args)}`);
     if (functionName.startsWith("mcp__")) {
       const bridge = this.toolContext.mcpBridge;
       if (!bridge) {
@@ -302,7 +304,7 @@ export class ReactToolAgent {
           ok: false,
           error: "MCP bridge is not configured."
         };
-        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        this.toolContext.logger.info(`[tool] done ${functionName} id=${call.id} ok=${result.ok}`);
         return { args, result };
       }
 
@@ -311,7 +313,7 @@ export class ReactToolAgent {
           signal: this.toolContext.signal
         });
         const result = toToolExecutionResult(mcpResult);
-        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        this.toolContext.logger.info(`[tool] done ${functionName} id=${call.id} ok=${result.ok}`);
         return { args, result };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -320,13 +322,13 @@ export class ReactToolAgent {
           ok: false,
           error: message
         };
-        this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+        this.toolContext.logger.info(`[tool] done ${functionName} id=${call.id} ok=${result.ok}`);
         return { args, result };
       }
     }
 
     const result = await this.toolRegistry.execute(functionName, args, this.toolContext);
-    this.toolContext.logger.info(`[tool] done ${functionName} ok=${result.ok}`);
+    this.toolContext.logger.info(`[tool] done ${functionName} id=${call.id} ok=${result.ok}`);
     return { args, result };
   }
 }
@@ -473,6 +475,7 @@ function cloneToolCallSnapshots(toolCalls: ToolLoopToolCallSnapshot[]): ToolLoop
 
 function cloneToolCallSnapshot(call: ToolLoopToolCallSnapshot): ToolLoopToolCallSnapshot {
   return {
+    id: call.id,
     name: call.name,
     args: cloneJsonObject(call.args),
     result: cloneToolExecutionResult(call.result)

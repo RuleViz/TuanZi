@@ -10,6 +10,7 @@ import type {
 } from "./domain-types";
 
 export interface ChatResumeToolCall {
+  id?: string;
   name: string;
   args: Record<string, unknown>;
   result: { ok: boolean; data?: unknown; error?: string };
@@ -97,7 +98,7 @@ export interface StopMessageResult {
 export interface WorkbenchTaskItem {
   id: string;
   title: string;
-  kind: "plan" | "execution" | "search" | "coding";
+  kind: "plan" | "execution" | "search" | "coding" | "subagent";
   status: "pending" | "running" | "done" | "failed";
   detail?: string;
 }
@@ -289,6 +290,7 @@ export interface TuanziAPI {
     callback: (data: {
       taskId: string;
       toolCalls: Array<{
+        id?: string;
         toolName: string;
         args: Record<string, unknown>;
         result: { ok: boolean; data?: unknown; error?: string };
@@ -300,6 +302,7 @@ export interface TuanziAPI {
     callback: (data: {
       taskId: string;
       toolCall: {
+        id?: string;
         toolName: string;
         args: Record<string, unknown>;
         result: { ok: boolean; data?: unknown; error?: string };

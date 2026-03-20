@@ -1,4 +1,4 @@
-import type { PendingChatImage } from "../../app/state";
+import type { ConversationToolCall, PendingChatImage } from "../../app/state";
 
 interface ExecBlockOptions {
   type: "tool" | "command" | "thinking";
@@ -8,12 +8,7 @@ interface ExecBlockOptions {
   loading?: boolean;
 }
 
-interface ToolCall {
-  toolName: string;
-  args: Record<string, unknown>;
-  result: { ok: boolean; data?: unknown; error?: string };
-  timestamp: string;
-}
+type ToolCall = ConversationToolCall;
 
 interface MessageRendererDeps {
   chatArea: HTMLDivElement;
@@ -26,7 +21,7 @@ interface MessageRendererDeps {
 
 export interface MessageRenderer {
   addUserMessage: (text: string, image?: PendingChatImage | null, undoCallback?: (() => void) | null) => void;
-  addAssistantMessage: (text: string, thinking?: string) => void;
+  addAssistantMessage: (text: string, thinking?: string, toolCalls?: ToolCall[]) => void;
   createAssistantSurface: () => {
     contentEl: HTMLDivElement;
     blocksContainer: HTMLDivElement;
@@ -106,8 +101,6 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
       return "ok";
     }
 
-    // MCP tool responses often use { content: [{ type: "text", text: "..." }] }.
-    // Prefer rendering the text blocks directly so search results are not hidden by generic JSON formatting.
     const extractMcpText = (value: unknown): string | null => {
       const blocks = (() => {
         if (Array.isArray(value)) {
@@ -172,11 +165,10 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     const messageEl = document.createElement("div");
     messageEl.className = "message user";
 
-    // Undo button container (appears before the bubble)
     if (undoCallback) {
       const undoBtn = document.createElement("button");
       undoBtn.className = "msg-undo-btn";
-      undoBtn.title = "撤回到此轮之前";
+      undoBtn.title = "Undo to this turn";
       undoBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>`;
       undoBtn.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -197,7 +189,7 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
 
       const metaEl = document.createElement("div");
       metaEl.className = "msg-user-image-meta";
-      metaEl.textContent = `${image.name} · ${input.formatByteSize(image.sizeBytes)}`;
+      metaEl.textContent = `${image.name} 路 ${input.formatByteSize(image.sizeBytes)}`;
       bubble.appendChild(metaEl);
     }
 
@@ -212,7 +204,7 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     input.scrollToBottom();
   };
 
-  const addAssistantMessage = (text: string, thinking?: string): void => {
+  const addAssistantMessage = (text: string, thinking?: string, toolCalls?: ToolCall[]): void => {
     const contentEl = createAssistantMessage();
 
     if (thinking) {
@@ -224,10 +216,14 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
         type: "thinking",
         title: "Thought Process",
         statusOk: true,
-        statusText: "✓ processed"
+        statusText: "鉁?processed"
       });
       output.textContent = thinking;
       blocksContainer.appendChild(block);
+    }
+
+    if (toolCalls && toolCalls.length > 0) {
+      renderToolCalls(contentEl, toolCalls);
     }
 
     const textContainer = document.createElement("div");
@@ -292,13 +288,19 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
   };
 
   const appendCompletedToolCall = (contentEl: HTMLDivElement, toolCall: ToolCall): void => {
+    const toolCallId = typeof toolCall.id === "string" ? toolCall.id : "";
     const normalizedToolName = toolCall.toolName.trim().toLowerCase();
     const loadingBlocks = Array.from(
       contentEl.querySelectorAll<HTMLDivElement>(
         ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
       )
     );
-    const matchedBlock = loadingBlocks.find((block) => block.dataset.toolName === normalizedToolName) ?? null;
+    const matchedBlock =
+      (toolCallId
+        ? loadingBlocks.find((block) => block.dataset.toolCallId === toolCallId)
+        : null) ??
+      loadingBlocks.find((block) => block.dataset.toolName === normalizedToolName) ??
+      null;
     matchedBlock?.remove();
     renderToolCalls(contentEl, [toolCall]);
   };

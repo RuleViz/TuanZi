@@ -90,6 +90,7 @@ export function buildStreamingListeners(input: {
   appendCompletedToolCall: (
     contentEl: HTMLDivElement,
     toolCall: {
+      id?: string;
       toolName: string;
       args: Record<string, unknown>;
       result: { ok: boolean; data?: unknown; error?: string };
@@ -112,28 +113,36 @@ export function buildStreamingListeners(input: {
         ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
       )
     );
-  const hasLoadingBlock = (toolName: string): boolean => {
+  const getBufferKey = (toolName: string, toolCallId?: string): string => {
     const normalizedToolName = normalizeToolName(toolName);
-    return findLoadingBlocks().some((block) => block.dataset.toolName === normalizedToolName);
+    const normalizedId = typeof toolCallId === "string" ? toolCallId.trim() : "";
+    return normalizedId || normalizedToolName;
   };
-  const bufferCompletedBeforeStart = (toolName: string): void => {
+  const hasLoadingBlock = (toolName: string, toolCallId?: string): boolean => {
     const normalizedToolName = normalizeToolName(toolName);
-    if (!normalizedToolName) {
+    const normalizedId = typeof toolCallId === "string" ? toolCallId.trim() : "";
+    return findLoadingBlocks().some((block) =>
+      normalizedId ? block.dataset.toolCallId === normalizedId : block.dataset.toolName === normalizedToolName
+    );
+  };
+  const bufferCompletedBeforeStart = (toolName: string, toolCallId?: string): void => {
+    const key = getBufferKey(toolName, toolCallId);
+    if (!key) {
       return;
     }
-    const current = completedBeforeStartCounts.get(normalizedToolName) ?? 0;
-    completedBeforeStartCounts.set(normalizedToolName, current + 1);
+    const current = completedBeforeStartCounts.get(key) ?? 0;
+    completedBeforeStartCounts.set(key, current + 1);
   };
-  const consumeBufferedCompleted = (toolName: string): boolean => {
-    const normalizedToolName = normalizeToolName(toolName);
-    const current = completedBeforeStartCounts.get(normalizedToolName) ?? 0;
+  const consumeBufferedCompleted = (toolName: string, toolCallId?: string): boolean => {
+    const key = getBufferKey(toolName, toolCallId);
+    const current = completedBeforeStartCounts.get(key) ?? 0;
     if (current <= 0) {
       return false;
     }
     if (current === 1) {
-      completedBeforeStartCounts.delete(normalizedToolName);
+      completedBeforeStartCounts.delete(key);
     } else {
-      completedBeforeStartCounts.set(normalizedToolName, current - 1);
+      completedBeforeStartCounts.set(key, current - 1);
     }
     return true;
   };
@@ -199,12 +208,14 @@ export function buildStreamingListeners(input: {
     }
     input.state.currentTaskId = data.taskId;
     if (data.message.startsWith("[tool] start ")) {
-      const toolName = data.message.replace("[tool] start ", "").split(" ")[0];
+      const raw = data.message.replace("[tool] start ", "");
+      const toolName = raw.split(" ")[0];
+      const toolCallId = raw.match(/\bid=([^\s]+)/)?.[1] ?? "";
       const normalizedToolName = normalizeToolName(toolName);
       if (!normalizedToolName) {
         return;
       }
-      if (consumeBufferedCompleted(normalizedToolName)) {
+      if (consumeBufferedCompleted(normalizedToolName, toolCallId)) {
         return;
       }
       const { block } = input.createExecBlock({
@@ -213,6 +224,9 @@ export function buildStreamingListeners(input: {
         loading: true
       });
       block.dataset.toolName = normalizedToolName;
+      if (toolCallId) {
+        block.dataset.toolCallId = toolCallId;
+      }
       input.contentEl.appendChild(block);
       input.smartScrollToBottom();
     }
@@ -224,10 +238,10 @@ export function buildStreamingListeners(input: {
     }
     input.state.currentTaskId = data.taskId;
     const normalizedToolName = normalizeToolName(data.toolCall.toolName);
-    const matchedLoading = hasLoadingBlock(normalizedToolName);
+    const matchedLoading = hasLoadingBlock(normalizedToolName, data.toolCall.id);
     input.appendCompletedToolCall(input.contentEl, data.toolCall);
     if (!matchedLoading) {
-      bufferCompletedBeforeStart(normalizedToolName);
+      bufferCompletedBeforeStart(normalizedToolName, data.toolCall.id);
     }
     input.state.currentRenderedToolCalls += 1;
 

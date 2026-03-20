@@ -32,11 +32,12 @@ test("AgentRunStore should save/load/clear active run snapshots", async () => {
         { role: "user", content: "finish refactor" }
       ],
       toolCalls: [
-        {
-          name: "read",
-          args: { path: "README.md" },
-          result: { ok: true, data: { path: "README.md" } }
-        }
+      {
+        id: "call-read-1",
+        name: "read",
+        args: { path: "README.md" },
+        result: { ok: true, data: { path: "README.md" } }
+      }
       ],
       allowedTools: ["read"],
       temperature: 0.15,

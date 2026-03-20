@@ -9,6 +9,7 @@ export interface ToolExecutionResultSnapshot {
 }
 
 export interface ToolLoopToolCallSnapshot {
+  id?: string;
   name: string;
   args: Record<string, unknown>;
   result: ToolExecutionResultSnapshot;
@@ -101,7 +102,12 @@ function isToolCallSnapshot(value: unknown): value is ToolLoopToolCallSnapshot {
   if (!isObject(value)) {
     return false;
   }
-  return typeof value.name === "string" && isObject(value.args) && isObject(value.result);
+  return (
+    (value.id === undefined || typeof value.id === "string") &&
+    typeof value.name === "string" &&
+    isObject(value.args) &&
+    isObject(value.result)
+  );
 }
 
 function isResumeAnchorSnapshot(value: unknown): value is ToolLoopResumeAnchorSnapshot {

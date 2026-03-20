@@ -100,6 +100,60 @@ export interface McpBridge {
   getModelToolDefinitions?(): Promise<ModelFunctionToolDefinition[]>;
 }
 
+export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+export type SubagentTaskKind = "explorer";
+
+export interface SubagentToolCallRecord {
+  id: string;
+  name: string;
+  args: JsonObject;
+  result: ToolExecutionResult;
+}
+
+export interface SubagentResultSummary {
+  summary: string;
+  fullText: string;
+  references: SearchReference[];
+  webReferences: Array<{ url: string; reason: string }>;
+  toolCalls: SubagentToolCallRecord[];
+  error?: string;
+  completedAt: string;
+}
+
+export interface SubagentSnapshot {
+  id: string;
+  parentTaskId: string | null;
+  kind: SubagentTaskKind;
+  status: SubagentStatus;
+  task: string;
+  context: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  result: SubagentResultSummary | null;
+}
+
+export interface SubagentBridge {
+  spawn(input: {
+    task: string;
+    context?: string;
+    agentType?: SubagentTaskKind;
+  }): Promise<{ subagentId: string; status: SubagentStatus }>;
+  wait(input?: {
+    ids?: string[];
+    waitMode?: "all" | "any";
+    timeoutMs?: number;
+  }): Promise<{
+    completed: SubagentSnapshot[];
+    pending: SubagentSnapshot[];
+    timedOut: boolean;
+  }>;
+  list(status?: SubagentStatus): Promise<SubagentSnapshot[]>;
+  dispose(): Promise<void>;
+}
+
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -150,6 +204,7 @@ export interface ToolExecutionContext {
   taskId?: string;
   sessionId?: string;
   mcpBridge?: McpBridge;
+  subagentBridge?: SubagentBridge;
   skillRuntime?: SkillRuntime;
   terminalBridge?: TerminalBridge;
   signal?: AbortSignal;
