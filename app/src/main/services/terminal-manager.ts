@@ -3,6 +3,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import type { TerminalSessionSummary } from "../../shared/ipc-contracts";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 
+const PROCESS_TERMINATE_WAIT_MS = 400;
+
 export interface TerminalCommandResult {
   terminalId: string;
   exitCode: number | null;
@@ -33,6 +35,7 @@ interface TerminalSession {
   stdoutBuffer: string;
   pending: PendingCommand | null;
   closed: boolean;
+  recovering: boolean;
 }
 
 export interface TerminalManager {
@@ -118,18 +121,30 @@ export function createTerminalManager(input: {
     });
   }
 
-  function wireSession(session: TerminalSession): void {
-    session.process.stdout.on("data", (chunk: Buffer | string) => {
+  function wireSession(session: TerminalSession, processRef: ChildProcessWithoutNullStreams = session.process): void {
+    processRef.stdout.on("data", (chunk: Buffer | string) => {
+      if (session.process !== processRef || session.closed || session.recovering) {
+        return;
+      }
       handleStdout(session, String(chunk));
     });
-    session.process.stderr.on("data", (chunk: Buffer | string) => {
+    processRef.stderr.on("data", (chunk: Buffer | string) => {
+      if (session.process !== processRef || session.closed || session.recovering) {
+        return;
+      }
       const text = String(chunk);
       if (session.pending) {
         session.pending.stderr += text;
       }
       emitData(session, text);
     });
-    session.process.on("close", (code) => {
+    processRef.on("close", (code) => {
+      if (session.process !== processRef) {
+        return;
+      }
+      if (session.recovering) {
+        return;
+      }
       session.summary.status = "exited";
       session.summary.exitCode = code;
       if (session.pending) {
@@ -176,29 +191,32 @@ export function createTerminalManager(input: {
   }
 
   function settlePending(session: TerminalSession, result: TerminalCommandResult): void {
-    const pending = session.pending;
+    const pending = takePending(session);
     if (!pending) {
       return;
     }
-    session.pending = null;
-    if (pending.timeout) {
-      clearTimeout(pending.timeout);
-    }
-    pending.abortCleanup?.();
     pending.resolve(result);
   }
 
   function rejectPending(session: TerminalSession, error: Error): void {
-    const pending = session.pending;
+    const pending = takePending(session);
     if (!pending) {
       return;
+    }
+    pending.reject(error);
+  }
+
+  function takePending(session: TerminalSession): PendingCommand | null {
+    const pending = session.pending;
+    if (!pending) {
+      return null;
     }
     session.pending = null;
     if (pending.timeout) {
       clearTimeout(pending.timeout);
     }
     pending.abortCleanup?.();
-    pending.reject(error);
+    return pending;
   }
 
   function buildWrappedCommandWithEnv(
@@ -239,6 +257,116 @@ export function createTerminalManager(input: {
     ].join("\n");
   }
 
+  function commandTerminator(): string {
+    // PowerShell's -Command - often waits for an extra blank line before executing multi-line blocks.
+    return process.platform === "win32" ? "\n\n" : "\n";
+  }
+
+  async function waitForProcessExit(processRef: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (exited: boolean): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeout);
+        processRef.removeListener("exit", onExit);
+        processRef.removeListener("error", onError);
+        resolve(exited);
+      };
+      const onExit = (): void => done(true);
+      const onError = (): void => done(true);
+      const timeout = setTimeout(() => done(false), Math.max(0, timeoutMs));
+      processRef.once("exit", onExit);
+      processRef.once("error", onError);
+    });
+  }
+
+  async function terminateProcessTree(processRef: ChildProcessWithoutNullStreams): Promise<void> {
+    const pid = processRef.pid;
+    if (!pid) {
+      return;
+    }
+
+    if (process.platform === "win32") {
+      await new Promise<void>((resolve) => {
+        const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+          shell: false
+        });
+        let settled = false;
+        const done = (): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timeout);
+          resolve();
+        };
+        const timeout = setTimeout(done, PROCESS_TERMINATE_WAIT_MS);
+        killer.once("exit", done);
+        killer.once("error", done);
+      });
+      return;
+    }
+
+    try {
+      processRef.kill("SIGTERM");
+    } catch {
+      // ignore
+    }
+    const exitedByTerm = await waitForProcessExit(processRef, PROCESS_TERMINATE_WAIT_MS);
+    if (exitedByTerm) {
+      return;
+    }
+    try {
+      processRef.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    await waitForProcessExit(processRef, PROCESS_TERMINATE_WAIT_MS);
+  }
+
+  async function recoverTerminalSession(
+    session: TerminalSession,
+    reason: "timeout" | "interrupt",
+    timeoutMs: number
+  ): Promise<{ recovered: boolean; message: string }> {
+    const previousProcess = session.process;
+    session.recovering = true;
+    await terminateProcessTree(previousProcess);
+    if (session.closed) {
+      session.recovering = false;
+      return { recovered: false, message: "Terminal already closed." };
+    }
+
+    try {
+      const replacement = createShellProcess(session.workspace);
+      session.process = replacement;
+      session.summary.status = "running";
+      session.summary.exitCode = undefined;
+      session.stdoutBuffer = "";
+      wireSession(session, replacement);
+      session.recovering = false;
+      const detail =
+        reason === "timeout"
+          ? `Command timed out after ${timeoutMs}ms; terminal recovered and ready for next command.`
+          : "Command interrupted by user; terminal recovered and ready for next command.";
+      emitData(session, `[terminal recovered] ${detail}\n`);
+      return { recovered: true, message: detail };
+    } catch (error) {
+      session.recovering = false;
+      const message = error instanceof Error ? error.message : String(error);
+      session.summary.status = "exited";
+      session.summary.exitCode = null;
+      emitData(session, `[terminal recovery failed] ${message}\n`);
+      emitExit(session, null);
+      return { recovered: false, message };
+    }
+  }
+
   async function createSession(inputData: { sessionId: string; workspace: string; title?: string }): Promise<TerminalSessionSummary> {
     const terminalId = randomUUID();
     const createdAt = new Date().toISOString();
@@ -259,7 +387,8 @@ export function createTerminalManager(input: {
       },
       stdoutBuffer: "",
       pending: null,
-      closed: false
+      closed: false,
+      recovering: false
     };
     sessions.set(terminalId, session);
     wireSession(session);
@@ -298,6 +427,9 @@ export function createTerminalManager(input: {
     if (session.pending) {
       throw new Error("Selected terminal is busy.");
     }
+    if (session.recovering) {
+      throw new Error("Selected terminal is recovering from an interrupted command.");
+    }
     if (session.summary.status !== "running") {
       throw new Error("Selected terminal is not running.");
     }
@@ -322,13 +454,53 @@ export function createTerminalManager(input: {
 
       if (inputData.timeoutMs > 0) {
         pending.timeout = setTimeout(() => {
-          rejectPending(session, new Error(`Command timed out after ${inputData.timeoutMs}ms`));
+          const inflight = takePending(session);
+          if (!inflight) {
+            return;
+          }
+          void recoverTerminalSession(session, "timeout", inputData.timeoutMs).then((recovery) => {
+            const details = [
+              `Command timed out after ${inputData.timeoutMs}ms.`,
+              recovery.recovered
+                ? "Terminal recovered and remains available in workbench."
+                : `Terminal recovery failed: ${recovery.message}`
+            ].join("\n");
+            const stderr = inflight.stderr ? `${inflight.stderr}\n${details}` : details;
+            inflight.resolve({
+              terminalId: session.terminalId,
+              exitCode: null,
+              stdout: inflight.stdout,
+              stderr,
+              timedOut: true,
+              interrupted: false
+            });
+          });
         }, inputData.timeoutMs);
       }
 
       if (inputData.signal) {
         const onAbort = (): void => {
-          rejectPending(session, new Error("Interrupted by user"));
+          const inflight = takePending(session);
+          if (!inflight) {
+            return;
+          }
+          void recoverTerminalSession(session, "interrupt", inputData.timeoutMs).then((recovery) => {
+            const details = [
+              "Interrupted by user.",
+              recovery.recovered
+                ? "Terminal recovered and remains available in workbench."
+                : `Terminal recovery failed: ${recovery.message}`
+            ].join("\n");
+            const stderr = inflight.stderr ? `${inflight.stderr}\n${details}` : details;
+            inflight.resolve({
+              terminalId: session.terminalId,
+              exitCode: null,
+              stdout: inflight.stdout,
+              stderr,
+              timedOut: false,
+              interrupted: true
+            });
+          });
         };
         if (inputData.signal.aborted) {
           onAbort();
@@ -341,12 +513,20 @@ export function createTerminalManager(input: {
       }
 
       session.pending = pending;
-      session.process.stdin.write(`${wrapped}\n`);
+      try {
+        session.process.stdin.write(`${wrapped}${commandTerminator()}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        rejectPending(session, new Error(`Failed to dispatch command: ${message}`));
+      }
     });
   }
 
   async function write(terminalId: string, data: string): Promise<void> {
     const session = getSessionOrThrow(terminalId);
+    if (session.recovering) {
+      throw new Error("Terminal is recovering from an interrupted command");
+    }
     if (session.summary.status !== "running") {
       throw new Error("Terminal is not running");
     }

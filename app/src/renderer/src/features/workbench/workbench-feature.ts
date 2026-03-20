@@ -4,6 +4,8 @@ import type {
   TuanziAPI,
   WorkbenchTaskItem
 } from "../../../../shared/ipc-contracts";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal } from "@xterm/xterm";
 import type { SessionWorkbenchState, WorkbenchTerminalState } from "../../app/state";
 
 interface WorkbenchState {
@@ -31,6 +33,7 @@ interface WorkbenchFeatureDeps {
     TuanziAPI,
     | "createTerminal"
     | "writeTerminal"
+    | "resizeTerminal"
     | "closeTerminal"
     | "onTasks"
     | "onModifiedFiles"
@@ -47,8 +50,18 @@ export interface WorkbenchFeature {
   resetSessionWorkbench: (sessionId: string) => void;
 }
 
+interface ActiveTerminalView {
+  terminalId: string;
+  terminal: Terminal;
+  fitAddon: FitAddon;
+  renderedOutputLength: number;
+  disposeInput: () => void;
+}
+
 export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFeature {
   let sectionButtonsBound = false;
+  let activeTerminalView: ActiveTerminalView | null = null;
+  let resizeFitTimer: number | null = null;
 
   function ensureSessionState(sessionId: string): SessionWorkbenchState {
     const existing = input.state.sessionWorkbench[sessionId];
@@ -69,12 +82,90 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     return ensureSessionState(input.state.activeSessionId);
   }
 
+  function disposeActiveTerminalView(): void {
+    if (!activeTerminalView) {
+      return;
+    }
+    activeTerminalView.disposeInput();
+    activeTerminalView.terminal.dispose();
+    activeTerminalView = null;
+  }
+
+  function terminalMetaText(terminal: WorkbenchTerminalState): string {
+    return `${terminal.workspace} · ${terminal.status}${terminal.exitCode !== undefined ? ` · exit ${terminal.exitCode ?? "null"}` : ""}`;
+  }
+
+  function applyTerminalHead(selected: WorkbenchTerminalState): void {
+    const title = input.terminalPanel.querySelector(".workbench-terminal-head .workbench-task-title") as HTMLDivElement | null;
+    const meta = input.terminalPanel.querySelector(".workbench-terminal-head .workbench-terminal-meta") as HTMLDivElement | null;
+    const status = input.terminalPanel.querySelector(".workbench-terminal-status") as HTMLSpanElement | null;
+    if (title) {
+      title.textContent = selected.title;
+    }
+    if (meta) {
+      meta.textContent = terminalMetaText(selected);
+    }
+    if (status) {
+      status.className = `workbench-terminal-status ${selected.status}`;
+      status.textContent = selected.status === "running" ? "RUNNING" : selected.status === "exited" ? `EXIT ${selected.exitCode ?? "null"}` : "CLOSED";
+    }
+  }
+
+  function fitActiveTerminal(): void {
+    if (!activeTerminalView) {
+      return;
+    }
+    try {
+      activeTerminalView.fitAddon.fit();
+    } catch {
+      return;
+    }
+    void input.api
+      .resizeTerminal({
+        terminalId: activeTerminalView.terminalId,
+        cols: activeTerminalView.terminal.cols,
+        rows: activeTerminalView.terminal.rows
+      })
+      .catch(() => {
+        return;
+      });
+  }
+
+  function scheduleFit(delay = 0): void {
+    if (resizeFitTimer !== null) {
+      window.clearTimeout(resizeFitTimer);
+    }
+    resizeFitTimer = window.setTimeout(() => {
+      resizeFitTimer = null;
+      fitActiveTerminal();
+    }, delay);
+  }
+
+  function renderLocalInput(terminal: Terminal, data: string): void {
+    for (const char of data) {
+      if (char === "\r") {
+        terminal.write("\r\n");
+        continue;
+      }
+      if (char === "\u007F") {
+        terminal.write("\b \b");
+        continue;
+      }
+      if (char === "\t" || (char >= " " && char !== "\u007F")) {
+        terminal.write(char);
+      }
+    }
+  }
+
   function renderDrawerState(): void {
     input.drawer.classList.toggle("open", input.state.workbenchOpen);
     input.drawer.setAttribute("aria-hidden", input.state.workbenchOpen ? "false" : "true");
     input.toggleButton.classList.toggle("active", input.state.workbenchOpen);
     input.toggleButton.setAttribute("aria-expanded", input.state.workbenchOpen ? "true" : "false");
     input.toggleButton.title = input.state.workbenchOpen ? "收起工作台" : "展开工作台";
+    if (input.state.workbenchOpen) {
+      scheduleFit(250);
+    }
   }
 
   function renderTasks(tasks: WorkbenchTaskItem[]): void {
@@ -154,6 +245,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     state.selectedTerminalId = selected?.terminalId ?? null;
 
     if (state.terminals.length === 0 || !selected) {
+      disposeActiveTerminalView();
       input.terminalPanel.innerHTML = '<div class="workbench-empty">当前会话还没有终端</div>';
       return;
     }
@@ -185,54 +277,114 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       input.terminalTabs.appendChild(tab);
     }
 
-    const output = selected.output.trim().length > 0 ? selected.output : "[terminal ready]";
-    const view = document.createElement("div");
-    view.className = "workbench-terminal-view";
-    view.innerHTML = `
-      <div class="workbench-terminal-head">
-        <div>
-          <div class="workbench-task-title">${escapeHtml(selected.title)}</div>
-          <div class="workbench-terminal-meta">${escapeHtml(selected.workspace)} · ${selected.status}${
-      selected.exitCode !== undefined ? ` · exit ${selected.exitCode ?? "null"}` : ""
-    }</div>
+    if (!activeTerminalView || activeTerminalView.terminalId !== selected.terminalId) {
+      disposeActiveTerminalView();
+
+      const view = document.createElement("div");
+      view.className = "workbench-terminal-view";
+      view.innerHTML = `
+        <div class="workbench-terminal-head">
+          <div>
+            <div class="workbench-task-title"></div>
+            <div class="workbench-terminal-meta"></div>
+          </div>
+          <span class="workbench-terminal-status"></span>
         </div>
-      </div>
-      <pre class="workbench-terminal-output"></pre>
-      <div class="workbench-terminal-input-row">
-        <input class="workbench-terminal-input" type="text" placeholder="输入命令或交互内容，回车发送" />
-        <button class="workbench-terminal-send">发送</button>
-      </div>
-    `;
+        <div class="workbench-terminal-native">
+          <div class="workbench-terminal-xterm"></div>
+        </div>
+      `;
+      input.terminalPanel.replaceChildren(view);
 
-    const outputEl = view.querySelector(".workbench-terminal-output") as HTMLPreElement;
-    outputEl.textContent = output;
-    outputEl.scrollTop = outputEl.scrollHeight;
-
-    const inputEl = view.querySelector(".workbench-terminal-input") as HTMLInputElement;
-    const sendBtn = view.querySelector(".workbench-terminal-send") as HTMLButtonElement;
-    const terminalClosed = selected.status !== "running";
-    inputEl.disabled = terminalClosed;
-    sendBtn.disabled = terminalClosed;
-
-    const submit = (): void => {
-      const value = inputEl.value;
-      if (!value) {
-        return;
-      }
-      inputEl.value = "";
-      void input.api.writeTerminal({ terminalId: selected.terminalId, data: `${value}\n` }).catch((error) => {
-        input.showError(error instanceof Error ? error.message : String(error));
+      const xtermHost = view.querySelector(".workbench-terminal-xterm") as HTMLDivElement;
+      const terminal = new Terminal({
+        convertEol: true,
+        allowTransparency: true,
+        cursorBlink: true,
+        fontFamily: "var(--font-mono)",
+        fontSize: 12,
+        lineHeight: 1.42,
+        letterSpacing: 0.2,
+        scrollback: 3000,
+        theme: {
+          background: "#0C0C0C",
+          foreground: "#EDEDED",
+          cursor: "#FF8D2A",
+          selectionBackground: "rgba(255, 122, 0, 0.22)",
+          black: "#0C0C0C",
+          brightBlack: "#5B5B5B",
+          red: "#FF6D6F",
+          brightRed: "#FF8D8E",
+          green: "#8DDA63",
+          brightGreen: "#A9F57F",
+          yellow: "#F5C66D",
+          brightYellow: "#FFD88A",
+          blue: "#73B8FF",
+          brightBlue: "#9BCFFF",
+          magenta: "#C39BFF",
+          brightMagenta: "#D7BCFF",
+          cyan: "#6EE7D8",
+          brightCyan: "#94F7EB",
+          white: "#EDEDED",
+          brightWhite: "#FFFFFF"
+        }
       });
-    };
-    inputEl.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        submit();
-      }
-    });
-    sendBtn.addEventListener("click", submit);
+      const fitAddon = new FitAddon();
+      terminal.loadAddon(fitAddon);
+      terminal.open(xtermHost);
 
-    input.terminalPanel.replaceChildren(view);
+      const terminalId = selected.terminalId;
+      const inputDisposable = terminal.onData((data) => {
+        const current = getCurrentSessionState().terminals.find((item) => item.terminalId === terminalId);
+        if (!current || current.status !== "running") {
+          return;
+        }
+        renderLocalInput(terminal, data);
+        void input.api.writeTerminal({ terminalId, data }).catch((error) => {
+          input.showError(error instanceof Error ? error.message : String(error));
+        });
+      });
+
+      xtermHost.addEventListener("mousedown", () => {
+        terminal.focus();
+      });
+
+      activeTerminalView = {
+        terminalId: selected.terminalId,
+        terminal,
+        fitAddon,
+        renderedOutputLength: 0,
+        disposeInput: () => {
+          inputDisposable.dispose();
+        }
+      };
+
+      requestAnimationFrame(() => {
+        terminal.focus();
+        scheduleFit();
+      });
+    }
+
+    applyTerminalHead(selected);
+
+    if (!activeTerminalView) {
+      return;
+    }
+
+    activeTerminalView.terminal.options.disableStdin = selected.status !== "running";
+
+    if (selected.output.length < activeTerminalView.renderedOutputLength) {
+      activeTerminalView.terminal.reset();
+      activeTerminalView.terminal.write(selected.output);
+      activeTerminalView.renderedOutputLength = selected.output.length;
+      return;
+    }
+
+    if (selected.output.length > activeTerminalView.renderedOutputLength) {
+      const delta = selected.output.slice(activeTerminalView.renderedOutputLength);
+      activeTerminalView.terminal.write(delta);
+      activeTerminalView.renderedOutputLength = selected.output.length;
+    }
   }
 
   async function createTerminal(): Promise<void> {
@@ -277,7 +429,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       existing.createdAt = summary.createdAt;
       existing.exitCode = summary.exitCode;
     } else {
-      state.terminals.unshift({ ...summary, output: `[terminal ready]\n` });
+      state.terminals.unshift({ ...summary, output: "" });
     }
     if (!state.selectedTerminalId) {
       state.selectedTerminalId = summary.terminalId;
@@ -287,6 +439,9 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
   function removeTerminal(sessionId: string, terminalId: string): void {
     const state = ensureSessionState(sessionId);
     state.terminals = state.terminals.filter((item) => item.terminalId !== terminalId);
+    if (activeTerminalView?.terminalId === terminalId) {
+      disposeActiveTerminalView();
+    }
     if (state.selectedTerminalId === terminalId) {
       state.selectedTerminalId = state.terminals[0]?.terminalId ?? null;
     }
@@ -308,16 +463,27 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
 
   function bind(): void {
     bindSectionToggles();
+    input.drawer.addEventListener("click", () => {
+      if (input.state.workbenchOpen) {
+        return;
+      }
+      input.state.workbenchOpen = true;
+      renderCurrentSessionWorkbench();
+    });
     input.toggleButton.addEventListener("click", () => {
       input.state.workbenchOpen = !input.state.workbenchOpen;
       renderCurrentSessionWorkbench();
     });
-    input.closeButton.addEventListener("click", () => {
+    input.closeButton.addEventListener("click", (event) => {
+      event.stopPropagation();
       input.state.workbenchOpen = false;
       renderCurrentSessionWorkbench();
     });
     input.newTerminalButton.addEventListener("click", () => {
       void createTerminal();
+    });
+    window.addEventListener("resize", () => {
+      scheduleFit();
     });
 
     input.api.onTasks((data) => {

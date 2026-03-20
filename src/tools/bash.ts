@@ -362,27 +362,42 @@ async function executeTerminalCommand(
   if (!bridge) {
     throw new Error("Terminal bridge is not configured.");
   }
-  const result = await bridge.executeCommand({
-    sessionId: input.sessionId,
-    workspaceRoot: input.workspaceRoot,
-    cwd: input.cwd,
-    command: input.command,
-    env: input.env,
-    timeoutMs: input.timeoutMs,
-    signal: input.signal,
-    terminalId: input.terminalId,
-    title: input.terminalTitle
-  });
-  return {
-    exitCode: result.exitCode,
-    signal: null,
-    timedOut: result.timedOut,
-    interrupted: result.interrupted,
-    forceKilled: false,
-    terminalId: result.terminalId,
-    stdout: result.stdout,
-    stderr: result.stderr
-  };
+  try {
+    const result = await bridge.executeCommand({
+      sessionId: input.sessionId,
+      workspaceRoot: input.workspaceRoot,
+      cwd: input.cwd,
+      command: input.command,
+      env: input.env,
+      timeoutMs: input.timeoutMs,
+      signal: input.signal,
+      terminalId: input.terminalId,
+      title: input.terminalTitle
+    });
+    return {
+      exitCode: result.exitCode,
+      signal: null,
+      timedOut: result.timedOut,
+      interrupted: result.interrupted,
+      forceKilled: false,
+      terminalId: result.terminalId,
+      stdout: result.stdout,
+      stderr: result.stderr
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const interrupted = message === "Interrupted by user";
+    return {
+      exitCode: interrupted ? null : 1,
+      signal: null,
+      timedOut: false,
+      interrupted,
+      forceKilled: false,
+      terminalId: input.terminalId ?? "unknown-terminal",
+      stdout: "",
+      stderr: `Terminal bridge error: ${message}`
+    };
+  }
 }
 
 function parseEnvOverrides(value: unknown): { ok: true; value: Record<string, string> } | { ok: false; error: string } {

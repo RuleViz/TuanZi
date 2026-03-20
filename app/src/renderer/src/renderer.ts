@@ -3,6 +3,7 @@
  */
 
 import "highlight.js/styles/github.css"
+import "@xterm/xterm/css/xterm.css"
 import { bootstrapRendererApp } from "./app/bootstrap"
 import { createRendererRuntime } from "./app/renderer-runtime"
 import { showError } from "./app/toast"
