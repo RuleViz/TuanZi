@@ -5,7 +5,6 @@ import { asBoolean, asNumber, asString } from "../core/json-utils";
 import { globToRegExp } from "../core/file-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
-const DEFAULT_LIMIT = 2000;
 const MAX_LIMIT = 2000;
 
 export class LsTool implements Tool {
@@ -22,7 +21,7 @@ export class LsTool implements Tool {
         },
         limit: {
           type: "number",
-          description: "Maximum number of entries to return (default 2000, hard max 2000)."
+          description: "Optional maximum number of entries to return (hard max 2000). If omitted, returns the full directory."
         },
         show_hidden: {
           type: "boolean",
@@ -54,7 +53,7 @@ export class LsTool implements Tool {
     const absolutePath = resolveSafePath(pathValue, context.workspaceRoot);
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
-    const limit = clampInt(asNumber(input.limit) ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
+    const limit = input.limit === undefined ? null : clampInt(asNumber(input.limit) ?? 0, 1, MAX_LIMIT);
     const showHidden = asBoolean(input.show_hidden) ?? false;
     const pattern = asString(input.pattern);
     const matcher = pattern ? globToRegExp(pattern) : null;
@@ -74,7 +73,7 @@ export class LsTool implements Tool {
     throwIfAborted(context.signal);
 
     const lines = listing.entries.map((entry) => `${entry.path}${entry.isDirectory ? "/" : ""}`);
-    if (listing.truncated) {
+    if (listing.truncated && limit !== null) {
       lines.push(`... output truncated: returned first ${limit} entries. Narrow with pattern or path.`);
     }
 
@@ -97,9 +96,9 @@ export class LsTool implements Tool {
 }
 
 async function listOneLevel(
-  absolutePath: string,
+    absolutePath: string,
   options: {
-    limit: number;
+    limit: number | null;
     showHidden: boolean;
     matcher: RegExp | null;
   },
@@ -127,7 +126,7 @@ async function listOneLevel(
         continue;
       }
 
-      if (output.length >= options.limit) {
+      if (options.limit !== null && output.length >= options.limit) {
         truncated = true;
         break;
       }

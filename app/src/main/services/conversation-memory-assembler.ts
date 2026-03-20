@@ -22,9 +22,7 @@ export class ConversationMemoryAssembler {
   async assembleContext(input: AssembleConversationContextInput): Promise<AssembleConversationContextOutput> {
     const state = await this.store.getSessionState(input.workspace, input.sessionId);
     const summary = await this.store.getSummary(input.workspace, input.sessionId);
-    const rawTurnsSinceCompaction = await this.store.listTurns(input.workspace, input.sessionId, {
-      afterSeq: state.lastCompactedSeq
-    });
+    const rawTurnsSinceCompaction = await this.store.listTurns(input.workspace, input.sessionId);
 
     const contextText = [
       "[Current Time]",
@@ -33,7 +31,7 @@ export class ConversationMemoryAssembler {
       "[Conversation Summary]",
       summary ? formatSummary(summary) : "(none)",
       "",
-      "[Turns Since Last Compaction]",
+      `[All Raw Turns${state.lastCompactedSeq > 0 ? ` | last compacted seq=${state.lastCompactedSeq}` : ""}]`,
       rawTurnsSinceCompaction.length > 0
         ? rawTurnsSinceCompaction.map((turn) => formatTurn(turn)).join("\n\n")
         : "(none)",
@@ -76,10 +74,17 @@ function formatTurn(turn: ConversationTurnRecord): string {
     turn.toolCalls.length > 0
       ? turn.toolCalls
           .map((call) => {
-            const resultSummary = call.result.ok
-              ? summarizeText(JSON.stringify(call.result.data ?? ""), 200)
-              : summarizeText(call.result.error ?? "unknown error", 200);
-            return `- ${call.toolName}(${summarizeText(JSON.stringify(call.args), 180)}) => ${resultSummary}`;
+            return [
+              `- ${call.toolName}`,
+              "  args:",
+              indentBlock(serializeValue(call.args)),
+              "  result:",
+              indentBlock(
+                call.result.ok
+                  ? serializeValue(call.result.data ?? null)
+                  : serializeValue({ ok: false, error: call.result.error ?? "unknown error" })
+              )
+            ].join("\n");
           })
           .join("\n")
       : "(none)";
@@ -88,15 +93,27 @@ function formatTurn(turn: ConversationTurnRecord): string {
     `Turn #${turn.seq}${turn.interrupted ? " [INTERRUPTED]" : ""}`,
     `User: ${turn.user || "(empty)"}`,
     `Assistant: ${turn.assistant || "(empty)"}`,
-    turn.thinkingSummary ? `Thinking: ${summarizeText(turn.thinkingSummary, 800)}` : "Thinking: (none)",
+    turn.thinkingSummary ? `Thinking:\n${indentBlock(turn.thinkingSummary)}` : "Thinking: (none)",
     "Tool Calls:",
     toolCallsSummary
   ].join("\n");
 }
 
-function summarizeText(input: string, maxChars: number): string {
-  if (input.length <= maxChars) {
-    return input;
+function serializeValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value || "(empty)";
   }
-  return `${input.slice(0, maxChars)}...(truncated)`;
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    return serialized ?? "null";
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+function indentBlock(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
 }

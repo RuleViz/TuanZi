@@ -5,14 +5,13 @@ import { asNumber, asString } from "../core/json-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
-const DEFAULT_MAX_OUTPUT = 3_000;
 const FORCE_KILL_GRACE_MS = 2_500;
 const MIDDLE_TRUNCATION_MARKER = "\n[... middle output omitted ...]\n";
 
 export class BashTool implements Tool {
   readonly definition = {
     name: "bash",
-    description: "Run a one-off terminal command with sanitized and truncated output.",
+    description: "Run a one-off terminal command with sanitized output. Returns full stdout/stderr unless max_output_chars is provided.",
     destructive: true,
     parameters: {
       type: "object",
@@ -31,7 +30,10 @@ export class BashTool implements Tool {
           description: "Optional display title when a new terminal container is created."
         },
         timeout_ms: { type: "number", description: "Timeout in milliseconds." },
-        max_output_chars: { type: "number", description: "Max stdout/stderr characters to keep." },
+        max_output_chars: {
+          type: "number",
+          description: "Optional max stdout/stderr characters to keep. If omitted, returns full output."
+        },
         parse_json_output: { type: "boolean", description: "Attempt to parse stdout as JSON." },
         env: {
           type: "object",
@@ -64,7 +66,8 @@ export class BashTool implements Tool {
     }
 
     const timeoutMs = clampInt(asNumber(input.timeout_ms) ?? DEFAULT_TIMEOUT_MS, 1000, 900_000);
-    const maxOutputChars = clampInt(asNumber(input.max_output_chars) ?? DEFAULT_MAX_OUTPUT, 500, 20_000);
+    const maxOutputChars =
+      input.max_output_chars === undefined ? null : clampInt(asNumber(input.max_output_chars) ?? 0, 500, 20_000);
     const parseJsonOutput = input.parse_json_output === true;
     const terminalId = asString(input.terminal_id) ?? undefined;
     const terminalTitle = asString(input.terminal_title) ?? undefined;
@@ -177,7 +180,7 @@ async function executeShellCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
-  maxOutputChars: number,
+  maxOutputChars: number | null,
   envOverrides: Record<string, string>,
   signal?: AbortSignal
 ): Promise<{
@@ -429,15 +432,18 @@ function tryParseJson(text: string): unknown {
   }
 }
 
-function appendLimited(original: string, addition: string, maxLength: number): string {
+function appendLimited(original: string, addition: string, maxLength: number | null): string {
   const combined = `${original}${stripAnsi(addition)}`;
-  if (combined.length <= maxLength) {
+  if (maxLength === null || combined.length <= maxLength) {
     return combined;
   }
   return truncateMiddle(combined, maxLength);
 }
 
-function sanitizeOutput(text: string, maxLength: number): string {
+function sanitizeOutput(text: string, maxLength: number | null): string {
+  if (maxLength === null) {
+    return stripAnsi(text);
+  }
   return truncateMiddle(stripAnsi(text), maxLength);
 }
 

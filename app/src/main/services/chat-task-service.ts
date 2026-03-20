@@ -19,6 +19,7 @@ import {
   ConversationMemoryCompactor,
   type CompactorModelConfig
 } from "./conversation-memory-compactor";
+import { buildPersistedResumeSnapshot } from "./chat-task-snapshot.js";
 import { ConversationMemoryStore } from "./conversation-memory-store";
 import type { ActiveTaskEntry } from "./active-task";
 import type {
@@ -79,42 +80,6 @@ interface ActiveModelSelection {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function trimPersistedStream(text: string, maxChars: number): string {
-  if (text.length <= maxChars) {
-    return text;
-  }
-  return text.slice(text.length - maxChars);
-}
-
-function buildChatResumeSnapshot(input: {
-  taskId: string;
-  sessionId: string;
-  workspace: string;
-  message: string;
-  agentId: string | null;
-  thinkingEnabled: boolean;
-  streamedText: string;
-  streamedThinking: string;
-  toolCalls: ToolLoopToolCallSnapshot[];
-  resumeState: ToolLoopResumeStateSnapshot | null;
-}): AppChatResumeSnapshot {
-  return {
-    version: 1,
-    taskId: input.taskId,
-    sessionId: input.sessionId,
-    workspace: input.workspace,
-    message: input.message,
-    history: [],
-    agentId: input.agentId,
-    thinkingEnabled: input.thinkingEnabled,
-    streamedText: input.streamedText,
-    streamedThinking: input.streamedThinking,
-    toolCalls: input.toolCalls,
-    resumeState: input.resumeState,
-    updatedAt: new Date().toISOString()
-  };
 }
 
 function estimateDataUrlByteSize(dataUrl: string): number | null {
@@ -771,20 +736,16 @@ export function createRunChatTask(
       let snapshotWriteChain: Promise<void> = Promise.resolve();
 
       const buildPersistedSnapshot = (): AppChatResumeSnapshot => {
-        const trimmedToolCalls =
-          completedToolCalls.length > deps.snapshotMaxToolCalls
-            ? completedToolCalls.slice(completedToolCalls.length - deps.snapshotMaxToolCalls)
-            : completedToolCalls;
-        return buildChatResumeSnapshot({
+        return buildPersistedResumeSnapshot({
           taskId,
           sessionId,
           workspace,
           message: effectiveMessage,
           agentId: deps.normalizeOptionalString(payload.agentId ?? null),
           thinkingEnabled: payload.thinking === true,
-          streamedText: trimPersistedStream(streamedText, deps.snapshotMaxStreamChars),
-          streamedThinking: trimPersistedStream(streamedThinking, deps.snapshotMaxStreamChars),
-          toolCalls: cloneToolCallSnapshots(trimmedToolCalls),
+          streamedText,
+          streamedThinking,
+          toolCalls: completedToolCalls,
           resumeState: latestResumeState
         });
       };

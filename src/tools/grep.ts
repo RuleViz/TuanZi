@@ -47,7 +47,10 @@ export class GrepTool implements Tool {
           items: { type: "string" },
           description: "Optional glob filters, e.g. ['*.ts', '*.md']."
         },
-        max_results: { type: "number", description: "Max returned hits (1-200)." },
+        max_results: {
+          type: "number",
+          description: "Optional max returned hits (1-200). If omitted, returns all hits."
+        },
         context_lines: { type: "number", description: "Surrounding lines for each hit (0-10)." }
       },
       required: ["search_path", "query"],
@@ -65,7 +68,7 @@ export class GrepTool implements Tool {
     const searchPath = resolveSafePath(searchPathValue, context.workspaceRoot, "search_path");
     assertInsideWorkspace(searchPath, context.workspaceRoot);
 
-    const maxResults = clampInt(asNumber(input.max_results) ?? 100, 1, 200);
+    const maxResults = input.max_results === undefined ? null : clampInt(asNumber(input.max_results) ?? 0, 1, 200);
     const contextLines = clampInt(asNumber(input.context_lines) ?? 3, 0, 10);
     const isRegex = asBoolean(input.is_regex) ?? false;
     const caseSensitive = asBoolean(input.case_sensitive) ?? false;
@@ -88,9 +91,10 @@ export class GrepTool implements Tool {
     }
 
     const hits: GrepHit[] = [];
+    const truncationState = { truncated: false };
     const gitignoreRules = stat.isDirectory() ? await loadGitignoreRules(searchPath) : [];
     if (stat.isFile()) {
-      const fileHits = await this.searchFile(searchPath, regex, contextLines, maxResults);
+      const fileHits = await this.searchFile(searchPath, regex, contextLines, maxResults, truncationState);
       hits.push(...fileHits);
     } else if (stat.isDirectory()) {
       await this.searchDirectory(
@@ -101,7 +105,8 @@ export class GrepTool implements Tool {
         contextLines,
         hits,
         maxResults,
-        gitignoreRules
+        gitignoreRules,
+        truncationState
       );
     } else {
       return { ok: false, error: "Unsupported search_path type." };
@@ -112,7 +117,7 @@ export class GrepTool implements Tool {
       data: {
         query: queryValue,
         total: hits.length,
-        truncated: hits.length >= maxResults,
+        truncated: truncationState.truncated,
         hits
       }
     };
@@ -125,10 +130,11 @@ export class GrepTool implements Tool {
     includeMatchers: RegExp[],
     contextLines: number,
     hits: GrepHit[],
-    maxResults: number,
-    gitignoreRules: GitignoreRule[]
+    maxResults: number | null,
+    gitignoreRules: GitignoreRule[],
+    truncationState: { truncated: boolean }
   ): Promise<void> {
-    if (hits.length >= maxResults) {
+    if (maxResults !== null && hits.length >= maxResults) {
       return;
     }
 
@@ -137,7 +143,8 @@ export class GrepTool implements Tool {
     const subdirs: string[] = [];
 
     for (const entry of entries) {
-      if (hits.length >= maxResults) {
+      if (maxResults !== null && hits.length >= maxResults) {
+        truncationState.truncated = true;
         return;
       }
 
@@ -169,17 +176,19 @@ export class GrepTool implements Tool {
 
     const batchSize = 10;
     for (let i = 0; i < files.length; i += batchSize) {
-      if (hits.length >= maxResults) {
+      if (maxResults !== null && hits.length >= maxResults) {
+        truncationState.truncated = true;
         return;
       }
-      const remaining = maxResults - hits.length;
+      const remaining = maxResults === null ? Number.POSITIVE_INFINITY : maxResults - hits.length;
       const batch = files.slice(i, i + batchSize);
       const batchResults = await Promise.all(
-        batch.map((absolutePath) => this.searchFile(absolutePath, regex, contextLines, remaining))
+        batch.map((absolutePath) => this.searchFile(absolutePath, regex, contextLines, remaining, truncationState))
       );
       for (const result of batchResults) {
         for (const hit of result) {
-          if (hits.length >= maxResults) {
+          if (maxResults !== null && hits.length >= maxResults) {
+            truncationState.truncated = true;
             return;
           }
           hits.push(hit);
@@ -188,10 +197,21 @@ export class GrepTool implements Tool {
     }
 
     for (const subdir of subdirs) {
-      if (hits.length >= maxResults) {
+      if (maxResults !== null && hits.length >= maxResults) {
+        truncationState.truncated = true;
         return;
       }
-      await this.searchDirectory(rootPath, subdir, regex, includeMatchers, contextLines, hits, maxResults, gitignoreRules);
+      await this.searchDirectory(
+        rootPath,
+        subdir,
+        regex,
+        includeMatchers,
+        contextLines,
+        hits,
+        maxResults,
+        gitignoreRules,
+        truncationState
+      );
     }
   }
 
@@ -199,7 +219,8 @@ export class GrepTool implements Tool {
     absoluteFilePath: string,
     regex: RegExp,
     contextLines: number,
-    maxResults: number
+    maxResults: number | null,
+    truncationState: { truncated: boolean }
   ): Promise<GrepHit[]> {
     const hits: GrepHit[] = [];
 
@@ -215,7 +236,8 @@ export class GrepTool implements Tool {
 
     const lines = text.split(/\r?\n/);
     for (let index = 0; index < lines.length; index += 1) {
-      if (hits.length >= maxResults) {
+      if (maxResults !== null && hits.length >= maxResults) {
+        truncationState.truncated = true;
         return hits;
       }
 

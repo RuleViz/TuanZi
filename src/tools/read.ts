@@ -3,7 +3,6 @@ import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from
 import { asNumber, asString } from "../core/json-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
 
-const DEFAULT_LIMIT = 800;
 const MAX_LIMIT = 2000;
 
 export class ReadTool implements Tool {
@@ -16,7 +15,10 @@ export class ReadTool implements Tool {
       properties: {
         path: { type: "string", description: "File path (relative to workspace root or absolute)." },
         offset: { type: "number", description: "0-indexed line offset." },
-        limit: { type: "number", description: "Maximum number of lines (default 800, hard max 2000)." }
+        limit: {
+          type: "number",
+          description: "Optional maximum number of lines (hard max 2000). If omitted, returns the whole file."
+        }
       },
       required: ["path"],
       additionalProperties: false
@@ -40,7 +42,7 @@ export class ReadTool implements Tool {
     assertInsideWorkspace(absolutePath, context.workspaceRoot);
 
     const offset = Math.max(0, Math.floor(asNumber(input.offset) ?? 0));
-    const limit = clampInt(asNumber(input.limit) ?? DEFAULT_LIMIT, 1, MAX_LIMIT);
+    const limit = input.limit === undefined ? null : clampInt(asNumber(input.limit) ?? 0, 1, MAX_LIMIT);
 
     throwIfAborted(context.signal);
     const stat = await fs.stat(absolutePath).catch(() => null);
@@ -53,7 +55,7 @@ export class ReadTool implements Tool {
     const lines = text.split(/\r?\n/);
 
     const safeOffset = Math.min(offset, lines.length);
-    const endExclusive = Math.min(safeOffset + limit, lines.length);
+    const endExclusive = limit === null ? lines.length : Math.min(safeOffset + limit, lines.length);
     const selected = lines.slice(safeOffset, endExclusive);
     const contentLines = selected.map((line, index) => `${safeOffset + index + 1}: ${line}`);
     const hasMore = endExclusive < lines.length;

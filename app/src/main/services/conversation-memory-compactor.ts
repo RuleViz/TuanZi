@@ -111,7 +111,7 @@ export class ConversationMemoryCompactor {
           {
             role: "system",
             content:
-              "You compress conversation memory summary. Return strict JSON only with keys: title, summary, keyPoints, openQuestions. Keep tool outputs abstracted as concise summaries."
+              "You maintain a supplemental conversation summary. Return strict JSON only with keys: title, summary, keyPoints, openQuestions. This summary supplements, and never replaces, the raw turn history."
           },
           {
             role: "user",
@@ -215,7 +215,7 @@ function buildCompactionPrompt(previousSummary: ConversationSummaryRecord | null
 
   return [
     "Please merge previous long-term conversation summary and new turns into one updated summary.",
-    "Do NOT include raw tool outputs; only abstracted outcomes.",
+    "This summary is supplemental navigation metadata. Raw turns remain stored separately and are the source of truth.",
     "Return strict JSON with keys: title, summary, keyPoints, openQuestions.",
     "",
     "[Previous Summary]",

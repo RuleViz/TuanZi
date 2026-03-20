@@ -78,6 +78,28 @@ test("ls should apply limit and mark truncated", async () => {
   }
 });
 
+test("ls should return all entries when limit is omitted", async () => {
+  const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-ls-all-"));
+  try {
+    mkdirSync(path.join(workspaceDir, "wide"), { recursive: true });
+    for (let index = 0; index < 2105; index += 1) {
+      writeFileSync(path.join(workspaceDir, "wide", `file-${index}.txt`), `${index}\n`, "utf8");
+    }
+
+    const tool = new LsTool();
+    const result = await tool.execute({ path: "wide" }, createContext(workspaceDir));
+
+    assert.equal(result.ok, true);
+    const data = result.data as Record<string, unknown>;
+    const entries = data.entries as Array<{ path: string }>;
+    assert.equal(entries.length, 2105);
+    assert.equal(data.truncated, false);
+    assert.doesNotMatch(String(data.content ?? ""), /output truncated/i);
+  } finally {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("ls should stop when signal is already aborted", async () => {
   const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-ls-abort-"));
   try {
@@ -156,6 +178,30 @@ test("read should reject missing path and stop on aborted signal", async () => {
       () => tool.execute({ path: "sample.txt" }, createContext(workspaceDir, controller.signal)),
       /Interrupted by user/
     );
+  } finally {
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("read should return the whole file when limit is omitted", async () => {
+  const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-read-all-"));
+  try {
+    const lines = Array.from({ length: 1205 }, (_, index) => `line-${index + 1}`);
+    writeFileSync(path.join(workspaceDir, "sample.txt"), lines.join("\n"), "utf8");
+
+    const tool = new ReadTool();
+    const result = await tool.execute({ path: "sample.txt" }, createContext(workspaceDir));
+
+    assert.equal(result.ok, true);
+    const data = result.data as Record<string, unknown>;
+    const metadata = data.metadata as Record<string, unknown>;
+    const content = String(data.content ?? "");
+    assert.match(content, /1: line-1/);
+    assert.match(content, /1205: line-1205/);
+    assert.equal(metadata.limit, null);
+    assert.equal(metadata.returnedLines, 1205);
+    assert.equal(metadata.hasMore, false);
+    assert.equal(metadata.nextOffset, null);
   } finally {
     rmSync(workspaceDir, { recursive: true, force: true });
   }

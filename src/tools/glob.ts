@@ -33,7 +33,10 @@ export class GlobTool implements Tool {
       properties: {
         search_path: { type: "string", description: "Root directory to search (relative to workspace root or absolute)." },
         pattern: { type: "string", description: "Glob-like pattern, e.g. *.ts or *service*" },
-        max_results: { type: "number", description: "Maximum number of results (1-200)." },
+        max_results: {
+          type: "number",
+          description: "Optional maximum number of results (1-200). If omitted, returns all matches."
+        },
         max_depth: { type: "number", description: "Maximum recursion depth from root." }
       },
       required: ["search_path", "pattern"],
@@ -51,7 +54,7 @@ export class GlobTool implements Tool {
     const rootPath = resolveSafePath(searchPathValue, context.workspaceRoot, "search_path");
     assertInsideWorkspace(rootPath, context.workspaceRoot);
 
-    const maxResults = clampInt(asNumber(input.max_results) ?? 80, 1, 200);
+    const maxResults = input.max_results === undefined ? null : clampInt(asNumber(input.max_results) ?? 0, 1, 200);
     const maxDepth = clampInt(asNumber(input.max_depth) ?? 30, 0, 200);
     const matcher = globToRegExp(patternValue);
 
@@ -61,7 +64,8 @@ export class GlobTool implements Tool {
     }
 
     const matches: FindMatch[] = [];
-    await this.walk(rootPath, rootPath, 0, maxDepth, matcher, maxResults, matches);
+    const truncationState = { truncated: false };
+    await this.walk(rootPath, rootPath, 0, maxDepth, matcher, maxResults, matches, truncationState);
 
     return {
       ok: true,
@@ -69,7 +73,7 @@ export class GlobTool implements Tool {
         searchPath: rootPath,
         pattern: patternValue,
         total: matches.length,
-        truncated: matches.length >= maxResults,
+        truncated: truncationState.truncated,
         matches
       }
     };
@@ -81,16 +85,18 @@ export class GlobTool implements Tool {
     depth: number,
     maxDepth: number,
     matcher: RegExp,
-    maxResults: number,
-    matches: FindMatch[]
+    maxResults: number | null,
+    matches: FindMatch[],
+    truncationState: { truncated: boolean }
   ): Promise<void> {
-    if (matches.length >= maxResults || depth > maxDepth) {
+    if ((maxResults !== null && matches.length >= maxResults) || depth > maxDepth) {
       return;
     }
 
     const entries = await fs.readdir(currentPath, { withFileTypes: true });
     for (const entry of entries) {
-      if (matches.length >= maxResults) {
+      if (maxResults !== null && matches.length >= maxResults) {
+        truncationState.truncated = true;
         return;
       }
 
@@ -112,7 +118,7 @@ export class GlobTool implements Tool {
       }
 
       if (entry.isDirectory()) {
-        await this.walk(rootPath, absolutePath, depth + 1, maxDepth, matcher, maxResults, matches);
+        await this.walk(rootPath, absolutePath, depth + 1, maxDepth, matcher, maxResults, matches, truncationState);
       }
     }
   }

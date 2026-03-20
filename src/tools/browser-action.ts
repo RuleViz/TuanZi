@@ -189,7 +189,7 @@ export class BrowserActionTool implements Tool {
         data: {
           action: "extract_text",
           selector,
-          text: text.length > 5000 ? `${text.slice(0, 5000)}...(truncated)` : text
+          text: normalizeExtractedBrowserText(text)
         }
       };
     }
@@ -211,6 +211,10 @@ export class BrowserActionTool implements Tool {
     );
     return { ok: true, data: { action: "evaluate", result } };
   }
+}
+
+export function normalizeExtractedBrowserText(extracted: unknown): string {
+  return typeof extracted === "string" ? extracted : String(extracted ?? "");
 }
 
 function isBrowserAction(value: string): value is BrowserAction {

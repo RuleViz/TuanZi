@@ -6,6 +6,7 @@ interface ExecBlockOptions {
   statusOk?: boolean;
   statusText?: string;
   loading?: boolean;
+  collapsedPreview?: boolean;
 }
 
 type ToolCall = ConversationToolCall;
@@ -30,6 +31,96 @@ export interface MessageRenderer {
   createExecBlock: (opts: ExecBlockOptions) => { block: HTMLDivElement; output: HTMLPreElement };
   renderToolCalls: (container: HTMLDivElement, toolCalls: ToolCall[]) => void;
   appendCompletedToolCall: (contentEl: HTMLDivElement, toolCall: ToolCall) => void;
+}
+
+export function formatToolArgsText(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+export function formatToolResultText(result: { ok: boolean; data?: unknown; error?: string }): string {
+  if (!result.ok) {
+    return `Error: ${result.error || "Unknown error"}`;
+  }
+  if (result.data === undefined) {
+    return "ok";
+  }
+
+  const extractMcpText = (value: unknown): string | null => {
+    const blocks = (() => {
+      if (Array.isArray(value)) {
+        return value;
+      }
+      if (!value || typeof value !== "object") {
+        return null;
+      }
+      const record = value as Record<string, unknown>;
+      return Array.isArray(record.content) ? record.content : null;
+    })();
+    if (!blocks || blocks.length === 0) {
+      return null;
+    }
+
+    const chunks: string[] = [];
+    for (const block of blocks) {
+      if (!block || typeof block !== "object") {
+        continue;
+      }
+      const record = block as Record<string, unknown>;
+      const text = typeof record.text === "string" ? record.text.trim() : "";
+      if (text) {
+        chunks.push(text);
+        continue;
+      }
+      if (record.json !== undefined) {
+        try {
+          const json = JSON.stringify(record.json, null, 2);
+          if (json && json !== "{}") {
+            chunks.push(json);
+          }
+        } catch {
+          // ignore invalid json value
+        }
+      }
+    }
+
+    return chunks.length === 0 ? null : chunks.join("\n\n");
+  };
+
+  const mcpText = extractMcpText(result.data);
+  if (mcpText) {
+    return mcpText;
+  }
+
+  try {
+    return JSON.stringify(result.data, null, 2);
+  } catch {
+    return "[unserializable]";
+  }
+}
+
+export function buildExecTextPreview(text: string, maxLines = 8): { text: string; truncated: boolean } {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  if (lines.length <= maxLines) {
+    return { text: normalized, truncated: false };
+  }
+  return {
+    text: lines.slice(0, maxLines).join("\n"),
+    truncated: true
+  };
+}
+
+export function buildExecContentState(
+  text: string
+): { collapsedText: string; expandedText: string } {
+  return {
+    collapsedText: "",
+    expandedText: text
+  };
 }
 
 export function createMessageRenderer(input: MessageRendererDeps): MessageRenderer {
@@ -76,87 +167,13 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     `;
 
     const titleEl = block.querySelector(".exec-title") as HTMLDivElement;
+    const output = block.querySelector(".exec-output pre") as HTMLPreElement;
     titleEl.addEventListener("click", () => {
       block.classList.toggle("expanded");
+      syncExecPreview(block, output);
     });
 
-    const output = block.querySelector(".exec-output pre") as HTMLPreElement;
     return { block, output };
-  };
-
-  const formatArgs = (args: Record<string, unknown>): string => {
-    try {
-      const str = JSON.stringify(args, null, 2);
-      return str.length > 800 ? str.substring(0, 800) + "..." : str;
-    } catch {
-      return "[unserializable]";
-    }
-  };
-
-  const formatResult = (result: { ok: boolean; data?: unknown; error?: string }): string => {
-    if (!result.ok) {
-      return `Error: ${result.error || "Unknown error"}`;
-    }
-    if (result.data === undefined) {
-      return "ok";
-    }
-
-    const extractMcpText = (value: unknown): string | null => {
-      const blocks = (() => {
-        if (Array.isArray(value)) {
-          return value;
-        }
-        if (!value || typeof value !== "object") {
-          return null;
-        }
-        const record = value as Record<string, unknown>;
-        return Array.isArray(record.content) ? record.content : null;
-      })();
-      if (!blocks || blocks.length === 0) {
-        return null;
-      }
-
-      const chunks: string[] = [];
-      for (const block of blocks) {
-        if (!block || typeof block !== "object") {
-          continue;
-        }
-        const record = block as Record<string, unknown>;
-        const text = typeof record.text === "string" ? record.text.trim() : "";
-        if (text) {
-          chunks.push(text);
-          continue;
-        }
-        if (record.json !== undefined) {
-          try {
-            const json = JSON.stringify(record.json, null, 2);
-            if (json && json !== "{}") {
-              chunks.push(json);
-            }
-          } catch {
-            // ignore invalid json value
-          }
-        }
-      }
-
-      if (chunks.length === 0) {
-        return null;
-      }
-      const merged = chunks.join("\n\n");
-      return merged.length > 1200 ? `${merged.substring(0, 1200)}\n...(truncated)` : merged;
-    };
-
-    const mcpText = extractMcpText(result.data);
-    if (mcpText) {
-      return mcpText;
-    }
-
-    try {
-      const str = JSON.stringify(result.data, null, 2);
-      return str.length > 1200 ? str.substring(0, 1200) + "\n...(truncated)" : str;
-    } catch {
-      return "[unserializable]";
-    }
   };
 
   const addUserMessage = (text: string, image?: PendingChatImage | null, undoCallback?: (() => void) | null): void => {
@@ -245,16 +262,10 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
       if (isCommand) {
         const cmd = typeof call.args.command === "string" ? call.args.command : "command";
         title = "Executed command";
-        outputContent = `<span class="code-in">$ ${input.escapeHtml(cmd)}</span>
-
-<span class="code-out">${input.escapeHtml(formatResult(call.result))}</span>`;
+        outputContent = `$ ${cmd}\n\n${formatToolResultText(call.result)}`;
       } else {
         title = `Tool Call: ${call.toolName}`;
-        outputContent = `<span class="code-dim">{</span>
-<span class="code-in">${input.escapeHtml(formatArgs(call.args))}</span>
-<span class="code-dim">}</span>
-
-<span class="code-out">-> ${input.escapeHtml(formatResult(call.result))}</span>`;
+        outputContent = `Args:\n${formatToolArgsText(call.args)}\n\nResult:\n${formatToolResultText(call.result)}`;
       }
 
       const statusText = statusOk ? "done" : "failed";
@@ -262,10 +273,11 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
         type: isCommand ? "command" : "tool",
         title,
         statusOk,
-        statusText
+        statusText,
+        collapsedPreview: true
       });
 
-      output.innerHTML = outputContent;
+      setExecBlockContent(block, output, outputContent);
       container.appendChild(block);
     }
   };
@@ -313,4 +325,17 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     renderToolCalls,
     appendCompletedToolCall
   };
+}
+
+function setExecBlockContent(block: HTMLDivElement, output: HTMLPreElement, fullText: string): void {
+  const contentState = buildExecContentState(fullText);
+  block.dataset.collapsedContent = contentState.collapsedText;
+  block.dataset.expandedContent = contentState.expandedText;
+  syncExecPreview(block, output);
+}
+
+function syncExecPreview(block: HTMLDivElement, output: HTMLPreElement): void {
+  output.textContent = block.classList.contains("expanded")
+    ? block.dataset.expandedContent ?? ""
+    : block.dataset.collapsedContent ?? "";
 }
