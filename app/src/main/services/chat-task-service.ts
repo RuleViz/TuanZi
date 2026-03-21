@@ -644,8 +644,8 @@ export function createRunChatTask(
         approve: async (): Promise<{ approved: boolean }> => ({ approved: true })
       };
 
-      let primaryTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }> = [];
-      let subagentTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }> = [];
+      let primaryTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }> = [];
+      let subagentTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }> = [];
 
       const emitCombinedTasks = (): void => {
         webContents.send(IPC_CHANNELS.chatTasks, {
@@ -656,14 +656,14 @@ export function createRunChatTask(
       };
 
       const updatePrimaryTasks = (
-        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }>
+        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }>
       ): void => {
         primaryTasks = tasks;
         emitCombinedTasks();
       };
 
       const updateSubagentTasks = (
-        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string }>
+        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }>
       ): void => {
         subagentTasks = tasks;
         emitCombinedTasks();

@@ -6,13 +6,11 @@ import type {
   ToolExecutionContext
 } from "../core/types";
 import type {
-  ToolLoopResumeAnchor,
   ToolLoopResumeState,
   ToolLoopToolCallSnapshot
 } from "./react-tool-agent";
 import type { ChatInputImage } from "./model-types";
 import { PlannerAgent } from "./planner-agent";
-import { SearcherAgent } from "./searcher-agent";
 import { TuanZiAgent } from "./tuanzi";
 
 export interface OrchestrationResult {
@@ -46,6 +44,7 @@ export interface OrchestratorTaskSnapshot {
   kind: "plan" | "execution" | "search" | "coding";
   status: "pending" | "running" | "done" | "failed";
   detail?: string;
+  parentGroupId?: string;
 }
 
 export interface OrchestratorRunHooks {
@@ -59,16 +58,10 @@ export interface OrchestratorRunHooks {
   signal?: AbortSignal;
 }
 
-interface PlanResumeTarget {
-  stepId: string;
-  stepIndex: number;
-}
-
 export class PlanToDoOrchestrator {
   constructor(
     private readonly coder: TuanZiAgent,
     private readonly planner: PlannerAgent,
-    private readonly searcher: SearcherAgent,
     private readonly toolContext: ToolExecutionContext
   ) {}
 
@@ -141,7 +134,10 @@ export class PlanToDoOrchestrator {
 
     throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("planning");
-    const plan = await this.planner.buildPlan(task, conversationContext, hooks?.signal);
+    const planResult = await this.planner.buildPlan(task, conversationContext, hooks?.signal, {
+      onToolCallCompleted: hooks?.onToolCallCompleted
+    });
+    const plan = planResult.plan;
     throwIfAborted(hooks?.signal);
     hooks?.onPlanPreview?.(formatPlanPreview(plan));
 
@@ -161,23 +157,26 @@ export class PlanToDoOrchestrator {
         changedFiles: [],
         executedCommands: [],
         followUp: ["I can adjust the plan and retry when you're ready."],
-        toolCalls: []
+        toolCalls: planResult.toolCalls
       };
     }
 
     throwIfAborted(hooks?.signal);
     hooks?.onPhaseChange?.("running");
+    const planGroupId = `plan-group-${this.toolContext.taskId ?? randomUUID()}`;
     hooks?.onTasksChange?.(
-      inputPlanToTaskSnapshots(plan, {
-        activeStepId: null,
+      planToTaskGroup(plan, {
+        groupId: planGroupId,
         completedStepIds: new Set(),
-        failedStepId: null
+        failedStepId: null,
+        allRunning: true
       })
     );
-    const output = await this.executePlanSteps({
+    const output = await this.executePlanOneShot({
       task,
       plan,
-      conversationContext,
+      planGroupId,
+      plannerToolCalls: planResult.toolCalls,
       resumeState,
       userImages,
       hooks
@@ -186,175 +185,96 @@ export class PlanToDoOrchestrator {
     return output;
   }
 
-  private async executePlanSteps(input: {
+  private async executePlanOneShot(input: {
     task: string;
     plan: ExecutionPlan;
-    conversationContext: string;
+    planGroupId: string;
+    plannerToolCalls: ToolCallRecord[];
     resumeState?: ToolLoopResumeState;
     userImages?: ChatInputImage[];
     hooks?: OrchestratorRunHooks;
-    }): Promise<OrchestrationResult> {
-    const allToolCalls: ToolCallRecord[] = [];
-    const changedFiles = new Set<string>();
-    const executedCommands = new Map<string, { command: string; exitCode: number | null }>();
-    const followUp = new Set<string>();
-    const stepSummaries: string[] = [];
-    let searchContext = "";
-    let lastCodeSummary = "";
-    const resumeTarget = resolvePlanResumeTarget(input.resumeState, input.plan);
-    const shouldResumeAnchorStep = shouldResumeFromAnchorStep(input.resumeState);
-    const firstCodeStepIndexToExecute =
-      resumeTarget && !shouldResumeAnchorStep ? resumeTarget.stepIndex + 1 : resumeTarget?.stepIndex ?? 0;
-    let resumeStateConsumed = false;
+  }): Promise<OrchestrationResult> {
     const completedStepIds = new Set<string>();
+    const stepIds = new Set(input.plan.steps.map((s) => s.id));
+    let pendingDeltaBuffer = "";
 
-    if (input.resumeState && !resumeTarget) {
-      followUp.add("Resume state was ignored because no matching plan step anchor was found.");
-    } else if (input.resumeState && resumeTarget && !shouldResumeAnchorStep) {
-      followUp.add("Resume anchor step was already completed; execution continued from the next step.");
-    }
-
-    for (let stepIndex = 0; stepIndex < input.plan.steps.length; stepIndex += 1) {
-      throwIfAborted(input.hooks?.signal);
-      const step = input.plan.steps[stepIndex];
+    const emitTaskGroup = (): void => {
       input.hooks?.onTasksChange?.(
-        inputPlanToTaskSnapshots(input.plan, {
-          activeStepId: step.id,
+        planToTaskGroup(input.plan, {
+          groupId: input.planGroupId,
           completedStepIds,
-          failedStepId: null
+          failedStepId: null,
+          allRunning: true
+        })
+      );
+    };
+
+    const onTextDelta = (delta: string): void => {
+      input.hooks?.onAssistantTextDelta?.(delta);
+      pendingDeltaBuffer += delta;
+      const extracted = extractStepDoneMarkers(pendingDeltaBuffer, stepIds);
+      if (extracted.found.length > 0) {
+        for (const id of extracted.found) {
+          completedStepIds.add(id);
+        }
+        pendingDeltaBuffer = extracted.remaining;
+        emitTaskGroup();
+      }
+      if (pendingDeltaBuffer.length > 200) {
+        pendingDeltaBuffer = pendingDeltaBuffer.slice(-100);
+      }
+    };
+
+    const planTaskMessage = buildOneShotPlanTask(input.task, input.plan);
+
+    try {
+      const coderOutput = await this.coder.execute(planTaskMessage, "", {
+        onAssistantTextDelta: onTextDelta,
+        onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
+        onToolCallCompleted: input.hooks?.onToolCallCompleted,
+        onStateChange: input.hooks?.onStateChange,
+        resumeState: input.resumeState,
+        userImages: input.userImages,
+        signal: input.hooks?.signal
+      });
+
+      for (const step of input.plan.steps) {
+        completedStepIds.add(step.id);
+      }
+      input.hooks?.onTasksChange?.(
+        planToTaskGroup(input.plan, {
+          groupId: input.planGroupId,
+          completedStepIds,
+          failedStepId: null,
+          allRunning: false
         })
       );
 
-      try {
-        if (step.owner === "search") {
-          const searchTask = buildSearchTask(input.task, step.title, step.acceptance);
-          const searchOutput = await this.searcher.search(
-            searchTask,
-            input.plan,
-            input.conversationContext,
-            input.hooks?.signal,
-            {
-              onToolCallCompleted: input.hooks?.onToolCallCompleted
-            }
-          );
-          allToolCalls.push(...searchOutput.toolCalls);
-          const refs = searchOutput.result.references.slice(0, 8).map((reference) => reference.path);
-          searchContext = buildSearchContext(searchOutput.result.summary, refs);
-          stepSummaries.push(`- ${step.id} ${step.title}: search completed, matched ${searchOutput.result.references.length} candidate files.`);
-          completedStepIds.add(step.id);
-          input.hooks?.onTasksChange?.(
-            inputPlanToTaskSnapshots(input.plan, {
-              activeStepId: null,
-              completedStepIds,
-              failedStepId: null
-            })
-          );
-          continue;
-        }
-
-        if (resumeTarget && stepIndex < firstCodeStepIndexToExecute) {
-          const reason =
-            stepIndex < resumeTarget.stepIndex
-              ? "skipped (already completed before resume target)."
-              : "skipped (resume anchor step was already completed).";
-          stepSummaries.push(`- ${step.id} ${step.title}: ${reason}`);
-          completedStepIds.add(step.id);
-          input.hooks?.onTasksChange?.(
-            inputPlanToTaskSnapshots(input.plan, {
-              activeStepId: null,
-              completedStepIds,
-              failedStepId: null
-            })
-          );
-          continue;
-        }
-
-        const shouldResumeThisStep: boolean = Boolean(
-          input.resumeState &&
-          resumeTarget &&
-          shouldResumeAnchorStep &&
-          !resumeStateConsumed &&
-          stepIndex === resumeTarget.stepIndex
-        );
-        const codeTask = buildCodeTask(input.task, input.plan, step.id, step.title, step.acceptance, searchContext);
-        const coderOutput = await this.coder.execute(codeTask, input.conversationContext, {
-          onAssistantTextDelta: input.hooks?.onAssistantTextDelta,
-          onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
-          onToolCallCompleted: input.hooks?.onToolCallCompleted,
-          onStateChange: (state) => {
-            input.hooks?.onStateChange?.(applyPlanResumeAnchor(state, step.id, stepIndex));
-          },
-          resumeState: shouldResumeThisStep ? input.resumeState : undefined,
-          userImages: input.userImages,
-          signal: input.hooks?.signal
-        });
-        resumeStateConsumed = resumeStateConsumed || shouldResumeThisStep;
-        lastCodeSummary = coderOutput.result.summary;
-        allToolCalls.push(...coderOutput.toolCalls);
-        for (const file of coderOutput.result.changedFiles) {
-          changedFiles.add(file);
-        }
-        for (const command of coderOutput.result.executedCommands) {
-          executedCommands.set(`${command.command}::${String(command.exitCode)}`, command);
-        }
-        for (const note of coderOutput.result.followUp) {
-          followUp.add(note);
-        }
-        stepSummaries.push(
-          shouldResumeThisStep
-            ? `- ${step.id} ${step.title}: resumed from saved state and completed.`
-            : `- ${step.id} ${step.title}: code execution completed.`
-        );
-        completedStepIds.add(step.id);
-        input.hooks?.onTasksChange?.(
-          inputPlanToTaskSnapshots(input.plan, {
-            activeStepId: null,
-            completedStepIds,
-            failedStepId: null
-          })
-        );
-      } catch (error) {
-        input.hooks?.onTasksChange?.(
-          inputPlanToTaskSnapshots(input.plan, {
-            activeStepId: null,
-            completedStepIds,
-            failedStepId: step.id
-          })
-        );
-        throw error;
-      }
+      return {
+        summary: [
+          "Executed in plan mode (one-shot).",
+          `Plan: ${input.plan.title || input.plan.goal}`,
+          `Step count: ${input.plan.steps.length}`,
+          "",
+          coderOutput.result.summary || "Plan steps completed."
+        ].join("\n"),
+        changedFiles: coderOutput.result.changedFiles,
+        executedCommands: coderOutput.result.executedCommands,
+        followUp: coderOutput.result.followUp,
+        toolCalls: [...input.plannerToolCalls, ...coderOutput.toolCalls]
+      };
+    } catch (error) {
+      input.hooks?.onTasksChange?.(
+        planToTaskGroup(input.plan, {
+          groupId: input.planGroupId,
+          completedStepIds,
+          failedStepId: findFirstIncompleteStepId(input.plan, completedStepIds),
+          allRunning: false
+        })
+      );
+      throw error;
     }
-
-    return {
-      summary: [
-        "Executed in plan mode.",
-        `Plan goal: ${input.plan.goal}`,
-        `Step count: ${input.plan.steps.length}`,
-        "Step results:",
-        ...stepSummaries,
-        "",
-        lastCodeSummary || "Plan steps completed."
-      ].join("\n"),
-      changedFiles: [...changedFiles],
-      executedCommands: [...executedCommands.values()],
-      followUp: [...followUp],
-      toolCalls: allToolCalls
-    };
   }
-}
-
-function shouldResumeFromAnchorStep(resumeState: ToolLoopResumeState | undefined): boolean {
-  const partial = resumeState?.partialAssistantMessage;
-  if (!partial) {
-    return false;
-  }
-  const hasTextContent =
-    (typeof partial.content === "string" && partial.content.trim().length > 0) ||
-    (Array.isArray(partial.content) &&
-      partial.content.some((part) => part.type === "text" && typeof part.text === "string" && part.text.trim().length > 0));
-  const hasThinkingContent = typeof partial.reasoning_content === "string" && partial.reasoning_content.trim().length > 0;
-  const hasToolCalls = Array.isArray(partial.tool_calls) && partial.tool_calls.length > 0;
-  return hasTextContent || hasThinkingContent || hasToolCalls;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -377,32 +297,64 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
   };
 }
 
-function inputPlanToTaskSnapshots(
+function planToTaskGroup(
   plan: ExecutionPlan,
   input: {
-    activeStepId: string | null;
+    groupId: string;
     completedStepIds: Set<string>;
     failedStepId: string | null;
+    allRunning: boolean;
   }
 ): OrchestratorTaskSnapshot[] {
-  return plan.steps.map((step) => {
-    let status: OrchestratorTaskSnapshot["status"] = "pending";
+  const groupTitle = plan.title || plan.goal;
+  const allDone = !input.allRunning && plan.steps.every((s) => input.completedStepIds.has(s.id));
+  const hasFailed = input.failedStepId !== null;
+  const groupStatus: OrchestratorTaskSnapshot["status"] = hasFailed
+    ? "failed"
+    : allDone
+      ? "done"
+      : input.allRunning
+        ? "running"
+        : "pending";
+
+  const groupItem: OrchestratorTaskSnapshot = {
+    id: input.groupId,
+    title: groupTitle,
+    kind: "plan",
+    status: groupStatus,
+    detail: plan.goal
+  };
+
+  const stepItems: OrchestratorTaskSnapshot[] = plan.steps.map((step) => {
+    let status: OrchestratorTaskSnapshot["status"] = input.allRunning ? "running" : "pending";
     if (input.failedStepId === step.id) {
       status = "failed";
-    } else if (input.activeStepId === step.id) {
-      status = "running";
     } else if (input.completedStepIds.has(step.id)) {
       status = "done";
+    }
+
+    const detailParts: string[] = [];
+    if (step.description) {
+      detailParts.push(step.description);
+    }
+    if (step.files && step.files.length > 0) {
+      detailParts.push(`涉及文件: ${step.files.join(", ")}`);
+    }
+    if (step.acceptance) {
+      detailParts.push(`验收: ${step.acceptance}`);
     }
 
     return {
       id: step.id,
       title: step.title,
-      kind: step.owner === "search" ? "search" : "coding",
+      kind: step.owner === "search" ? ("search" as const) : ("coding" as const),
       status,
-      detail: step.acceptance
+      detail: detailParts.join("\n") || step.acceptance,
+      parentGroupId: groupItem.id
     };
   });
+
+  return [groupItem, ...stepItems];
 }
 
 export function shouldUsePlanMode(task: string, routing?: RoutingSettings): boolean {
@@ -437,9 +389,19 @@ function hasPlanIntent(taskLowerText: string): boolean {
 }
 
 function formatPlanPreview(plan: ExecutionPlan): string {
-  const lines = [`Goal: ${plan.goal}`, "Steps:"];
+  const lines: string[] = [];
+  if (plan.title) {
+    lines.push(`Title: ${plan.title}`);
+  }
+  lines.push(`Goal: ${plan.goal}`, "Steps:");
   for (const step of plan.steps) {
     lines.push(`- [${step.id}] (${step.owner}) ${step.title}`);
+    if (step.description) {
+      lines.push(`  Description: ${step.description}`);
+    }
+    if (step.files && step.files.length > 0) {
+      lines.push(`  Files: ${step.files.join(", ")}`);
+    }
     lines.push(`  Acceptance: ${step.acceptance}`);
   }
   if (plan.suggestedTestCommand) {
@@ -448,86 +410,76 @@ function formatPlanPreview(plan: ExecutionPlan): string {
   return lines.join("\n");
 }
 
-function buildSearchTask(task: string, title: string, acceptance: string): string {
-  return [task, "", `Current step (search): ${title}`, `Acceptance criteria: ${acceptance}`].join("\n");
-}
+function buildOneShotPlanTask(task: string, plan: ExecutionPlan): string {
+  const sections: string[] = [];
 
-function buildSearchContext(summary: string, references: string[]): string {
-  if (references.length === 0) {
-    return `Search summary: ${summary}`;
+  if (plan.instruction) {
+    sections.push(plan.instruction);
+    sections.push("");
+  } else {
+    sections.push("请按照以下任务列表逐步完成所有任务，完成每个步骤后输出 [STEP_DONE:步骤ID] 标记。");
+    sections.push("");
   }
-  return [`Search summary: ${summary}`, "Candidate files:", ...references.map((path) => `- ${path}`)].join("\n");
-}
 
-function buildCodeTask(
-  task: string,
-  plan: ExecutionPlan,
-  stepId: string,
-  title: string,
-  acceptance: string,
-  searchContext: string
-): string {
-  const sections = [
-    "You are executing one step from an approved plan.",
-    `Original task: ${task}`,
-    `Plan goal: ${plan.goal}`,
-    `Current step id: ${stepId}`,
-    `Current step: ${title}`,
-    `Acceptance criteria: ${acceptance}`
-  ];
-  if (searchContext) {
-    sections.push("", "Searcher findings:", searchContext);
+  sections.push(`原始需求: ${task}`);
+  if (plan.title) {
+    sections.push(`任务主题: ${plan.title}`);
   }
+  sections.push(`目标: ${plan.goal}`);
+  sections.push("");
+  sections.push("=== 任务列表 ===");
+
+  for (const step of plan.steps) {
+    sections.push("");
+    sections.push(`[${step.id}] ${step.title}`);
+    if (step.description) {
+      sections.push(`  描述: ${step.description}`);
+    }
+    if (step.files && step.files.length > 0) {
+      sections.push(`  涉及文件: ${step.files.join(", ")}`);
+    }
+    sections.push(`  验收标准: ${step.acceptance}`);
+  }
+
   if (plan.suggestedTestCommand) {
-    sections.push("", `Suggested validation command: ${plan.suggestedTestCommand}`);
+    sections.push("");
+    sections.push(`建议验证命令: ${plan.suggestedTestCommand}`);
   }
+
+  sections.push("");
+  sections.push("请严格按照上述任务列表顺序执行，完成每个步骤后输出 [STEP_DONE:步骤ID] 标记（例如 [STEP_DONE:S1]）。");
+
   return sections.join("\n");
 }
 
-function applyPlanResumeAnchor(
-  state: ToolLoopResumeState,
-  stepId: string,
-  stepIndex: number
-): ToolLoopResumeState {
-  const resumeAnchor: ToolLoopResumeAnchor = {
-    mode: "plan",
-    stepId,
-    stepIndex
-  };
-  return {
-    ...state,
-    resumeAnchor
-  };
+function extractStepDoneMarkers(
+  buffer: string,
+  validStepIds: Set<string>
+): { found: string[]; remaining: string } {
+  const pattern = /\[STEP_DONE:(\w+)\]/g;
+  const found: string[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(buffer)) !== null) {
+    const stepId = match[1];
+    if (validStepIds.has(stepId)) {
+      found.push(stepId);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  const remaining = lastIndex > 0 ? buffer.slice(lastIndex) : buffer;
+  return { found, remaining };
 }
 
-function resolvePlanResumeTarget(
-  resumeState: ToolLoopResumeState | undefined,
-  plan: ExecutionPlan
-): PlanResumeTarget | null {
-  const anchor = resumeState?.resumeAnchor;
-  if (!anchor || anchor.mode !== "plan") {
-    return null;
+function findFirstIncompleteStepId(plan: ExecutionPlan, completedStepIds: Set<string>): string | null {
+  for (const step of plan.steps) {
+    if (!completedStepIds.has(step.id)) {
+      return step.id;
+    }
   }
-  if (!anchor.stepId || !Number.isInteger(anchor.stepIndex) || anchor.stepIndex < 0) {
-    return null;
-  }
-
-  const byIndex = plan.steps[anchor.stepIndex];
-  if (byIndex && byIndex.owner === "code" && byIndex.id === anchor.stepId) {
-    return {
-      stepId: anchor.stepId,
-      stepIndex: anchor.stepIndex
-    };
-  }
-
-  const byIdIndex = plan.steps.findIndex((step) => step.owner === "code" && step.id === anchor.stepId);
-  if (byIdIndex < 0) {
-    return null;
-  }
-  return {
-    stepId: anchor.stepId,
-    stepIndex: byIdIndex
-  };
+  return null;
 }
 
 export function buildConversationContext(

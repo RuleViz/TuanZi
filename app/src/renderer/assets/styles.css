@@ -13,9 +13,6 @@
   --workbench-collapsed-bottom: 52px;
   --workbench-open-top: calc(var(--titlebar-height) + 12px);
   --workbench-open-bottom: var(--workbench-drawer-gap);
-  --workbench-tasks-max-height: min(34vh, 360px);
-  --workbench-terminals-max-height: min(42vh, 460px);
-  --workbench-files-max-height: min(26vh, 280px);
 
   /* ── 深色液态玻璃基底 ── */
   --bg-main: #0a0a14;
@@ -569,20 +566,13 @@ body {
 }
 
 .workbench-section-body {
+  flex: 1;
   padding: 0 14px 14px;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-}
-
-#workbenchTasks.workbench-section-body {
-  max-height: var(--workbench-tasks-max-height);
-}
-
-#workbenchFiles.workbench-section-body {
-  max-height: var(--workbench-files-max-height);
 }
 
 .workbench-section:not(.expanded) .workbench-section-body {
@@ -613,6 +603,75 @@ body {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 10px;
+}
+
+.workbench-task-group {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.workbench-task-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+
+.workbench-task-group-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workbench-task-group-arrow {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.5);
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  transition: transform 0.2s ease;
+}
+
+.workbench-task-group-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #F8F8F8;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-task-group-meta {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.workbench-task-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+
+.workbench-task-group-body .workbench-task-item {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.workbench-task-group-body .workbench-task-title {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.workbench-task-group-body .workbench-task-detail {
+  white-space: pre-line;
 }
 
 .workbench-task-status {
@@ -688,7 +747,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: var(--workbench-terminals-max-height);
 }
 
 .workbench-terminal-panel {
@@ -3137,9 +3195,6 @@ body {
     --workbench-drawer-width-open: min(95vw, 640px);
     --workbench-drawer-gap: 10px;
     --workbench-collapsed-bottom: 36px;
-    --workbench-tasks-max-height: min(30vh, 300px);
-    --workbench-terminals-max-height: min(38vh, 380px);
-    --workbench-files-max-height: min(22vh, 240px);
   }
 
   .chat-area {

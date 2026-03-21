@@ -4,7 +4,7 @@ import { coderSystemPrompt, plannerSystemPrompt, searcherSystemPrompt } from "..
 import type { SkillCatalogItem } from "../core/skill-types";
 
 test("plannerSystemPrompt should use layered xml structure", () => {
-  const prompt = plannerSystemPrompt({ workspaceRoot: "/workspace/demo" });
+  const prompt = plannerSystemPrompt({ workspaceRoot: "/workspace/demo", enabledTools: ["ls", "glob", "grep", "read"] });
 
   assert.equal(prompt.includes("<system_prompt>"), true);
   assert.equal(prompt.includes("<base_policy>"), true);

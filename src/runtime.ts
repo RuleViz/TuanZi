@@ -1,7 +1,6 @@
 import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlannerAgent } from "./agents/planner-agent";
-import { SearcherAgent } from "./agents/searcher-agent";
 import { SubagentExplorerAgent } from "./agents/subagent-explorer";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
@@ -75,9 +74,8 @@ export function createOrchestrator(runtimeConfig: RuntimeConfig, toolRuntime: To
     toolRuntime.toolContext,
     runtimeConfig.agentBackend.activeAgent
   );
-  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel, runtimeConfig.workspaceRoot);
-  const searcher = new SearcherAgent(client, runtimeConfig.model.searchModel, toolRuntime.registry, toolRuntime.toolContext);
-  return new PlanToDoOrchestrator(coder, planner, searcher, toolRuntime.toolContext);
+  const planner = new PlannerAgent(client, runtimeConfig.model.plannerModel, runtimeConfig.workspaceRoot, toolRuntime.registry, toolRuntime.toolContext);
+  return new PlanToDoOrchestrator(coder, planner, toolRuntime.toolContext);
 }
 
 export function createSubagentBridge(

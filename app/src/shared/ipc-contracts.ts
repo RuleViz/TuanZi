@@ -103,7 +103,10 @@ export interface WorkbenchTaskItem {
   kind: "plan" | "execution" | "search" | "coding" | "subagent";
   status: "pending" | "running" | "done" | "failed";
   detail?: string;
+  parentGroupId?: string;
 }
+
+export type WorkbenchTaskEntry = WorkbenchTaskItem;
 
 export interface ModifiedFileEntry {
   path: string;

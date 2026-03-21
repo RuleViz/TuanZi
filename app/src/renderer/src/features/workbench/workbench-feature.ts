@@ -178,39 +178,115 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     }
   }
 
+  const collapsedGroups = new Set<string>();
+
+  function renderTaskItem(task: WorkbenchTaskItem): HTMLDivElement {
+    const item = document.createElement("div");
+    item.className = "workbench-task-item";
+
+    const status = document.createElement("div");
+    status.className = `workbench-task-status ${task.status}`;
+    status.textContent = task.status === "done" ? "✓" : task.status === "failed" ? "!" : task.status === "running" ? "..." : "";
+
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "workbench-task-title";
+    title.textContent = task.title;
+    body.appendChild(title);
+    if (task.detail) {
+      const detail = document.createElement("div");
+      detail.className = "workbench-task-detail";
+      detail.textContent = task.detail;
+      body.appendChild(detail);
+    }
+
+    item.append(status, body);
+    return item;
+  }
+
   function renderTasks(tasks: WorkbenchTaskItem[]): void {
-    input.tasksCount.textContent = String(tasks.length);
+    const groupHeaders = tasks.filter((t) => !t.parentGroupId && t.kind === "plan");
+    const groupChildren = new Map<string, WorkbenchTaskItem[]>();
+    const standaloneItems: WorkbenchTaskItem[] = [];
+
+    for (const task of tasks) {
+      if (task.parentGroupId) {
+        const list = groupChildren.get(task.parentGroupId);
+        if (list) {
+          list.push(task);
+        } else {
+          groupChildren.set(task.parentGroupId, [task]);
+        }
+      } else if (task.kind !== "plan") {
+        standaloneItems.push(task);
+      }
+    }
+
+    const totalCount = groupHeaders.length + standaloneItems.length;
+    input.tasksCount.textContent = String(totalCount || tasks.length);
     if (tasks.length === 0) {
       input.tasksContainer.innerHTML = '<div class="workbench-empty">当前会话还没有任务记录</div>';
       return;
     }
 
-    const list = document.createElement("div");
-    list.className = "workbench-task-list";
-    for (const task of tasks) {
-      const item = document.createElement("div");
-      item.className = "workbench-task-item";
+    const container = document.createElement("div");
+    container.className = "workbench-task-list";
 
-      const status = document.createElement("div");
-      status.className = `workbench-task-status ${task.status}`;
-      status.textContent = task.status === "done" ? "✓" : task.status === "failed" ? "!" : task.status === "running" ? "..." : "";
+    for (const header of groupHeaders) {
+      const isCollapsed = collapsedGroups.has(header.id);
+      const children = groupChildren.get(header.id) ?? [];
 
-      const body = document.createElement("div");
-      const title = document.createElement("div");
-      title.className = "workbench-task-title";
-      title.textContent = task.title;
-      body.appendChild(title);
-      if (task.detail) {
-        const detail = document.createElement("div");
-        detail.className = "workbench-task-detail";
-        detail.textContent = task.detail;
-        body.appendChild(detail);
+      const group = document.createElement("div");
+      group.className = `workbench-task-group${isCollapsed ? " collapsed" : ""}`;
+
+      const groupHeader = document.createElement("div");
+      groupHeader.className = "workbench-task-group-header";
+      groupHeader.addEventListener("click", () => {
+        if (collapsedGroups.has(header.id)) {
+          collapsedGroups.delete(header.id);
+        } else {
+          collapsedGroups.add(header.id);
+        }
+        renderTasks(tasks);
+      });
+
+      const arrow = document.createElement("span");
+      arrow.className = "workbench-task-group-arrow";
+      arrow.textContent = isCollapsed ? "▶" : "▼";
+
+      const headerStatus = document.createElement("div");
+      headerStatus.className = `workbench-task-status ${header.status}`;
+      headerStatus.textContent = header.status === "done" ? "✓" : header.status === "failed" ? "!" : header.status === "running" ? "..." : "";
+
+      const headerTitle = document.createElement("div");
+      headerTitle.className = "workbench-task-group-title";
+      headerTitle.textContent = header.title;
+
+      const headerMeta = document.createElement("span");
+      headerMeta.className = "workbench-task-group-meta";
+      const doneCount = children.filter((c) => c.status === "done").length;
+      headerMeta.textContent = `${doneCount}/${children.length}`;
+
+      groupHeader.append(arrow, headerStatus, headerTitle, headerMeta);
+      group.appendChild(groupHeader);
+
+      if (!isCollapsed && children.length > 0) {
+        const groupBody = document.createElement("div");
+        groupBody.className = "workbench-task-group-body";
+        for (const child of children) {
+          groupBody.appendChild(renderTaskItem(child));
+        }
+        group.appendChild(groupBody);
       }
 
-      item.append(status, body);
-      list.appendChild(item);
+      container.appendChild(group);
     }
-    input.tasksContainer.replaceChildren(list);
+
+    for (const task of standaloneItems) {
+      container.appendChild(renderTaskItem(task));
+    }
+
+    input.tasksContainer.replaceChildren(container);
   }
 
   function renderFiles(files: ModifiedFileEntry[]): void {

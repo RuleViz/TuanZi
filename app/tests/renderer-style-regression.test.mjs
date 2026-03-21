@@ -52,11 +52,12 @@ test('workbench drawer no longer has neon rail pseudo element', () => {
   assert.doesNotMatch(styles, /\.workbench-drawer::before\s*\{/)
 })
 
-test('workbench sections cap height and allow inner scrolling', () => {
+test('workbench tab pages use full available height without per-section max-height caps', () => {
   assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?overflow-y:\s*auto;/)
-  assert.match(styles, /#workbenchTasks\.workbench-section-body\s*\{[\s\S]*?max-height:\s*var\(--workbench-tasks-max-height\);/)
-  assert.match(styles, /\.workbench-terminals-body\s*\{[\s\S]*?max-height:\s*var\(--workbench-terminals-max-height\);/)
-  assert.match(styles, /#workbenchFiles\.workbench-section-body\s*\{[\s\S]*?max-height:\s*var\(--workbench-files-max-height\);/)
+  assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?flex:\s*1;/)
+  assert.doesNotMatch(styles, /#workbenchTasks\.workbench-section-body\s*\{[\s\S]*?max-height:/)
+  assert.doesNotMatch(styles, /\.workbench-terminals-body\s*\{[^}]*max-height:/)
+  assert.doesNotMatch(styles, /#workbenchFiles\.workbench-section-body\s*\{[\s\S]*?max-height:/)
 })
 
 test('workbench supports single-page switching for tasks terminals and files', () => {

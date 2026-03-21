@@ -250,12 +250,16 @@ export interface PlanStep {
   title: string;
   owner: "search" | "code";
   acceptance: string;
+  description?: string;
+  files?: string[];
 }
 
 export interface ExecutionPlan {
   goal: string;
+  title?: string;
   steps: PlanStep[];
   suggestedTestCommand?: string;
+  instruction?: string;
 }
 
 export interface SearchReference {

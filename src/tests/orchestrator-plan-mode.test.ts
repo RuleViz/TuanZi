@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PlanToDoOrchestrator } from "../agents/orchestrator";
-import type { ToolLoopResumeState, ToolLoopToolCallSnapshot } from "../agents/react-tool-agent";
+import { PlanToDoOrchestrator, type OrchestratorTaskSnapshot } from "../agents/orchestrator";
+import type { ToolLoopResumeState } from "../agents/react-tool-agent";
 import type { ExecutionPlan, ToolExecutionContext } from "../core/types";
 
 class StubCoder {
@@ -55,49 +55,10 @@ class StubPlanner {
     _task?: string,
     _conversationContext?: string,
     signal?: AbortSignal
-  ): Promise<ExecutionPlan> {
+  ): Promise<{ plan: ExecutionPlan; toolCalls: Array<{ toolName: string; args: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string }; timestamp: string }> }> {
     this.calls += 1;
     this.signals.push(signal);
-    return this.plan;
-  }
-}
-
-class StubSearcher {
-  calls = 0;
-  signals: Array<AbortSignal | undefined> = [];
-
-  async search(
-    _task?: string,
-    _plan?: ExecutionPlan,
-    _conversationContext?: string,
-    signal?: AbortSignal,
-    hooks?: {
-      onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
-    }
-  ): Promise<{
-    result: {
-      summary: string;
-      references: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }>;
-      webReferences: Array<{ url: string; reason: string }>;
-    };
-    toolCalls: Array<{ toolName: string; args: Record<string, unknown>; result: { ok: boolean }; timestamp: string }>;
-  }> {
-    this.calls += 1;
-    this.signals.push(signal);
-    hooks?.onToolCallCompleted?.({
-      id: "call-glob-1",
-      name: "glob",
-      args: { pattern: "*.ts" },
-      result: { ok: true }
-    });
-    return {
-      result: {
-        summary: "search-ok",
-        references: [{ path: "E:/workspace/src/file.ts", reason: "hit", confidence: "medium" }],
-        webReferences: []
-      },
-      toolCalls: []
-    };
+    return { plan: this.plan, toolCalls: [] };
   }
 }
 
@@ -185,7 +146,6 @@ test("plan mode should stop execution when plan approval is rejected", async () 
   const orchestrator = new PlanToDoOrchestrator(
     coder as unknown as any,
     new StubPlanner(plan) as unknown as any,
-    new StubSearcher() as unknown as any,
     createToolContext(false)
   );
 
@@ -205,13 +165,10 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
   const orchestrator = new PlanToDoOrchestrator(
     coder as unknown as any,
     planner as unknown as any,
-    new StubSearcher() as unknown as any,
     createToolContext(true)
   );
 
-  const deltas: string[] = [];
   const previews: string[] = [];
-  const states: ToolLoopResumeState[] = [];
   const controller = new AbortController();
 
   const result = await orchestrator.run(
@@ -221,33 +178,20 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
     },
     {
       signal: controller.signal,
-      onAssistantTextDelta: (delta) => {
-        deltas.push(delta);
-      },
       onPlanPreview: (preview) => {
         previews.push(preview);
-      },
-      onStateChange: (state) => {
-        states.push(state);
       }
     }
   );
 
   assert.equal(coder.calls.length, 1);
-  assert.equal(deltas.length, 0);
   assert.equal(previews.length, 1);
   assert.equal(planner.signals[0], controller.signal);
   assert.match(previews[0], /Goal: task/);
-  assert.equal(states.length > 0, true);
-  assert.deepEqual(states[0].resumeAnchor, {
-    mode: "plan",
-    stepId: "S1",
-    stepIndex: 0
-  });
   assert.match(result.summary, /Executed in plan mode/);
 });
 
-test("plan mode should resume from anchored step and skip earlier code steps", async () => {
+test("plan mode one-shot should pass all steps to coder at once", async () => {
   const plan: ExecutionPlan = {
     goal: "task",
     steps: [
@@ -259,71 +203,21 @@ test("plan mode should resume from anchored step and skip earlier code steps", a
   const orchestrator = new PlanToDoOrchestrator(
     coder as unknown as any,
     new StubPlanner(plan) as unknown as any,
-    new StubSearcher() as unknown as any,
     createToolContext(true)
-  );
-
-  const resumeState = createResumeState(
-    {
-      mode: "plan",
-      stepId: "S2",
-      stepIndex: 1
-    },
-    {
-      role: "assistant",
-      content: "partial"
-    }
   );
 
   const result = await orchestrator.run({
     task: "implement",
-    forcePlanMode: true,
-    resumeState
+    forcePlanMode: true
   });
 
   assert.equal(coder.calls.length, 1);
-  assert.equal(coder.calls[0].resumeState, resumeState);
-  assert.match(result.summary, /S1 Code 1: skipped/);
-  assert.match(result.summary, /S2 Code 2: resumed/);
+  assert.match(coder.calls[0].task, /S1/);
+  assert.match(coder.calls[0].task, /S2/);
+  assert.match(result.summary, /Executed in plan mode/);
 });
 
-test("plan mode should skip completed anchor step and continue next step", async () => {
-  const plan: ExecutionPlan = {
-    goal: "task",
-    steps: [
-      { id: "S1", title: "Code 1", owner: "code", acceptance: "done" },
-      { id: "S2", title: "Code 2", owner: "code", acceptance: "done" },
-      { id: "S3", title: "Code 3", owner: "code", acceptance: "done" }
-    ]
-  };
-  const coder = new StubCoder();
-  const orchestrator = new PlanToDoOrchestrator(
-    coder as unknown as any,
-    new StubPlanner(plan) as unknown as any,
-    new StubSearcher() as unknown as any,
-    createToolContext(true)
-  );
-
-  const resumeState = createResumeState({
-    mode: "plan",
-    stepId: "S2",
-    stepIndex: 1
-  });
-
-  const result = await orchestrator.run({
-    task: "implement",
-    forcePlanMode: true,
-    resumeState
-  });
-
-  assert.equal(coder.calls.length, 1);
-  assert.equal(coder.calls[0].resumeState, undefined);
-  assert.match(result.summary, /S1 Code 1: skipped/);
-  assert.match(result.summary, /S2 Code 2: skipped \(resume anchor step was already completed\)/);
-  assert.match(result.summary, /S3 Code 3: code execution completed/);
-});
-
-test("plan mode should ignore unmatched resume anchor", async () => {
+test("plan mode should emit unique task group ids to avoid cross-plan collisions", async () => {
   const plan: ExecutionPlan = {
     goal: "task",
     steps: [{ id: "S1", title: "Code 1", owner: "code", acceptance: "done" }]
@@ -332,102 +226,31 @@ test("plan mode should ignore unmatched resume anchor", async () => {
   const orchestrator = new PlanToDoOrchestrator(
     coder as unknown as any,
     new StubPlanner(plan) as unknown as any,
-    new StubSearcher() as unknown as any,
     createToolContext(true)
   );
 
-  const result = await orchestrator.run({
-    task: "implement",
-    forcePlanMode: true,
-    resumeState: createResumeState({
-      mode: "plan",
-      stepId: "S9",
-      stepIndex: 9
-    })
-  });
-
-  assert.equal(coder.calls.length, 1);
-  assert.equal(coder.calls[0].resumeState, undefined);
-  assert.equal(result.followUp.some((item) => item.includes("ignored")), true);
-});
-
-test("plan mode should execute search steps before resume target", async () => {
-  const plan: ExecutionPlan = {
-    goal: "task",
-    steps: [
-      { id: "S1", title: "Search", owner: "search", acceptance: "done" },
-      { id: "S2", title: "Code 1", owner: "code", acceptance: "done" },
-      { id: "S3", title: "Code 2", owner: "code", acceptance: "done" }
-    ]
-  };
-  const coder = new StubCoder();
-  const searcher = new StubSearcher();
-  const orchestrator = new PlanToDoOrchestrator(
-    coder as unknown as any,
-    new StubPlanner(plan) as unknown as any,
-    searcher as unknown as any,
-    createToolContext(true)
-  );
-
-  const resumeState = createResumeState(
-    {
-      mode: "plan",
-      stepId: "S3",
-      stepIndex: 2
-    },
-    {
-      role: "assistant",
-      content: "partial"
-    }
-  );
-
-  const controller = new AbortController();
-  await orchestrator.run(
-    {
-      task: "implement",
-      forcePlanMode: true,
-      resumeState
-    },
-    {
-      signal: controller.signal
-    }
-  );
-
-  assert.equal(searcher.calls, 1);
-  assert.equal(searcher.signals[0], controller.signal);
-  assert.equal(coder.calls.length, 1);
-  assert.equal(coder.calls[0].resumeState, resumeState);
-});
-
-test("plan mode should forward search tool completion callbacks", async () => {
-  const plan: ExecutionPlan = {
-    goal: "task",
-    steps: [
-      { id: "S1", title: "Search", owner: "search", acceptance: "done" },
-      { id: "S2", title: "Code", owner: "code", acceptance: "done" }
-    ]
-  };
-  const orchestrator = new PlanToDoOrchestrator(
-    new StubCoder() as unknown as any,
-    new StubPlanner(plan) as unknown as any,
-    new StubSearcher() as unknown as any,
-    createToolContext(true)
-  );
-
-  let completedCalls = 0;
+  const snapshots: OrchestratorTaskSnapshot[][] = [];
   await orchestrator.run(
     {
       task: "implement",
       forcePlanMode: true
     },
     {
-      onToolCallCompleted: () => {
-        completedCalls += 1;
+      onTasksChange: (tasks) => {
+        snapshots.push(tasks);
       }
     }
   );
 
-  assert.equal(completedCalls, 1);
+  assert.ok(snapshots.length > 0);
+  const firstSnapshot = snapshots[0];
+  const group = firstSnapshot.find((item) => item.kind === "plan");
+  assert.ok(group);
+  assert.notEqual(group.id, "plan-group-S1");
+
+  const childTasks = firstSnapshot.filter((item) => item.parentGroupId);
+  assert.equal(childTasks.length, 1);
+  assert.equal(childTasks[0].parentGroupId, group.id);
 });
 
 test("plan mode should abort before planner when signal is already aborted", async () => {
@@ -439,7 +262,6 @@ test("plan mode should abort before planner when signal is already aborted", asy
   const orchestrator = new PlanToDoOrchestrator(
     new StubCoder() as unknown as any,
     planner as unknown as any,
-    new StubSearcher() as unknown as any,
     createToolContext(true)
   );
 

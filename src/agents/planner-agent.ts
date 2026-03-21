@@ -1,51 +1,87 @@
 import { randomUUID } from "node:crypto";
-import type { ExecutionPlan, PlanStep } from "../core/types";
+import type { ToolRegistry } from "../core/tool-registry";
+import type { ExecutionPlan, PlanStep, ToolCallRecord, ToolExecutionContext } from "../core/types";
 import { parseJsonObject } from "../core/json-utils";
-import type { ChatCompletionClient, ChatMessageContent } from "./model-types";
+import type { ChatCompletionClient } from "./model-types";
 import { plannerSystemPrompt } from "./prompts";
+import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
+
+const PLANNER_TOOLS = [
+  "ls",
+  "glob",
+  "grep",
+  "read"
+];
 
 export class PlannerAgent {
   constructor(
     private readonly client: ChatCompletionClient | null,
     private readonly model: string | null,
-    private readonly workspaceRoot: string
+    private readonly workspaceRoot: string,
+    private readonly toolRegistry: ToolRegistry,
+    private readonly toolContext: ToolExecutionContext
   ) {}
 
-  async buildPlan(task: string, conversationContext = "", signal?: AbortSignal): Promise<ExecutionPlan> {
+  async buildPlan(
+    task: string,
+    conversationContext = "",
+    signal?: AbortSignal,
+    hooks?: {
+      onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
+    }
+  ): Promise<{ plan: ExecutionPlan; toolCalls: ToolCallRecord[] }> {
     throwIfAborted(signal);
     if (!this.client || !this.model) {
-      return fallbackPlan(task);
+      return { plan: fallbackPlan(task), toolCalls: [] };
     }
 
-    const messages: Array<{ role: "system" | "user"; content: string }> = [
-      { role: "system", content: plannerSystemPrompt({ workspaceRoot: this.workspaceRoot }) }
+    const userPromptSections = [
+      "User task:",
+      task
     ];
     if (conversationContext) {
-      messages.push({
-        role: "user",
-        content: [
-          "Conversation memory from previous turns (context only, lower priority than current task):",
-          conversationContext
-        ].join("\n")
-      });
+      userPromptSections.push(
+        "",
+        "Conversation memory from previous turns (context only, lower priority than current task):",
+        conversationContext
+      );
     }
-    messages.push({ role: "user", content: `User task: ${task}` });
+    userPromptSections.push(
+      "",
+      "Explore the codebase using read-only tools to understand the relevant files and code structure, then produce a detailed execution plan as strict JSON."
+    );
+    const userPrompt = userPromptSections.join("\n");
 
-    const completion = await this.client.complete({
-      model: this.model,
-      temperature: 0.2,
-      messages
-    }, {
+    const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
+    const maxTurns = this.toolContext.agentSettings?.toolLoop.searchMaxTurns ?? 12;
+    const output = await agent.run({
+      systemPrompt: plannerSystemPrompt({
+        workspaceRoot: this.workspaceRoot,
+        enabledTools: PLANNER_TOOLS
+      }),
+      userPrompt,
+      allowedTools: PLANNER_TOOLS,
+      maxTurns,
+      temperature: 0.15,
+      onToolCallCompleted: hooks?.onToolCallCompleted,
       signal
     });
 
-    throwIfAborted(signal);
-    const parsed = parseJsonObject(messageContentToText(completion.message.content));
+    const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
+      toolName: call.name,
+      args: call.args,
+      result: call.result,
+      timestamp: new Date().toISOString()
+    }));
+
+    const parsed = parseJsonObject(output.finalText);
     if (!parsed) {
-      return fallbackPlan(task);
+      return { plan: fallbackPlan(task), toolCalls };
     }
 
+    const title = typeof parsed.title === "string" ? parsed.title.trim() : undefined;
     const goal = typeof parsed.goal === "string" ? parsed.goal : task;
+    const instruction = typeof parsed.instruction === "string" ? parsed.instruction.trim() : undefined;
     const suggestedTestCommand = typeof parsed.suggestedTestCommand === "string" ? parsed.suggestedTestCommand : undefined;
     const rawSteps = Array.isArray(parsed.steps) ? parsed.steps : [];
     const steps = rawSteps
@@ -53,13 +89,18 @@ export class PlannerAgent {
       .filter((step): step is PlanStep => step !== null);
 
     if (steps.length === 0) {
-      return fallbackPlan(task);
+      return { plan: fallbackPlan(task), toolCalls };
     }
 
     return {
-      goal,
-      steps,
-      suggestedTestCommand
+      plan: {
+        title,
+        goal,
+        steps,
+        suggestedTestCommand,
+        instruction
+      },
+      toolCalls
     };
   }
 }
@@ -68,22 +109,6 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new Error("Interrupted by user");
   }
-}
-
-function messageContentToText(content: ChatMessageContent): string {
-  if (typeof content === "string") {
-    return content;
-  }
-  if (!Array.isArray(content)) {
-    return "";
-  }
-  let text = "";
-  for (const part of content) {
-    if (part.type === "text") {
-      text += part.text;
-    }
-  }
-  return text;
 }
 
 function toStep(value: unknown): PlanStep | null {
@@ -96,17 +121,23 @@ function toStep(value: unknown): PlanStep | null {
   const title = typeof record.title === "string" ? record.title.trim() : "";
   const owner = record.owner === "search" || record.owner === "code" ? record.owner : "code";
   const acceptance = typeof record.acceptance === "string" ? record.acceptance.trim() : "";
+  const description = typeof record.description === "string" ? record.description.trim() : undefined;
+  const files = Array.isArray(record.files)
+    ? record.files.filter((f): f is string => typeof f === "string" && f.trim().length > 0).map((f) => f.trim())
+    : undefined;
 
   if (!title || !acceptance) {
     return null;
   }
 
-  return { id, title, owner, acceptance };
+  return { id, title, owner, acceptance, description, files };
 }
 
 function fallbackPlan(task: string): ExecutionPlan {
   return {
+    title: "执行任务计划",
     goal: task,
+    instruction: "请按照以下任务列表逐步完成所有任务，完成每个步骤后输出 [STEP_DONE:步骤ID] 标记。",
     steps: [
       {
         id: "S1",
