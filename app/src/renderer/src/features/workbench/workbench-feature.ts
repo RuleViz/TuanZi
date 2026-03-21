@@ -25,6 +25,7 @@ interface WorkbenchFeatureDeps {
   filesContainer: HTMLDivElement;
   terminalTabs: HTMLDivElement;
   terminalPanel: HTMLDivElement;
+  pageButtons: HTMLButtonElement[];
   toggleButton: HTMLButtonElement;
   closeButton: HTMLButtonElement;
   newTerminalButton: HTMLButtonElement;
@@ -58,10 +59,12 @@ interface ActiveTerminalView {
   disposeInput: () => void;
 }
 
+type WorkbenchPage = "tasks" | "terminals" | "files";
+
 export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFeature {
-  let sectionButtonsBound = false;
   let activeTerminalView: ActiveTerminalView | null = null;
   let resizeFitTimer: number | null = null;
+  let activePage: WorkbenchPage = "tasks";
 
   function ensureSessionState(sessionId: string): SessionWorkbenchState {
     const existing = input.state.sessionWorkbench[sessionId];
@@ -160,6 +163,13 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
   function renderDrawerState(): void {
     input.drawer.classList.toggle("open", input.state.workbenchOpen);
     input.drawer.setAttribute("aria-hidden", input.state.workbenchOpen ? "false" : "true");
+    input.drawer.setAttribute("data-workbench-page", activePage);
+    input.pageButtons.forEach((button) => {
+      const page = (button.dataset.workbenchPage as WorkbenchPage | undefined) ?? "tasks";
+      const isActive = page === activePage;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
     input.toggleButton.classList.toggle("active", input.state.workbenchOpen);
     input.toggleButton.setAttribute("aria-expanded", input.state.workbenchOpen ? "true" : "false");
     input.toggleButton.title = input.state.workbenchOpen ? "收起工作台" : "展开工作台";
@@ -447,22 +457,18 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     }
   }
 
-  function bindSectionToggles(): void {
-    if (sectionButtonsBound) {
-      return;
-    }
-    sectionButtonsBound = true;
-    const buttons = input.drawer.querySelectorAll<HTMLElement>("[data-workbench-toggle]");
-    buttons.forEach((button) => {
-      button.addEventListener("click", () => {
-        const section = button.closest(".workbench-section");
-        section?.classList.toggle("expanded");
+  function bind(): void {
+    input.pageButtons.forEach((button) => {
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const page = button.dataset.workbenchPage as WorkbenchPage | undefined;
+        if (!page || page === activePage) {
+          return;
+        }
+        activePage = page;
+        renderCurrentSessionWorkbench();
       });
     });
-  }
-
-  function bind(): void {
-    bindSectionToggles();
     input.drawer.addEventListener("click", () => {
       if (input.state.workbenchOpen) {
         return;

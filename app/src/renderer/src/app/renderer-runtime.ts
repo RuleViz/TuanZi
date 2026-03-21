@@ -80,6 +80,9 @@ import {
   workbenchTerminalPanel,
   workbenchTerminalTabs,
   workbenchTerminalsCount,
+  workbenchPageTasksBtn,
+  workbenchPageTerminalsBtn,
+  workbenchPageFilesBtn,
   newWorkbenchTerminalBtn,
   workspaceLabel
 } from "./dom"
@@ -241,6 +244,7 @@ export function createRendererRuntime() {
     filesContainer: workbenchFiles,
     terminalTabs: workbenchTerminalTabs,
     terminalPanel: workbenchTerminalPanel,
+    pageButtons: [workbenchPageTasksBtn, workbenchPageTerminalsBtn, workbenchPageFilesBtn],
     toggleButton: toggleWorkbench,
     closeButton: closeWorkbenchBtn,
     newTerminalButton: newWorkbenchTerminalBtn,

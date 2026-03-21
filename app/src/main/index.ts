@@ -720,9 +720,10 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
+    transparent: true,
     ...(isWindows ? { frame: false } : {}),
-    ...(isMac ? { titleBarStyle: 'hidden' } : {}),
-    backgroundColor: '#FFFFFF',
+    ...(isMac ? { titleBarStyle: 'hidden', vibrancy: 'under-window', visualEffectState: 'active' } : {}),
+    backgroundColor: '#00000000',
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
