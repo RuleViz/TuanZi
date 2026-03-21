@@ -60,11 +60,223 @@ interface ActiveTerminalView {
 }
 
 type WorkbenchPage = "tasks" | "terminals" | "files";
+const WORKBENCH_STORAGE_KEY = "tuanzi.desktop.workbench.v1";
+const WORKBENCH_PERSIST_DEBOUNCE_MS = 180;
+
+interface PersistedWorkbenchTerminalState {
+  terminalId: string;
+  title: string;
+  workspace: string;
+  status: "running" | "exited" | "closed";
+  createdAt: string;
+  exitCode?: number | null;
+}
+
+interface PersistedWorkbenchSessionState {
+  tasks: WorkbenchTaskItem[];
+  terminals: PersistedWorkbenchTerminalState[];
+  modifiedFiles: ModifiedFileEntry[];
+  selectedTerminalId: string | null;
+}
+
+interface PersistedWorkbenchPayload {
+  version: 1;
+  sessions: Record<string, PersistedWorkbenchSessionState>;
+}
 
 export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFeature {
   let activeTerminalView: ActiveTerminalView | null = null;
   let resizeFitTimer: number | null = null;
+  let persistTimer: number | null = null;
   let activePage: WorkbenchPage = "tasks";
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+
+  function toPersistedTerminal(terminal: WorkbenchTerminalState): PersistedWorkbenchTerminalState {
+    return {
+      terminalId: terminal.terminalId,
+      title: terminal.title,
+      workspace: terminal.workspace,
+      status: terminal.status,
+      createdAt: terminal.createdAt,
+      ...(terminal.exitCode !== undefined ? { exitCode: terminal.exitCode } : {})
+    };
+  }
+
+  function toPersistedSessionState(state: SessionWorkbenchState): PersistedWorkbenchSessionState {
+    return {
+      tasks: state.tasks,
+      terminals: state.terminals.map(toPersistedTerminal),
+      modifiedFiles: state.modifiedFiles,
+      selectedTerminalId: state.selectedTerminalId
+    };
+  }
+
+  function normalizeTask(value: unknown): WorkbenchTaskItem | null {
+    if (!isRecord(value)) {
+      return null;
+    }
+    if (typeof value.id !== "string" || typeof value.title !== "string") {
+      return null;
+    }
+    if (
+      value.kind !== "plan" &&
+      value.kind !== "execution" &&
+      value.kind !== "search" &&
+      value.kind !== "coding" &&
+      value.kind !== "subagent"
+    ) {
+      return null;
+    }
+    if (
+      value.status !== "pending" &&
+      value.status !== "running" &&
+      value.status !== "done" &&
+      value.status !== "failed"
+    ) {
+      return null;
+    }
+    return {
+      id: value.id,
+      title: value.title,
+      kind: value.kind,
+      status: value.status,
+      ...(typeof value.detail === "string" ? { detail: value.detail } : {}),
+      ...(typeof value.parentGroupId === "string" ? { parentGroupId: value.parentGroupId } : {})
+    };
+  }
+
+  function normalizeModifiedFile(value: unknown): ModifiedFileEntry | null {
+    if (!isRecord(value) || typeof value.path !== "string") {
+      return null;
+    }
+    const added = typeof value.added === "number" && Number.isFinite(value.added) ? Math.max(0, Math.floor(value.added)) : 0;
+    const removed = typeof value.removed === "number" && Number.isFinite(value.removed) ? Math.max(0, Math.floor(value.removed)) : 0;
+    return {
+      path: value.path,
+      added,
+      removed
+    };
+  }
+
+  function normalizeTerminal(
+    value: unknown,
+    sessionId: string
+  ): WorkbenchTerminalState | null {
+    if (!isRecord(value)) {
+      return null;
+    }
+    if (
+      typeof value.terminalId !== "string" ||
+      typeof value.title !== "string" ||
+      typeof value.workspace !== "string" ||
+      typeof value.createdAt !== "string"
+    ) {
+      return null;
+    }
+    if (value.status !== "running" && value.status !== "exited" && value.status !== "closed") {
+      return null;
+    }
+    const exitCode =
+      typeof value.exitCode === "number" && Number.isFinite(value.exitCode)
+        ? Math.floor(value.exitCode)
+        : value.exitCode === null
+          ? null
+          : undefined;
+    return {
+      terminalId: value.terminalId,
+      sessionId,
+      title: value.title,
+      workspace: value.workspace,
+      status: value.status,
+      createdAt: value.createdAt,
+      ...(exitCode !== undefined ? { exitCode } : {}),
+      output: ""
+    };
+  }
+
+  function normalizePersistedSessionState(
+    value: unknown,
+    sessionId: string
+  ): SessionWorkbenchState | null {
+    if (!isRecord(value)) {
+      return null;
+    }
+    const tasks = Array.isArray(value.tasks) ? value.tasks.map(normalizeTask).filter((item): item is WorkbenchTaskItem => item !== null) : [];
+    const terminals = Array.isArray(value.terminals)
+      ? value.terminals.map((item) => normalizeTerminal(item, sessionId)).filter((item): item is WorkbenchTerminalState => item !== null)
+      : [];
+    const modifiedFiles = Array.isArray(value.modifiedFiles)
+      ? value.modifiedFiles.map(normalizeModifiedFile).filter((item): item is ModifiedFileEntry => item !== null)
+      : [];
+    const selectedTerminalId = typeof value.selectedTerminalId === "string" ? value.selectedTerminalId : null;
+    return {
+      tasks,
+      terminals,
+      modifiedFiles,
+      selectedTerminalId: selectedTerminalId && terminals.some((terminal) => terminal.terminalId === selectedTerminalId)
+        ? selectedTerminalId
+        : terminals[0]?.terminalId ?? null
+    };
+  }
+
+  function flushPersistSessionWorkbench(): void {
+    const payload: PersistedWorkbenchPayload = {
+      version: 1,
+      sessions: {}
+    };
+    const validSessionIds = new Set(input.state.sessions.map((session) => session.id));
+    for (const [sessionId, state] of Object.entries(input.state.sessionWorkbench)) {
+      if (!validSessionIds.has(sessionId)) {
+        continue;
+      }
+      payload.sessions[sessionId] = toPersistedSessionState(state);
+    }
+    try {
+      localStorage.setItem(WORKBENCH_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      return;
+    }
+  }
+
+  function schedulePersistSessionWorkbench(): void {
+    if (persistTimer !== null) {
+      window.clearTimeout(persistTimer);
+    }
+    persistTimer = window.setTimeout(() => {
+      persistTimer = null;
+      flushPersistSessionWorkbench();
+    }, WORKBENCH_PERSIST_DEBOUNCE_MS);
+  }
+
+  function hydrateSessionWorkbenchFromStorage(): void {
+    let parsed: unknown = null;
+    try {
+      const raw = localStorage.getItem(WORKBENCH_STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      parsed = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.sessions)) {
+      return;
+    }
+    const validSessionIds = new Set(input.state.sessions.map((session) => session.id));
+    for (const [sessionId, persistedState] of Object.entries(parsed.sessions)) {
+      if (!validSessionIds.has(sessionId)) {
+        continue;
+      }
+      const normalized = normalizePersistedSessionState(persistedState, sessionId);
+      if (!normalized) {
+        continue;
+      }
+      input.state.sessionWorkbench[sessionId] = normalized;
+    }
+  }
 
   function ensureSessionState(sessionId: string): SessionWorkbenchState {
     const existing = input.state.sessionWorkbench[sessionId];
@@ -520,6 +732,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     if (!state.selectedTerminalId) {
       state.selectedTerminalId = summary.terminalId;
     }
+    schedulePersistSessionWorkbench();
   }
 
   function removeTerminal(sessionId: string, terminalId: string): void {
@@ -531,9 +744,12 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     if (state.selectedTerminalId === terminalId) {
       state.selectedTerminalId = state.terminals[0]?.terminalId ?? null;
     }
+    schedulePersistSessionWorkbench();
   }
 
   function bind(): void {
+    hydrateSessionWorkbenchFromStorage();
+
     input.pageButtons.forEach((button) => {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -567,13 +783,18 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     window.addEventListener("resize", () => {
       scheduleFit();
     });
+    window.addEventListener("beforeunload", () => {
+      flushPersistSessionWorkbench();
+    });
 
     input.api.onTasks((data) => {
       ensureSessionState(data.sessionId).tasks = data.tasks;
+      schedulePersistSessionWorkbench();
       renderCurrentSessionWorkbench();
     });
     input.api.onModifiedFiles((data) => {
       ensureSessionState(data.sessionId).modifiedFiles = data.files;
+      schedulePersistSessionWorkbench();
       renderCurrentSessionWorkbench();
     });
     input.api.onTerminalOpened((data) => {
@@ -598,6 +819,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       terminal.status = "exited";
       terminal.exitCode = data.exitCode;
       terminal.output = `${terminal.output}\n[process exited with code ${String(data.exitCode)}]\n`;
+      schedulePersistSessionWorkbench();
       renderCurrentSessionWorkbench();
     });
     input.api.onTerminalClosed((data) => {
@@ -615,6 +837,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       modifiedFiles: [],
       selectedTerminalId: ensureSessionState(sessionId).selectedTerminalId
     };
+    schedulePersistSessionWorkbench();
     renderCurrentSessionWorkbench();
   }
 

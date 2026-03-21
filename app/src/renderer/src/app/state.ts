@@ -111,7 +111,7 @@ export const state = {
   isMcpLoading: false,
   hasLoadedMcp: false,
   mcpLoadToken: 0,
-  isThinking: false,
+  isThinking: true,
   planModeEnabled: false,
   workbenchOpen: false,
   sessionWorkbench: {} as Record<string, SessionWorkbenchState>

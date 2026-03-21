@@ -17,11 +17,9 @@ interface InitEventsDeps {
   imageFileInput: HTMLInputElement;
   sendBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
-  selectWorkspaceBtn: HTMLButtonElement;
   workspaceLabel: HTMLSpanElement;
   toggleSidebar: HTMLButtonElement;
   sidebar: HTMLElement;
-  thinkingBtn: HTMLButtonElement;
   planModeBtn: HTMLButtonElement;
   newChatBtn: HTMLButtonElement;
   activeAgentChip: HTMLDivElement;
@@ -173,9 +171,6 @@ export function bindInitEvents(input: InitEventsDeps): void {
       });
   });
 
-  input.selectWorkspaceBtn.addEventListener("click", () => {
-    void input.selectWorkspace();
-  });
   input.workspaceLabel.addEventListener("click", () => {
     void input.selectWorkspace();
   });
@@ -183,12 +178,6 @@ export function bindInitEvents(input: InitEventsDeps): void {
   input.toggleSidebar.addEventListener("click", () => {
     const isCollapsed = input.sidebar.classList.toggle("collapsed");
     input.toggleSidebar.classList.toggle("flipped", isCollapsed);
-  });
-
-  input.thinkingBtn.addEventListener("click", () => {
-    input.state.isThinking = !input.state.isThinking;
-    input.thinkingBtn.classList.toggle("active", input.state.isThinking);
-    input.thinkingBtn.title = input.state.isThinking ? "关闭思考模式" : "开启思考模式";
   });
 
   input.planModeBtn.addEventListener("click", () => {

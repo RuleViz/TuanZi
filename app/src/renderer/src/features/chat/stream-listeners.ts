@@ -25,7 +25,6 @@ export function beginStreamingUi(input: {
   sendBtn: HTMLButtonElement;
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
-  thinkingBtn: HTMLButtonElement;
   planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
 }): void {
@@ -37,7 +36,6 @@ export function beginStreamingUi(input: {
   input.attachImageBtn.disabled = true;
   input.sendBtn.style.display = "none";
   input.stopBtn.style.display = "flex";
-  input.thinkingBtn.disabled = true;
   input.planModeBtn.disabled = true;
   input.sendingIndicator.classList.add("visible");
 }
@@ -48,7 +46,6 @@ export function endStreamingUi(input: {
   sendBtn: HTMLButtonElement;
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
-  thinkingBtn: HTMLButtonElement;
   planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
   inputTextarea: HTMLTextAreaElement;
@@ -63,7 +60,6 @@ export function endStreamingUi(input: {
   input.attachImageBtn.disabled = false;
   input.sendBtn.style.display = "flex";
   input.stopBtn.style.display = "none";
-  input.thinkingBtn.disabled = false;
   input.planModeBtn.disabled = false;
   input.sendingIndicator.classList.remove("visible");
   input.smartScrollToBottom();

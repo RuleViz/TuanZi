@@ -570,6 +570,7 @@ body {
   padding: 0 14px 14px;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -713,6 +714,10 @@ body {
   margin-top: 3px;
   font-size: 14px;
   color: rgba(255, 255, 255, 0.48);
+}
+
+.workbench-task-detail {
+  overflow-wrap: anywhere;
 }
 
 .workbench-file-row {
@@ -1689,47 +1694,6 @@ body {
   background: var(--brand-light);
   color: var(--brand-primary);
   font-weight: 600;
-}
-
-#thinkingBtn {
-  border-radius: 20px;
-  padding: 4px 12px;
-  font-weight: 500;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border: 1px solid transparent;
-}
-
-#thinkingBtn:hover {
-  background: var(--bg-hover);
-  transform: scale(1.02);
-}
-
-#thinkingBtn:active {
-  transform: scale(0.98);
-}
-
-#thinkingBtn.active {
-  background: linear-gradient(135deg, rgba(255, 122, 0, 0.15) 0%, rgba(255, 160, 80, 0.10) 100%);
-  color: var(--brand-primary);
-  border-color: rgba(255, 122, 0, 0.25);
-  box-shadow: 0 2px 8px rgba(255, 122, 0, 0.2);
-  animation: thinkingPulse 2s infinite ease-in-out;
-  transform: translateY(-1px);
-}
-
-@keyframes thinkingPulse {
-  0% {
-    box-shadow: 0 2px 8px rgba(255, 122, 0, 0.2);
-  }
-
-  50% {
-    box-shadow: 0 4px 12px rgba(255, 122, 0, 0.35);
-    background: linear-gradient(135deg, rgba(255, 160, 80, 0.12) 0%, rgba(255, 122, 0, 0.18) 100%);
-  }
-
-  100% {
-    box-shadow: 0 2px 8px rgba(255, 122, 0, 0.2);
-  }
 }
 
 .action-btn.active svg {

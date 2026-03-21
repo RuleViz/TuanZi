@@ -22,7 +22,6 @@ interface ChatRuntimeDeps {
   sendBtn: HTMLButtonElement;
   attachImageBtn: HTMLButtonElement;
   stopBtn: HTMLButtonElement;
-  thinkingBtn: HTMLButtonElement;
   planModeBtn: HTMLButtonElement;
   sendingIndicator: HTMLDivElement;
   autoResizeTextarea: () => void;
@@ -99,7 +98,6 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       sendBtn: input.sendBtn,
       attachImageBtn: input.attachImageBtn,
       stopBtn: input.stopBtn,
-      thinkingBtn: input.thinkingBtn,
       planModeBtn: input.planModeBtn,
       sendingIndicator: input.sendingIndicator
     });
@@ -112,7 +110,6 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       sendBtn: input.sendBtn,
       attachImageBtn: input.attachImageBtn,
       stopBtn: input.stopBtn,
-      thinkingBtn: input.thinkingBtn,
       planModeBtn: input.planModeBtn,
       sendingIndicator: input.sendingIndicator,
       inputTextarea: input.inputTextarea,

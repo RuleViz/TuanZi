@@ -54,10 +54,15 @@ test('workbench drawer no longer has neon rail pseudo element', () => {
 
 test('workbench tab pages use full available height without per-section max-height caps', () => {
   assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?overflow-y:\s*auto;/)
+  assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?overflow-x:\s*hidden;/)
   assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?flex:\s*1;/)
   assert.doesNotMatch(styles, /#workbenchTasks\.workbench-section-body\s*\{[\s\S]*?max-height:/)
   assert.doesNotMatch(styles, /\.workbench-terminals-body\s*\{[^}]*max-height:/)
   assert.doesNotMatch(styles, /#workbenchFiles\.workbench-section-body\s*\{[\s\S]*?max-height:/)
+})
+
+test('workbench task detail wraps long tokens to avoid horizontal overflow', () => {
+  assert.match(styles, /\.workbench-task-detail[\s\S]*?overflow-wrap:\s*anywhere;/)
 })
 
 test('workbench supports single-page switching for tasks terminals and files', () => {
