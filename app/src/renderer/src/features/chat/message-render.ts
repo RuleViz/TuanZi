@@ -129,19 +129,6 @@ export function buildExecContentState(
   };
 }
 
-export function computeExecOutputText(input: {
-  isExpanded: boolean;
-  currentText?: string;
-  collapsedContent?: string;
-  expandedContent?: string;
-}): string {
-  const hasCachedContent = input.collapsedContent !== undefined || input.expandedContent !== undefined;
-  if (!hasCachedContent) {
-    return input.currentText ?? "";
-  }
-  return input.isExpanded ? (input.expandedContent ?? "") : (input.collapsedContent ?? "");
-}
-
 export function createMessageRenderer(input: MessageRendererDeps): MessageRenderer {
   const createAssistantMessage = (): HTMLDivElement => {
     const messageEl = document.createElement("div");
@@ -526,11 +513,15 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
   };
 }
 
+function setExecBlockContent(block: HTMLDivElement, output: HTMLPreElement, fullText: string): void {
+  const contentState = buildExecContentState(fullText);
+  block.dataset.collapsedContent = contentState.collapsedText;
+  block.dataset.expandedContent = contentState.expandedText;
+  syncExecPreview(block, output);
+}
+
 function syncExecPreview(block: HTMLDivElement, output: HTMLPreElement): void {
-  output.textContent = computeExecOutputText({
-    isExpanded: block.classList.contains("expanded"),
-    currentText: output.textContent ?? "",
-    collapsedContent: block.dataset.collapsedContent,
-    expandedContent: block.dataset.expandedContent
-  });
+  output.textContent = block.classList.contains("expanded")
+    ? block.dataset.expandedContent ?? ""
+    : block.dataset.collapsedContent ?? "";
 }

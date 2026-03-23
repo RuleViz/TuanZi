@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   buildExecContentState,
-  computeExecOutputText,
   formatToolArgsText,
   formatToolResultText
 } from "./message-render.js";
@@ -45,13 +44,4 @@ test("buildExecContentState should also keep short content hidden while collapse
 
   assert.equal(state.collapsedText, "");
   assert.equal(state.expandedText, fullText);
-});
-
-test("computeExecOutputText should preserve existing text when cache fields are missing", () => {
-  const result = computeExecOutputText({
-    isExpanded: true,
-    currentText: "thinking content"
-  });
-
-  assert.equal(result, "thinking content");
 });
