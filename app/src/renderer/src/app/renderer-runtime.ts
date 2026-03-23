@@ -98,6 +98,7 @@ import {
 import { showError, showSuccess } from "./toast"
 import { createAgentFeature } from "../features/agent/agent-feature"
 import { createImageAttachmentController } from "../features/chat/image-attach"
+import { isActiveModelImageUploadSupported } from "../features/chat/image-support"
 import { createMarkdownRenderer } from "../features/chat/markdown"
 import { createMessageRenderer } from "../features/chat/message-render"
 import { createChatRuntime } from "../features/chat/runtime"
@@ -145,8 +146,17 @@ export function createRendererRuntime() {
     escapeHtml,
     formatByteSize,
     showError,
-    maxImageBytes: MAX_CHAT_IMAGE_BYTES
+    maxImageBytes: MAX_CHAT_IMAGE_BYTES,
+    isImageUploadSupported: () => isActiveModelImageUploadSupported(state.agentConfig)
   })
+
+  const refreshImageUploadCapabilityUi = (): void => {
+    const supportsImageUpload = isActiveModelImageUploadSupported(state.agentConfig)
+    attachImageBtn.style.display = supportsImageUpload ? "" : "none"
+    if (!supportsImageUpload) {
+      clearPendingImage()
+    }
+  }
 
   const {
     scrollToBottom,
@@ -168,7 +178,10 @@ export function createRendererRuntime() {
     createAssistantSurface,
     createExecBlock,
     renderToolCalls,
-    appendCompletedToolCall
+    appendCompletedToolCall,
+    getOrCreateToolCallsContainer,
+    addToolCallRow,
+    updateSubagentSnapshots
   } = createMessageRenderer({
     chatArea,
     welcomeState,
@@ -346,10 +359,15 @@ export function createRendererRuntime() {
     closeAgentModal,
     saveAgentFromEditor,
     deleteAgentFromEditor,
-    refreshAgentData,
+    refreshAgentData: refreshAgentDataRaw,
     openAgentLibrary,
     bindAgentEditorEvents
   } = agentFeature
+
+  const refreshAgentData = async (preferredAgent?: string | null): Promise<void> => {
+    await refreshAgentDataRaw(preferredAgent)
+    refreshImageUploadCapabilityUi()
+  }
 
   let closeSlashCommandMenuImpl: () => void = () => {}
 
@@ -405,13 +423,23 @@ export function createRendererRuntime() {
   const {
     buildSettingsDraft,
     renderSettingsDraft,
-    openSettingsModal,
+    openSettingsModal: openSettingsModalRaw,
     closeSettingsModal,
-    saveSettings,
+    saveSettings: saveSettingsRaw,
     closeProviderModelModal,
     closeMcpJsonModal,
     bindSettingsEvents
   } = settingsFeature
+
+  const openSettingsModal = async (): Promise<void> => {
+    await openSettingsModalRaw()
+    refreshImageUploadCapabilityUi()
+  }
+
+  const saveSettings = async (): Promise<void> => {
+    await saveSettingsRaw()
+    refreshImageUploadCapabilityUi()
+  }
 
   const {
     closeSlashCommandMenu,
@@ -435,10 +463,12 @@ export function createRendererRuntime() {
     selectWorkspace,
     openSettingsModal,
     openAgentLibrary,
+    onAgentConfigUpdated: () => refreshImageUploadCapabilityUi(),
     api: window.tuanzi
   })
 
   closeSlashCommandMenuImpl = closeSlashCommandMenu
+  refreshImageUploadCapabilityUi()
 
   const chatRuntime = createChatRuntime({
     state,
@@ -476,6 +506,9 @@ export function createRendererRuntime() {
     smartScrollToBottom,
     createExecBlock,
     appendCompletedToolCall,
+    getOrCreateToolCallsContainer,
+    addToolCallRow,
+    updateSubagentSnapshots,
     resetSessionWorkbench: (sessionId: string) => workbenchFeature.resetSessionWorkbench(sessionId)
   })
 

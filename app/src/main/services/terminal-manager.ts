@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
+import * as pty from "node-pty";
 import type { TerminalSessionSummary } from "../../shared/ipc-contracts";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 
 const PROCESS_TERMINATE_WAIT_MS = 400;
+const DEFAULT_COLS = 120;
+const DEFAULT_ROWS = 30;
 
 export interface TerminalCommandResult {
   terminalId: string;
@@ -17,7 +20,6 @@ export interface TerminalCommandResult {
 interface PendingCommand {
   token: string;
   stdout: string;
-  stderr: string;
   resolve: (value: TerminalCommandResult) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout | null;
@@ -30,12 +32,15 @@ interface TerminalSession {
   title: string;
   workspace: string;
   createdAt: string;
-  process: ChildProcessWithoutNullStreams;
+  pty: pty.IPty;
+  ptyGeneration: number;
   summary: TerminalSessionSummary;
-  stdoutBuffer: string;
+  outputBuffer: string;
   pending: PendingCommand | null;
   closed: boolean;
   recovering: boolean;
+  cols: number;
+  rows: number;
 }
 
 export interface TerminalManager {
@@ -52,7 +57,7 @@ export interface TerminalManager {
     title?: string;
   }): Promise<TerminalCommandResult>;
   write(terminalId: string, data: string): Promise<void>;
-  resize(_terminalId: string, _cols: number, _rows: number): Promise<void>;
+  resize(terminalId: string, cols: number, rows: number): Promise<void>;
   close(terminalId: string): Promise<void>;
   closeAll(): Promise<void>;
 }
@@ -105,86 +110,91 @@ export function createTerminalManager(input: {
     };
   }
 
-  function createShellProcess(workspace: string): ChildProcessWithoutNullStreams {
+  function createPty(workspace: string, cols: number, rows: number): pty.IPty {
     if (process.platform === "win32") {
-      return spawn(
-        "powershell.exe",
-        ["-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", "-"],
-        { cwd: workspace, windowsHide: true, stdio: "pipe" }
-      );
+      return pty.spawn("powershell.exe", ["-NoLogo", "-NoExit", "-ExecutionPolicy", "Bypass"], {
+        name: "xterm-256color",
+        cwd: workspace,
+        cols,
+        rows,
+        useConpty: true
+      });
     }
 
     const shell = process.env.SHELL || "/bin/bash";
-    return spawn(shell, ["--noprofile", "--norc"], {
+    return pty.spawn(shell, [], {
+      name: "xterm-256color",
       cwd: workspace,
-      stdio: "pipe"
+      cols,
+      rows
     });
   }
 
-  function wireSession(session: TerminalSession, processRef: ChildProcessWithoutNullStreams = session.process): void {
-    processRef.stdout.on("data", (chunk: Buffer | string) => {
-      if (session.process !== processRef || session.closed || session.recovering) {
+  function wirePty(session: TerminalSession, ptyRef: pty.IPty, generation: number): void {
+    ptyRef.onData((data: string) => {
+      if (session.ptyGeneration !== generation || session.closed || session.recovering) {
         return;
       }
-      handleStdout(session, String(chunk));
+      handlePtyData(session, data);
     });
-    processRef.stderr.on("data", (chunk: Buffer | string) => {
-      if (session.process !== processRef || session.closed || session.recovering) {
-        return;
-      }
-      const text = String(chunk);
-      if (session.pending) {
-        session.pending.stderr += text;
-      }
-      emitData(session, text);
-    });
-    processRef.on("close", (code) => {
-      if (session.process !== processRef) {
+    ptyRef.onExit(({ exitCode }) => {
+      if (session.ptyGeneration !== generation) {
         return;
       }
       if (session.recovering) {
         return;
       }
       session.summary.status = "exited";
-      session.summary.exitCode = code;
+      session.summary.exitCode = exitCode;
       if (session.pending) {
         settlePending(session, {
           terminalId: session.terminalId,
-          exitCode: code,
+          exitCode,
           stdout: session.pending.stdout,
-          stderr: session.pending.stderr,
+          stderr: "",
           timedOut: false,
           interrupted: true
         });
       }
-      emitExit(session, code);
+      emitExit(session, exitCode);
     });
   }
 
-  function handleStdout(session: TerminalSession, chunk: string): void {
-    session.stdoutBuffer += chunk;
+  function handlePtyData(session: TerminalSession, chunk: string): void {
+    if (!session.pending) {
+      emitData(session, chunk);
+      return;
+    }
+
+    session.outputBuffer += chunk;
     while (true) {
-      const newlineIndex = session.stdoutBuffer.indexOf("\n");
+      const newlineIndex = session.outputBuffer.indexOf("\n");
       if (newlineIndex < 0) {
         break;
       }
-      const lineWithNewline = session.stdoutBuffer.slice(0, newlineIndex + 1);
-      session.stdoutBuffer = session.stdoutBuffer.slice(newlineIndex + 1);
-      const normalized = lineWithNewline.replace(/\r?\n$/, "");
-      const match = normalized.match(/^__TUANZI_DONE__:(.+?):(-?\d+)$/);
+      const lineWithNewline = session.outputBuffer.slice(0, newlineIndex + 1);
+      session.outputBuffer = session.outputBuffer.slice(newlineIndex + 1);
+      const stripped = stripAnsi(lineWithNewline).replace(/\r?\n$/, "");
+      const match = stripped.match(/^__TUANZI_DONE__:(.+?):(-?\d+)$/);
       if (match && session.pending && session.pending.token === match[1]) {
+        // Don't emit the sentinel line to the renderer
         settlePending(session, {
           terminalId: session.terminalId,
           exitCode: Number.parseInt(match[2], 10),
           stdout: session.pending.stdout,
-          stderr: session.pending.stderr,
+          stderr: "",
           timedOut: false,
           interrupted: false
         });
+        // Flush any remaining buffer content after sentinel
+        if (session.outputBuffer) {
+          emitData(session, session.outputBuffer);
+          session.outputBuffer = "";
+        }
         continue;
       }
       if (session.pending) {
-        session.pending.stdout += lineWithNewline;
+        session.pending.stdout += stripAnsi(lineWithNewline);
       }
       emitData(session, lineWithNewline);
     }
@@ -229,17 +239,19 @@ export function createTerminalManager(input: {
       const escapedCwd = cwd.replace(/'/g, "''");
       const envSetup = Object.entries(env)
         .map(([key, value]) => `$env:${key} = '${value.replace(/'/g, "''")}'`)
-        .join("\n");
+        .join("; ");
       return [
         `try {`,
         `  Set-Location -LiteralPath '${escapedCwd}'`,
-        envSetup,
-        `  ${command}`,
+        envSetup ? `  ; ${envSetup}` : "",
+        `  ; ${command}`,
         `} finally {`,
         `  $__tuanziExit = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }`,
-        `  Write-Output "__TUANZI_DONE__:${token}:$($__tuanziExit)"`,
+        `  ; Write-Output "__TUANZI_DONE__:${token}:$($__tuanziExit)"`,
         `}`
-      ].join("\n");
+      ]
+        .filter(Boolean)
+        .join("\n");
     }
 
     const escapedCwd = cwd.replace(/'/g, `'\\''`);
@@ -258,33 +270,11 @@ export function createTerminalManager(input: {
   }
 
   function commandTerminator(): string {
-    // PowerShell's -Command - often waits for an extra blank line before executing multi-line blocks.
-    return process.platform === "win32" ? "\n\n" : "\n";
+    return "\r";
   }
 
-  async function waitForProcessExit(processRef: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false;
-      const done = (exited: boolean): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timeout);
-        processRef.removeListener("exit", onExit);
-        processRef.removeListener("error", onError);
-        resolve(exited);
-      };
-      const onExit = (): void => done(true);
-      const onError = (): void => done(true);
-      const timeout = setTimeout(() => done(false), Math.max(0, timeoutMs));
-      processRef.once("exit", onExit);
-      processRef.once("error", onError);
-    });
-  }
-
-  async function terminateProcessTree(processRef: ChildProcessWithoutNullStreams): Promise<void> {
-    const pid = processRef.pid;
+  async function terminatePty(ptyRef: pty.IPty): Promise<void> {
+    const pid = ptyRef.pid;
     if (!pid) {
       return;
     }
@@ -313,20 +303,17 @@ export function createTerminalManager(input: {
     }
 
     try {
-      processRef.kill("SIGTERM");
+      ptyRef.kill();
     } catch {
       // ignore
     }
-    const exitedByTerm = await waitForProcessExit(processRef, PROCESS_TERMINATE_WAIT_MS);
-    if (exitedByTerm) {
-      return;
-    }
-    try {
-      processRef.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
-    await waitForProcessExit(processRef, PROCESS_TERMINATE_WAIT_MS);
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, PROCESS_TERMINATE_WAIT_MS);
+      ptyRef.onExit(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
   }
 
   async function recoverTerminalSession(
@@ -334,34 +321,36 @@ export function createTerminalManager(input: {
     reason: "timeout" | "interrupt",
     timeoutMs: number
   ): Promise<{ recovered: boolean; message: string }> {
-    const previousProcess = session.process;
+    const previousPty = session.pty;
     session.recovering = true;
-    await terminateProcessTree(previousProcess);
+    await terminatePty(previousPty);
     if (session.closed) {
       session.recovering = false;
       return { recovered: false, message: "Terminal already closed." };
     }
 
     try {
-      const replacement = createShellProcess(session.workspace);
-      session.process = replacement;
+      const generation = session.ptyGeneration + 1;
+      const replacement = createPty(session.workspace, session.cols, session.rows);
+      session.pty = replacement;
+      session.ptyGeneration = generation;
       session.summary.status = "running";
       session.summary.exitCode = undefined;
-      session.stdoutBuffer = "";
-      wireSession(session, replacement);
+      session.outputBuffer = "";
+      wirePty(session, replacement, generation);
       session.recovering = false;
       const detail =
         reason === "timeout"
           ? `Command timed out after ${timeoutMs}ms; terminal recovered and ready for next command.`
           : "Command interrupted by user; terminal recovered and ready for next command.";
-      emitData(session, `[terminal recovered] ${detail}\n`);
+      emitData(session, `\r\n[terminal recovered] ${detail}\r\n`);
       return { recovered: true, message: detail };
     } catch (error) {
       session.recovering = false;
       const message = error instanceof Error ? error.message : String(error);
       session.summary.status = "exited";
       session.summary.exitCode = null;
-      emitData(session, `[terminal recovery failed] ${message}\n`);
+      emitData(session, `\r\n[terminal recovery failed] ${message}\r\n`);
       emitExit(session, null);
       return { recovered: false, message };
     }
@@ -370,30 +359,35 @@ export function createTerminalManager(input: {
   async function createSession(inputData: { sessionId: string; workspace: string; title?: string }): Promise<TerminalSessionSummary> {
     const terminalId = randomUUID();
     const createdAt = new Date().toISOString();
+    const title = inputData.title?.trim() || `Terminal ${sessions.size + 1}`;
+    const generation = 0;
+    const ptyInstance = createPty(inputData.workspace, DEFAULT_COLS, DEFAULT_ROWS);
     const session: TerminalSession = {
       terminalId,
       sessionId: inputData.sessionId,
-      title: inputData.title?.trim() || `Terminal ${sessions.size + 1}`,
+      title,
       workspace: inputData.workspace,
       createdAt,
-      process: createShellProcess(inputData.workspace),
+      pty: ptyInstance,
+      ptyGeneration: generation,
       summary: {
         terminalId,
         sessionId: inputData.sessionId,
-        title: inputData.title?.trim() || `Terminal ${sessions.size + 1}`,
+        title,
         workspace: inputData.workspace,
         status: "running",
         createdAt
       },
-      stdoutBuffer: "",
+      outputBuffer: "",
       pending: null,
       closed: false,
-      recovering: false
+      recovering: false,
+      cols: DEFAULT_COLS,
+      rows: DEFAULT_ROWS
     };
     sessions.set(terminalId, session);
-    wireSession(session);
+    wirePty(session, ptyInstance, generation);
     emitOpened(makeSummary(session));
-    emitData(session, `[terminal ready in ${inputData.workspace}]\n`);
     return makeSummary(session);
   }
 
@@ -439,13 +433,11 @@ export function createTerminalManager(input: {
 
     const token = randomUUID();
     const wrapped = buildWrappedCommandWithEnv(token, inputData.cwd, inputData.command, inputData.env);
-    emitData(session, `${promptPrefix()} ${inputData.command}\n`);
 
     return new Promise<TerminalCommandResult>((resolve, reject) => {
       const pending: PendingCommand = {
         token,
         stdout: "",
-        stderr: "",
         resolve,
         reject,
         timeout: null,
@@ -465,12 +457,11 @@ export function createTerminalManager(input: {
                 ? "Terminal recovered and remains available in workbench."
                 : `Terminal recovery failed: ${recovery.message}`
             ].join("\n");
-            const stderr = inflight.stderr ? `${inflight.stderr}\n${details}` : details;
             inflight.resolve({
               terminalId: session.terminalId,
               exitCode: null,
               stdout: inflight.stdout,
-              stderr,
+              stderr: details,
               timedOut: true,
               interrupted: false
             });
@@ -491,12 +482,11 @@ export function createTerminalManager(input: {
                 ? "Terminal recovered and remains available in workbench."
                 : `Terminal recovery failed: ${recovery.message}`
             ].join("\n");
-            const stderr = inflight.stderr ? `${inflight.stderr}\n${details}` : details;
             inflight.resolve({
               terminalId: session.terminalId,
               exitCode: null,
               stdout: inflight.stdout,
-              stderr,
+              stderr: details,
               timedOut: false,
               interrupted: true
             });
@@ -513,8 +503,9 @@ export function createTerminalManager(input: {
       }
 
       session.pending = pending;
+      session.outputBuffer = "";
       try {
-        session.process.stdin.write(`${wrapped}${commandTerminator()}`);
+        session.pty.write(`${wrapped}${commandTerminator()}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         rejectPending(session, new Error(`Failed to dispatch command: ${message}`));
@@ -530,11 +521,21 @@ export function createTerminalManager(input: {
     if (session.summary.status !== "running") {
       throw new Error("Terminal is not running");
     }
-    session.process.stdin.write(data);
+    session.pty.write(data);
   }
 
-  async function resize(): Promise<void> {
-    return;
+  async function resize(terminalId: string, cols: number, rows: number): Promise<void> {
+    const session = getSessionOrThrow(terminalId);
+    if (session.summary.status !== "running") {
+      return;
+    }
+    session.cols = cols;
+    session.rows = rows;
+    try {
+      session.pty.resize(cols, rows);
+    } catch {
+      // ignore resize errors on already-exited processes
+    }
   }
 
   async function close(terminalId: string): Promise<void> {
@@ -543,7 +544,7 @@ export function createTerminalManager(input: {
     session.closed = true;
     rejectPending(session, new Error("Terminal closed by user"));
     try {
-      session.process.kill("SIGTERM");
+      session.pty.kill();
     } catch {
       // ignore
     }
@@ -568,14 +569,14 @@ export function createTerminalManager(input: {
   };
 }
 
+function stripAnsi(text: string): string {
+  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+}
+
 function compactTitle(command: string): string {
   const trimmed = command.trim();
   if (!trimmed) {
     return "Command";
   }
   return trimmed.length > 28 ? `${trimmed.slice(0, 28)}...` : trimmed;
-}
-
-function promptPrefix(): string {
-  return process.platform === "win32" ? "PS>" : "$";
 }

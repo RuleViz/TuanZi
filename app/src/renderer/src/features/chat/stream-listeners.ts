@@ -93,6 +93,9 @@ export function buildStreamingListeners(input: {
       timestamp: string;
     }
   ) => void;
+  getOrCreateToolCallsContainer: (parentEl: HTMLDivElement) => HTMLDivElement;
+  addToolCallRow: (container: HTMLDivElement, toolName: string, status: "loading" | "done" | "failed", toolCallId?: string) => HTMLDivElement;
+  updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: import("../../../../shared/ipc-contracts").SubagentSnapshotData[]) => void;
 }): StreamingListeners {
   let thinkingBlock = input.existingThinkingBlock ?? null;
   let planPreviewBlock: ExecBlock | null = null;
@@ -103,22 +106,23 @@ export function buildStreamingListeners(input: {
 
   const isCurrentTask = (taskId: string): boolean => taskId === input.taskId;
   const normalizeToolName = (toolName: string): string => toolName.trim().toLowerCase();
-  const findLoadingBlocks = (): HTMLDivElement[] =>
-    Array.from(
-      input.contentEl.querySelectorAll<HTMLDivElement>(
-        ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
-      )
-    );
+  const findLoadingRows = (): HTMLDivElement[] => {
+    const container = input.contentEl.querySelector(".tool-calls-container");
+    if (!container) {
+      return [];
+    }
+    return Array.from(container.querySelectorAll<HTMLDivElement>(".tool-call-row.status-loading"));
+  };
   const getBufferKey = (toolName: string, toolCallId?: string): string => {
     const normalizedToolName = normalizeToolName(toolName);
     const normalizedId = typeof toolCallId === "string" ? toolCallId.trim() : "";
     return normalizedId || normalizedToolName;
   };
-  const hasLoadingBlock = (toolName: string, toolCallId?: string): boolean => {
+  const hasLoadingRow = (toolName: string, toolCallId?: string): boolean => {
     const normalizedToolName = normalizeToolName(toolName);
     const normalizedId = typeof toolCallId === "string" ? toolCallId.trim() : "";
-    return findLoadingBlocks().some((block) =>
-      normalizedId ? block.dataset.toolCallId === normalizedId : block.dataset.toolName === normalizedToolName
+    return findLoadingRows().some((row) =>
+      normalizedId ? row.dataset.toolCallId === normalizedId : row.dataset.toolName === normalizedToolName
     );
   };
   const bufferCompletedBeforeStart = (toolName: string, toolCallId?: string): void => {
@@ -214,16 +218,8 @@ export function buildStreamingListeners(input: {
       if (consumeBufferedCompleted(normalizedToolName, toolCallId)) {
         return;
       }
-      const { block } = input.createExecBlock({
-        type: normalizedToolName === "bash" ? "command" : "tool",
-        title: `Tool Call: ${normalizedToolName}`,
-        loading: true
-      });
-      block.dataset.toolName = normalizedToolName;
-      if (toolCallId) {
-        block.dataset.toolCallId = toolCallId;
-      }
-      input.contentEl.appendChild(block);
+      const tcContainer = input.getOrCreateToolCallsContainer(input.contentEl);
+      input.addToolCallRow(tcContainer, normalizedToolName, "loading", toolCallId || undefined);
       input.smartScrollToBottom();
     }
   });
@@ -234,7 +230,7 @@ export function buildStreamingListeners(input: {
     }
     input.state.currentTaskId = data.taskId;
     const normalizedToolName = normalizeToolName(data.toolCall.toolName);
-    const matchedLoading = hasLoadingBlock(normalizedToolName, data.toolCall.id);
+    const matchedLoading = hasLoadingRow(normalizedToolName, data.toolCall.id);
     input.appendCompletedToolCall(input.contentEl, data.toolCall);
     if (!matchedLoading) {
       bufferCompletedBeforeStart(normalizedToolName, data.toolCall.id);
@@ -249,6 +245,14 @@ export function buildStreamingListeners(input: {
     input.smartScrollToBottom();
   });
 
+  const removeSubagentSnapshotListener = window.tuanzi.onSubagentSnapshot((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return;
+    }
+    input.updateSubagentSnapshots(input.contentEl, data.snapshots);
+    input.smartScrollToBottom();
+  });
+
   return {
     getCurrentThinkingText: (): string => currentThinkingText,
     getThinkingBlock: () => thinkingBlock,
@@ -260,6 +264,7 @@ export function buildStreamingListeners(input: {
       removePlanPreviewListener();
       removeLogListener();
       removeToolCallCompletedListener();
+      removeSubagentSnapshotListener();
     }
   };
 }

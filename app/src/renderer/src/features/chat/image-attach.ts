@@ -15,6 +15,7 @@ interface ImageAttachmentDeps {
   formatByteSize: (bytes: number) => string;
   showError: (message: string) => void;
   maxImageBytes: number;
+  isImageUploadSupported: () => boolean;
 }
 
 export interface ImageAttachmentController {
@@ -83,6 +84,11 @@ export function createImageAttachmentController(input: ImageAttachmentDeps): Ima
 
   const attachImageFile = async (file: File): Promise<void> => {
     if (input.state.isSending) {
+      return;
+    }
+    if (!input.isImageUploadSupported()) {
+      clearPendingImage();
+      input.showError("Current model does not support image uploads");
       return;
     }
     if (!file.type.startsWith("image/")) {

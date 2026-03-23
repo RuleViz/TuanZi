@@ -1,4 +1,5 @@
 import type { ConversationToolCall, PendingChatImage } from "../../app/state";
+import type { SubagentSnapshotData } from "../../../../shared/ipc-contracts";
 
 interface ExecBlockOptions {
   type: "tool" | "command" | "thinking";
@@ -31,6 +32,11 @@ export interface MessageRenderer {
   createExecBlock: (opts: ExecBlockOptions) => { block: HTMLDivElement; output: HTMLPreElement };
   renderToolCalls: (container: HTMLDivElement, toolCalls: ToolCall[]) => void;
   appendCompletedToolCall: (contentEl: HTMLDivElement, toolCall: ToolCall) => void;
+  getOrCreateToolCallsContainer: (parentEl: HTMLDivElement) => HTMLDivElement;
+  addToolCallRow: (container: HTMLDivElement, toolName: string, status: "loading" | "done" | "failed", toolCallId?: string) => HTMLDivElement;
+  updateToolCallRow: (row: HTMLDivElement, status: "done" | "failed", detail?: string) => void;
+  showSubagentModal: (snapshot: SubagentSnapshotData) => void;
+  updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: SubagentSnapshotData[]) => void;
 }
 
 export function formatToolArgsText(args: Record<string, unknown>): string {
@@ -121,6 +127,19 @@ export function buildExecContentState(
     collapsedText: "",
     expandedText: text
   };
+}
+
+export function computeExecOutputText(input: {
+  isExpanded: boolean;
+  currentText?: string;
+  collapsedContent?: string;
+  expandedContent?: string;
+}): string {
+  const hasCachedContent = input.collapsedContent !== undefined || input.expandedContent !== undefined;
+  if (!hasCachedContent) {
+    return input.currentText ?? "";
+  }
+  return input.isExpanded ? (input.expandedContent ?? "") : (input.collapsedContent ?? "");
 }
 
 export function createMessageRenderer(input: MessageRendererDeps): MessageRenderer {
@@ -233,7 +252,7 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
         type: "thinking",
         title: "Thought Process",
         statusOk: true,
-        statusText: "鉁?processed"
+        statusText: "processed"
       });
       output.textContent = thinking;
       blocksContainer.appendChild(block);
@@ -251,34 +270,192 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     input.scrollToBottom();
   };
 
+  const getOrCreateToolCallsContainer = (parentEl: HTMLDivElement): HTMLDivElement => {
+    let container = parentEl.querySelector<HTMLDivElement>(".tool-calls-container");
+    if (container) {
+      return container;
+    }
+    container = document.createElement("div");
+    container.className = "tool-calls-container collapsed";
+    container.innerHTML = `
+      <div class="tool-calls-header">
+        <span class="tool-calls-chevron">
+          <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor">
+            <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/>
+          </svg>
+        </span>
+        <span class="tool-calls-summary">0 个工具调用</span>
+      </div>
+      <div class="tool-calls-list"></div>
+    `;
+    const header = container.querySelector(".tool-calls-header") as HTMLDivElement;
+    header.addEventListener("click", () => {
+      container!.classList.toggle("collapsed");
+    });
+    parentEl.appendChild(container);
+    return container;
+  };
+
+  const updateContainerSummary = (container: HTMLDivElement): void => {
+    const list = container.querySelector(".tool-calls-list");
+    const count = list ? list.children.length : 0;
+    const summary = container.querySelector(".tool-calls-summary");
+    if (summary) {
+      summary.textContent = `${count} 个工具调用`;
+    }
+  };
+
+  const addToolCallRow = (
+    container: HTMLDivElement,
+    toolName: string,
+    status: "loading" | "done" | "failed",
+    toolCallId?: string
+  ): HTMLDivElement => {
+    const list = container.querySelector(".tool-calls-list") as HTMLDivElement;
+    const row = document.createElement("div");
+    row.className = `tool-call-row status-${status}`;
+    row.dataset.toolName = toolName.trim().toLowerCase();
+    if (toolCallId) {
+      row.dataset.toolCallId = toolCallId;
+    }
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "tool-call-name";
+    nameSpan.textContent = toolName.trim().toLowerCase();
+    row.appendChild(nameSpan);
+    if (status === "loading") {
+      const dot = document.createElement("span");
+      dot.className = "tool-call-loading-dot";
+      row.appendChild(dot);
+    } else {
+      const badge = document.createElement("span");
+      badge.className = `tool-call-status ${status === "done" ? "status-ok" : "status-err"}`;
+      badge.textContent = status;
+      row.appendChild(badge);
+    }
+    list.appendChild(row);
+    updateContainerSummary(container);
+    return row;
+  };
+
+  const updateToolCallRow = (row: HTMLDivElement, status: "done" | "failed", _detail?: string): void => {
+    row.className = `tool-call-row status-${status}`;
+    const dot = row.querySelector(".tool-call-loading-dot");
+    if (dot) {
+      dot.remove();
+    }
+    let badge = row.querySelector(".tool-call-status");
+    if (!badge) {
+      badge = document.createElement("span");
+      row.appendChild(badge);
+    }
+    badge.className = `tool-call-status ${status === "done" ? "status-ok" : "status-err"}`;
+    badge.textContent = status;
+  };
+
   const renderToolCalls = (container: HTMLDivElement, toolCalls: ToolCall[]): void => {
+    const tcContainer = getOrCreateToolCallsContainer(container);
     for (const call of toolCalls) {
-      const isCommand = call.toolName === "bash";
-      const statusOk = call.result.ok;
-
-      let title: string;
-      let outputContent: string;
-
-      if (isCommand) {
-        const cmd = typeof call.args.command === "string" ? call.args.command : "command";
-        title = "Executed command";
-        outputContent = `$ ${cmd}\n\n${formatToolResultText(call.result)}`;
-      } else {
-        title = `Tool Call: ${call.toolName}`;
-        outputContent = `Args:\n${formatToolArgsText(call.args)}\n\nResult:\n${formatToolResultText(call.result)}`;
-      }
-
-      const statusText = statusOk ? "done" : "failed";
-      const { block, output } = createExecBlock({
-        type: isCommand ? "command" : "tool",
-        title,
-        statusOk,
-        statusText,
-        collapsedPreview: true
+      const status = call.result.ok ? "done" : "failed";
+      const row = addToolCallRow(tcContainer, call.toolName, status, typeof call.id === "string" ? call.id : undefined);
+      const outputContent = call.toolName === "bash"
+        ? `$ ${typeof call.args.command === "string" ? call.args.command : "command"}\n\n${formatToolResultText(call.result)}`
+        : `Args:\n${formatToolArgsText(call.args)}\n\nResult:\n${formatToolResultText(call.result)}`;
+      row.dataset.detail = outputContent;
+      row.title = outputContent.substring(0, 200);
+      row.addEventListener("click", () => {
+        const modal = document.getElementById("tool-detail-modal");
+        if (modal) {
+          const modalBody = modal.querySelector(".subagent-modal-body") as HTMLDivElement;
+          modalBody.innerHTML = `<pre class="tool-detail-pre">${input.escapeHtml(outputContent)}</pre>`;
+          const modalTitle = modal.querySelector(".subagent-modal-title") as HTMLDivElement;
+          modalTitle.textContent = call.toolName;
+          modal.classList.add("visible");
+        }
       });
+    }
+  };
 
-      setExecBlockContent(block, output, outputContent);
-      container.appendChild(block);
+  const showSubagentModal = (snapshot: SubagentSnapshotData): void => {
+    let modal = document.getElementById("subagent-modal") as HTMLDivElement | null;
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "subagent-modal";
+      modal.className = "subagent-modal-overlay";
+      modal.innerHTML = `
+        <div class="subagent-modal-content">
+          <div class="subagent-modal-header">
+            <span class="subagent-modal-title"></span>
+            <button class="subagent-modal-close">&times;</button>
+          </div>
+          <div class="subagent-modal-body"></div>
+        </div>
+      `;
+      modal.addEventListener("click", (e) => {
+        if (e.target === modal) {
+          modal!.classList.remove("visible");
+        }
+      });
+      modal.querySelector(".subagent-modal-close")!.addEventListener("click", () => {
+        modal!.classList.remove("visible");
+      });
+      document.body.appendChild(modal);
+    }
+    const titleEl = modal.querySelector(".subagent-modal-title") as HTMLSpanElement;
+    titleEl.textContent = `Subagent: ${snapshot.task.substring(0, 80)}`;
+    const bodyEl = modal.querySelector(".subagent-modal-body") as HTMLDivElement;
+    const statusLabel = snapshot.status;
+    const toolCallsHtml = snapshot.toolCalls.length > 0
+      ? snapshot.toolCalls.map((tc) =>
+        `<div class="subagent-tc-row">
+          <span class="subagent-tc-name">${input.escapeHtml(tc.name)}</span>
+          <span class="subagent-tc-status ${tc.result.ok ? "status-ok" : "status-err"}">${tc.result.ok ? "done" : "failed"}</span>
+        </div>`
+      ).join("")
+      : `<div class="subagent-tc-empty">暂无工具调用</div>`;
+    bodyEl.innerHTML = `
+      <div class="subagent-detail-section">
+        <div class="subagent-detail-row"><strong>Status:</strong> <span class="subagent-status-badge status-${statusLabel}">${statusLabel}</span></div>
+        <div class="subagent-detail-row"><strong>Task:</strong> ${input.escapeHtml(snapshot.task)}</div>
+        ${snapshot.summary ? `<div class="subagent-detail-row"><strong>Summary:</strong> ${input.escapeHtml(snapshot.summary)}</div>` : ""}
+        ${snapshot.error ? `<div class="subagent-detail-row subagent-error"><strong>Error:</strong> ${input.escapeHtml(snapshot.error)}</div>` : ""}
+      </div>
+      <div class="subagent-detail-section">
+        <div class="subagent-detail-label">Tool Calls (${snapshot.toolCalls.length})</div>
+        ${toolCallsHtml}
+      </div>
+    `;
+    modal.classList.add("visible");
+  };
+
+  const updateSubagentSnapshots = (parentEl: HTMLDivElement, snapshots: SubagentSnapshotData[]): void => {
+    let subagentArea = parentEl.querySelector<HTMLDivElement>(".subagent-entries");
+    if (!subagentArea) {
+      subagentArea = document.createElement("div");
+      subagentArea.className = "subagent-entries";
+      parentEl.appendChild(subagentArea);
+    }
+    for (const snap of snapshots) {
+      let entry = subagentArea.querySelector<HTMLDivElement>(`.subagent-entry[data-subagent-id="${snap.id}"]`);
+      if (!entry) {
+        entry = document.createElement("div");
+        entry.className = "subagent-entry";
+        entry.dataset.subagentId = snap.id;
+        entry.addEventListener("click", () => showSubagentModal(snap));
+        subagentArea.appendChild(entry);
+      } else {
+        const oldClickHandler = entry.onclick;
+        if (oldClickHandler) {
+          entry.removeEventListener("click", oldClickHandler as EventListener);
+        }
+        entry.onclick = () => showSubagentModal(snap);
+      }
+      const statusCls = snap.status === "completed" ? "status-ok" : snap.status === "running" ? "status-running" : snap.status === "failed" ? "status-err" : "";
+      entry.innerHTML = `
+        <span class="subagent-entry-icon">🤖</span>
+        <span class="subagent-entry-task">${input.escapeHtml(snap.task.substring(0, 60))}</span>
+        <span class="subagent-entry-status ${statusCls}">${snap.status}</span>
+        <span class="subagent-entry-tc-count">${snap.toolCalls.length} calls</span>
+      `;
     }
   };
 
@@ -302,19 +479,36 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
   const appendCompletedToolCall = (contentEl: HTMLDivElement, toolCall: ToolCall): void => {
     const toolCallId = typeof toolCall.id === "string" ? toolCall.id : "";
     const normalizedToolName = toolCall.toolName.trim().toLowerCase();
-    const loadingBlocks = Array.from(
-      contentEl.querySelectorAll<HTMLDivElement>(
-        ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
-      )
-    );
-    const matchedBlock =
+    const tcContainer = getOrCreateToolCallsContainer(contentEl);
+    const list = tcContainer.querySelector(".tool-calls-list") as HTMLDivElement;
+    const loadingRows = Array.from(list.querySelectorAll<HTMLDivElement>(".tool-call-row.status-loading"));
+    const matchedRow =
       (toolCallId
-        ? loadingBlocks.find((block) => block.dataset.toolCallId === toolCallId)
+        ? loadingRows.find((row) => row.dataset.toolCallId === toolCallId)
         : null) ??
-      loadingBlocks.find((block) => block.dataset.toolName === normalizedToolName) ??
+      loadingRows.find((row) => row.dataset.toolName === normalizedToolName) ??
       null;
-    matchedBlock?.remove();
-    renderToolCalls(contentEl, [toolCall]);
+    if (matchedRow) {
+      const status = toolCall.result.ok ? "done" : "failed";
+      updateToolCallRow(matchedRow, status);
+      const outputContent = toolCall.toolName === "bash"
+        ? `$ ${typeof toolCall.args.command === "string" ? toolCall.args.command : "command"}\n\n${formatToolResultText(toolCall.result)}`
+        : `Args:\n${formatToolArgsText(toolCall.args)}\n\nResult:\n${formatToolResultText(toolCall.result)}`;
+      matchedRow.dataset.detail = outputContent;
+      matchedRow.title = outputContent.substring(0, 200);
+      matchedRow.addEventListener("click", () => {
+        const modal = document.getElementById("tool-detail-modal");
+        if (modal) {
+          const modalBody = modal.querySelector(".subagent-modal-body") as HTMLDivElement;
+          modalBody.innerHTML = `<pre class="tool-detail-pre">${input.escapeHtml(outputContent)}</pre>`;
+          const modalTitle = modal.querySelector(".subagent-modal-title") as HTMLDivElement;
+          modalTitle.textContent = toolCall.toolName;
+          modal.classList.add("visible");
+        }
+      });
+    } else {
+      renderToolCalls(contentEl, [toolCall]);
+    }
   };
 
   return {
@@ -323,19 +517,20 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     createAssistantSurface,
     createExecBlock,
     renderToolCalls,
-    appendCompletedToolCall
+    appendCompletedToolCall,
+    getOrCreateToolCallsContainer,
+    addToolCallRow,
+    updateToolCallRow,
+    showSubagentModal,
+    updateSubagentSnapshots
   };
 }
 
-function setExecBlockContent(block: HTMLDivElement, output: HTMLPreElement, fullText: string): void {
-  const contentState = buildExecContentState(fullText);
-  block.dataset.collapsedContent = contentState.collapsedText;
-  block.dataset.expandedContent = contentState.expandedText;
-  syncExecPreview(block, output);
-}
-
 function syncExecPreview(block: HTMLDivElement, output: HTMLPreElement): void {
-  output.textContent = block.classList.contains("expanded")
-    ? block.dataset.expandedContent ?? ""
-    : block.dataset.collapsedContent ?? "";
+  output.textContent = computeExecOutputText({
+    isExpanded: block.classList.contains("expanded"),
+    currentText: output.textContent ?? "",
+    collapsedContent: block.dataset.collapsedContent,
+    expandedContent: block.dataset.expandedContent
+  });
 }

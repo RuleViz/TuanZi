@@ -32,6 +32,7 @@ interface SlashCommandDeps {
   selectWorkspace: () => Promise<void>;
   openSettingsModal: () => Promise<void>;
   openAgentLibrary: () => Promise<void>;
+  onAgentConfigUpdated?: (config: AgentBackendConfig) => void;
   api: Pick<TuanziAPI, "getAgentConfig" | "saveAgentConfig">;
 }
 
@@ -333,6 +334,7 @@ export function createSlashCommandController(input: SlashCommandDeps): SlashComm
 
     input.state.agentConfig = saveResult.config;
     input.state.settingsDraft = input.buildSettingsDraft(saveResult.config);
+    input.onAgentConfigUpdated?.(saveResult.config);
     if (input.settingsModal.classList.contains("visible")) {
       input.renderSettingsDraft();
     }

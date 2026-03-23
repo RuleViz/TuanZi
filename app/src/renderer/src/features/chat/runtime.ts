@@ -82,6 +82,9 @@ interface ChatRuntimeDeps {
       timestamp: string;
     }
   ) => void;
+  getOrCreateToolCallsContainer: (parentEl: HTMLDivElement) => HTMLDivElement;
+  addToolCallRow: (container: HTMLDivElement, toolName: string, status: "loading" | "done" | "failed", toolCallId?: string) => HTMLDivElement;
+  updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: import("../../../../shared/ipc-contracts").SubagentSnapshotData[]) => void;
   resetSessionWorkbench: (sessionId: string) => void;
 }
 
@@ -131,7 +134,10 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       renderMarkdownHtml: input.renderMarkdownHtml,
       smartScrollToBottom: input.smartScrollToBottom,
       createExecBlock: input.createExecBlock,
-      appendCompletedToolCall: input.appendCompletedToolCall
+      appendCompletedToolCall: input.appendCompletedToolCall,
+      getOrCreateToolCallsContainer: input.getOrCreateToolCallsContainer,
+      addToolCallRow: input.addToolCallRow,
+      updateSubagentSnapshots: input.updateSubagentSnapshots
     });
   };
 

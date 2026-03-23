@@ -162,6 +162,30 @@ export interface ProviderProbePayload {
   model?: string;
 }
 
+export interface SubagentToolCallRecord {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+  result: { ok: boolean; data?: unknown; error?: string };
+}
+
+export interface SubagentSnapshotData {
+  id: string;
+  parentTaskId: string | null;
+  kind: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  task: string;
+  context: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  summary: string;
+  fullText: string;
+  toolCalls: SubagentToolCallRecord[];
+  error: string | null;
+}
+
 export interface TuanziAPI {
   sendMessage: (payload: SendMessagePayload) => Promise<ChatResult>;
   getResumeState: (
@@ -336,4 +360,7 @@ export interface TuanziAPI {
     callback: (data: { terminalId: string; sessionId: string }) => void
   ) => () => void;
   onWindowMaximizedChanged: (callback: (data: { maximized: boolean }) => void) => () => void;
+  onSubagentSnapshot: (
+    callback: (data: { taskId: string; snapshots: SubagentSnapshotData[] }) => void
+  ) => () => void;
 }

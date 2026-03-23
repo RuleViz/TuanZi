@@ -90,6 +90,7 @@ export function createSubagentBridge(
       status: "pending" | "running" | "done" | "failed";
       detail?: string;
     }>) => void;
+    onSnapshotsChange?: (snapshots: SubagentSnapshot[]) => void;
   }
 ): SubagentBridge {
   const client = createModelClient(runtimeConfig);
@@ -105,6 +106,7 @@ export function createSubagentBridge(
     runExplorer: async ({ task, context, signal }) => explorer.run({ task, context, signal }),
     onSnapshotsChange: (snapshots) => {
       input?.onTasksChange?.(snapshots.map(toWorkbenchTaskItem));
+      input?.onSnapshotsChange?.(snapshots);
     }
   });
 }

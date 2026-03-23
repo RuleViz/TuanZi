@@ -190,7 +190,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       sessionId,
       title: value.title,
       workspace: value.workspace,
-      status: value.status,
+      status: value.status === "running" ? "closed" : value.status,
       createdAt: value.createdAt,
       ...(exitCode !== undefined ? { exitCode } : {}),
       output: ""
@@ -306,19 +306,11 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     activeTerminalView = null;
   }
 
-  function terminalMetaText(terminal: WorkbenchTerminalState): string {
-    return `${terminal.workspace} · ${terminal.status}${terminal.exitCode !== undefined ? ` · exit ${terminal.exitCode ?? "null"}` : ""}`;
-  }
-
   function applyTerminalHead(selected: WorkbenchTerminalState): void {
     const title = input.terminalPanel.querySelector(".workbench-terminal-head .workbench-task-title") as HTMLDivElement | null;
-    const meta = input.terminalPanel.querySelector(".workbench-terminal-head .workbench-terminal-meta") as HTMLDivElement | null;
     const status = input.terminalPanel.querySelector(".workbench-terminal-status") as HTMLSpanElement | null;
     if (title) {
       title.textContent = selected.title;
-    }
-    if (meta) {
-      meta.textContent = terminalMetaText(selected);
     }
     if (status) {
       status.className = `workbench-terminal-status ${selected.status}`;
@@ -356,25 +348,10 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     }, delay);
   }
 
-  function renderLocalInput(terminal: Terminal, data: string): void {
-    for (const char of data) {
-      if (char === "\r") {
-        terminal.write("\r\n");
-        continue;
-      }
-      if (char === "\u007F") {
-        terminal.write("\b \b");
-        continue;
-      }
-      if (char === "\t" || (char >= " " && char !== "\u007F")) {
-        terminal.write(char);
-      }
-    }
-  }
-
   function renderDrawerState(): void {
-    input.drawer.classList.toggle("open", input.state.workbenchOpen);
-    input.drawer.setAttribute("aria-hidden", input.state.workbenchOpen ? "false" : "true");
+    const isOpen = input.state.workbenchOpen;
+    input.drawer.classList.toggle("open", isOpen);
+    input.drawer.setAttribute("aria-hidden", isOpen ? "false" : "true");
     input.drawer.setAttribute("data-workbench-page", activePage);
     input.pageButtons.forEach((button) => {
       const page = (button.dataset.workbenchPage as WorkbenchPage | undefined) ?? "tasks";
@@ -382,11 +359,11 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       button.classList.toggle("active", isActive);
       button.setAttribute("aria-selected", isActive ? "true" : "false");
     });
-    input.toggleButton.classList.toggle("active", input.state.workbenchOpen);
-    input.toggleButton.setAttribute("aria-expanded", input.state.workbenchOpen ? "true" : "false");
-    input.toggleButton.title = input.state.workbenchOpen ? "收起工作台" : "展开工作台";
-    if (input.state.workbenchOpen) {
-      scheduleFit(250);
+    input.toggleButton.classList.toggle("active", isOpen);
+    input.toggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    input.toggleButton.title = isOpen ? "收起工作台" : "展开工作台";
+    if (isOpen) {
+      scheduleFit(320);
     }
   }
 
@@ -524,6 +501,129 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     input.filesContainer.replaceChildren(list);
   }
 
+  let terminalModalOverlay: HTMLDivElement | null = null;
+  let terminalModalXterm: { terminalId: string; terminal: Terminal; fitAddon: FitAddon; inputDisposable: { dispose(): void } } | null = null;
+
+  function closeTerminalModal(): void {
+    if (terminalModalXterm) {
+      terminalModalXterm.inputDisposable.dispose();
+      terminalModalXterm.terminal.dispose();
+      terminalModalXterm = null;
+    }
+    if (terminalModalOverlay) {
+      terminalModalOverlay.remove();
+      terminalModalOverlay = null;
+    }
+  }
+
+  function openTerminalModal(
+    selected: WorkbenchTerminalState | null
+  ): void {
+    if (!selected) return;
+    closeTerminalModal();
+
+    const overlay = document.createElement("div");
+    overlay.className = "terminal-modal-overlay";
+    overlay.innerHTML = `
+      <div class="terminal-modal">
+        <div class="terminal-modal-header">
+          <div class="terminal-modal-header-left">
+            <span class="terminal-modal-title"></span>
+            <span class="workbench-terminal-status"></span>
+          </div>
+          <button class="terminal-modal-close" title="关闭">×</button>
+        </div>
+        <div class="terminal-modal-body">
+          <div class="terminal-modal-xterm"></div>
+        </div>
+      </div>
+    `;
+
+    const titleEl = overlay.querySelector(".terminal-modal-title") as HTMLSpanElement;
+    titleEl.textContent = selected.title;
+    const statusEl = overlay.querySelector(".workbench-terminal-status") as HTMLSpanElement;
+    statusEl.className = `workbench-terminal-status ${selected.status}`;
+    statusEl.textContent = selected.status === "running" ? "RUNNING" : selected.status === "exited" ? `EXIT ${selected.exitCode ?? "null"}` : "CLOSED";
+
+    const closeBtn = overlay.querySelector(".terminal-modal-close") as HTMLButtonElement;
+    closeBtn.addEventListener("click", closeTerminalModal);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) closeTerminalModal();
+    });
+
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        closeTerminalModal();
+        window.removeEventListener("keydown", onKey);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+
+    document.body.appendChild(overlay);
+    terminalModalOverlay = overlay;
+
+    const xtermHost = overlay.querySelector(".terminal-modal-xterm") as HTMLDivElement;
+    const modalTerminal = new Terminal({
+      convertEol: true,
+      allowTransparency: true,
+      cursorBlink: true,
+      fontFamily: "var(--font-mono)",
+      fontSize: 13,
+      lineHeight: 1.42,
+      letterSpacing: 0.2,
+      scrollback: 5000,
+      theme: {
+        background: "#0C0C0C",
+        foreground: "#EDEDED",
+        cursor: "#FF8D2A",
+        selectionBackground: "rgba(255, 122, 0, 0.22)",
+        black: "#0C0C0C",
+        brightBlack: "#5B5B5B",
+        red: "#FF6D6F",
+        brightRed: "#FF8D8E",
+        green: "#8DDA63",
+        brightGreen: "#A9F57F",
+        yellow: "#F5C66D",
+        brightYellow: "#FFD88A",
+        blue: "#73B8FF",
+        brightBlue: "#9BCFFF",
+        magenta: "#C39BFF",
+        brightMagenta: "#D7BCFF",
+        cyan: "#6EE7D8",
+        brightCyan: "#94F7EB",
+        white: "#EDEDED",
+        brightWhite: "#FFFFFF"
+      }
+    });
+    const modalFit = new FitAddon();
+    modalTerminal.loadAddon(modalFit);
+    modalTerminal.open(xtermHost);
+
+    if (selected.output) {
+      modalTerminal.write(selected.output);
+    }
+
+    modalTerminal.options.disableStdin = selected.status !== "running";
+
+    const terminalId = selected.terminalId;
+    const inputDisposable = modalTerminal.onData((data) => {
+      const current = getCurrentSessionState().terminals.find((item) => item.terminalId === terminalId);
+      if (!current || current.status !== "running") return;
+      void input.api.writeTerminal({ terminalId, data }).catch((error) => {
+        input.showError(error instanceof Error ? error.message : String(error));
+      });
+    });
+
+    xtermHost.addEventListener("mousedown", () => { modalTerminal.focus(); });
+
+    terminalModalXterm = { terminalId: selected.terminalId, terminal: modalTerminal, fitAddon: modalFit, inputDisposable };
+
+    requestAnimationFrame(() => {
+      try { modalFit.fit(); } catch { /* ignore */ }
+      modalTerminal.focus();
+    });
+  }
+
   function getSelectedTerminal(state: SessionWorkbenchState): WorkbenchTerminalState | null {
     if (state.terminals.length === 0) {
       return null;
@@ -582,16 +682,28 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       view.className = "workbench-terminal-view";
       view.innerHTML = `
         <div class="workbench-terminal-head">
-          <div>
+          <div class="workbench-terminal-head-left">
             <div class="workbench-task-title"></div>
-            <div class="workbench-terminal-meta"></div>
+            <span class="workbench-terminal-status"></span>
           </div>
-          <span class="workbench-terminal-status"></span>
+          <div class="workbench-terminal-head-actions">
+            <button class="workbench-terminal-head-btn" data-action="maximize" title="放大终端">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.828 10.172a.5.5 0 0 0-.707 0l-4.096 4.096V11.5a.5.5 0 0 0-1 0v3.975a.5.5 0 0 0 .5.5H4.5a.5.5 0 0 0 0-1H1.732l4.096-4.096a.5.5 0 0 0 0-.707zm4.344-4.344a.5.5 0 0 0 .707 0l4.096-4.096V4.5a.5.5 0 1 0 1 0V.525a.5.5 0 0 0-.5-.5H11.5a.5.5 0 0 0 0 1h2.768l-4.096 4.096a.5.5 0 0 0 0 .707z"/></svg>
+            </button>
+          </div>
         </div>
         <div class="workbench-terminal-native">
           <div class="workbench-terminal-xterm"></div>
         </div>
       `;
+
+      const maximizeBtn = view.querySelector("[data-action='maximize']") as HTMLButtonElement;
+      maximizeBtn.addEventListener("click", () => {
+        if (!activeTerminalView) return;
+        const sel = getSelectedTerminal(getCurrentSessionState());
+        openTerminalModal(sel);
+      });
+
       input.terminalPanel.replaceChildren(view);
 
       const xtermHost = view.querySelector(".workbench-terminal-xterm") as HTMLDivElement;
@@ -637,7 +749,6 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
         if (!current || current.status !== "running") {
           return;
         }
-        renderLocalInput(terminal, data);
         void input.api.writeTerminal({ terminalId, data }).catch((error) => {
           input.showError(error instanceof Error ? error.message : String(error));
         });
@@ -705,7 +816,8 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
   async function closeTerminal(terminalId: string): Promise<void> {
     const result = await input.api.closeTerminal({ terminalId });
     if (!result.ok) {
-      input.showError(result.error || "关闭终端失败");
+      removeTerminal(input.state.activeSessionId, terminalId);
+      renderCurrentSessionWorkbench();
     }
   }
 
@@ -761,13 +873,6 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
         renderCurrentSessionWorkbench();
       });
     });
-    input.drawer.addEventListener("click", () => {
-      if (input.state.workbenchOpen) {
-        return;
-      }
-      input.state.workbenchOpen = true;
-      renderCurrentSessionWorkbench();
-    });
     input.toggleButton.addEventListener("click", () => {
       input.state.workbenchOpen = !input.state.workbenchOpen;
       renderCurrentSessionWorkbench();
@@ -808,7 +913,14 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
         return;
       }
       terminal.output = `${terminal.output}${data.chunk}`.slice(-20000);
-      renderCurrentSessionWorkbench();
+      // Write directly to xterm instances instead of triggering full re-render
+      if (activeTerminalView && activeTerminalView.terminalId === data.terminalId) {
+        activeTerminalView.terminal.write(data.chunk);
+        activeTerminalView.renderedOutputLength = terminal.output.length;
+      }
+      if (terminalModalXterm && terminalModalXterm.terminalId === data.terminalId) {
+        terminalModalXterm.terminal.write(data.chunk);
+      }
     });
     input.api.onTerminalExit((data) => {
       const state = ensureSessionState(data.sessionId);

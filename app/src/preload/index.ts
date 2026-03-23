@@ -238,6 +238,13 @@ const tuanziAPI: TuanziAPI = {
     };
     ipcRenderer.on(IPC_CHANNELS.windowMaximizedChanged, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.windowMaximizedChanged, handler);
+  },
+  onSubagentSnapshot: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.chatSubagentSnapshot, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatSubagentSnapshot, handler);
   }
 };
 

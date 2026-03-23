@@ -707,7 +707,52 @@ export function createRunChatTask(
         typeof createSubagentBridge === "function"
           ? createSubagentBridge(runtimeConfig, runtime as any, {
             taskId,
-            onTasksChange: updateSubagentTasks
+            onTasksChange: updateSubagentTasks,
+            onSnapshotsChange: (snapshots: Array<{
+              id: string;
+              parentTaskId: string | null;
+              kind: string;
+              status: string;
+              task: string;
+              context: string;
+              createdAt: string;
+              updatedAt: string;
+              startedAt: string | null;
+              completedAt: string | null;
+              result: {
+                summary: string;
+                fullText: string;
+                toolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string } }>;
+                error?: string;
+                completedAt: string;
+              } | null;
+            }>) => {
+              const mapped = snapshots.map((s) => ({
+                id: s.id,
+                parentTaskId: s.parentTaskId,
+                kind: s.kind,
+                status: s.status as "queued" | "running" | "completed" | "failed" | "cancelled",
+                task: s.task,
+                context: s.context,
+                createdAt: s.createdAt,
+                updatedAt: s.updatedAt,
+                startedAt: s.startedAt,
+                completedAt: s.completedAt,
+                summary: s.result?.summary ?? "",
+                fullText: s.result?.fullText ?? "",
+                toolCalls: (s.result?.toolCalls ?? []).map((tc) => ({
+                  id: tc.id,
+                  name: tc.name,
+                  args: tc.args as Record<string, unknown>,
+                  result: tc.result as { ok: boolean; data?: unknown; error?: string }
+                })),
+                error: s.result?.error ?? null
+              }));
+              webContents.send(IPC_CHANNELS.chatSubagentSnapshot, {
+                taskId,
+                snapshots: mapped
+              });
+            }
           })
           : null;
       if (subagentBridge && runtimeWithContext.toolContext && typeof runtimeWithContext.toolContext === "object") {

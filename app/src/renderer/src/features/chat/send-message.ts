@@ -120,26 +120,23 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
     textContainer: surface.textContainer
   });
   const markPendingToolCallsFailed = (): void => {
-    const loadingBlocks = surface.contentEl.querySelectorAll<HTMLDivElement>(
-      ".exec-block.loading[data-exec-type=\"tool\"], .exec-block.loading[data-exec-type=\"command\"]"
+    const loadingRows = surface.contentEl.querySelectorAll<HTMLDivElement>(
+      ".tool-call-row.status-loading"
     );
-    loadingBlocks.forEach((block) => {
-      block.classList.remove("loading");
-      const title = block.querySelector<HTMLDivElement>(".exec-title");
-      if (!title) {
-        return;
+    loadingRows.forEach((row) => {
+      row.classList.remove("status-loading");
+      row.classList.add("status-failed");
+      const dot = row.querySelector(".tool-call-loading-dot");
+      if (dot) {
+        dot.remove();
       }
-      const existingBadge = title.querySelector<HTMLSpanElement>(".status-badge");
-      if (existingBadge) {
-        existingBadge.classList.remove("status-ok");
-        existingBadge.classList.add("status-err");
-        existingBadge.textContent = "failed";
-        return;
+      let badge = row.querySelector(".tool-call-status");
+      if (!badge) {
+        badge = document.createElement("span");
+        row.appendChild(badge);
       }
-      const badge = document.createElement("span");
-      badge.className = "status-badge status-err";
+      badge.className = "tool-call-status status-err";
       badge.textContent = "failed";
-      title.appendChild(badge);
     });
   };
 
