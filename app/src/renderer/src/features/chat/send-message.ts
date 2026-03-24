@@ -29,6 +29,7 @@ export interface SendMessageDeps {
     textContainer: HTMLDivElement;
   }) => StreamingListeners;
   finalizeThinkingBlock: (thinkingBlock: ExecBlock | null) => void;
+  finalizeAllThinkingBlocks: (blocks: ExecBlock[]) => void;
   getActiveAgent: () => { id: string } | null;
   ensureActiveSession: () => ChatSession;
   renderToolCalls: (
@@ -182,7 +183,7 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
     });
 
     listeners.dispose();
-    input.finalizeThinkingBlock(listeners.getThinkingBlock());
+    input.finalizeAllThinkingBlocks(listeners.getAllThinkingBlocks());
 
     if (result.ok) {
       const loadingBlocks = surface.contentEl.querySelectorAll(".exec-block.loading");

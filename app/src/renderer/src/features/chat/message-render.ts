@@ -1,5 +1,6 @@
 import type { ConversationToolCall, PendingChatImage } from "../../app/state";
 import type { SubagentSnapshotData } from "../../../../shared/ipc-contracts";
+import { THINKING_SEGMENT_SEPARATOR } from "./stream-listeners";
 
 interface ExecBlockOptions {
   type: "tool" | "command" | "thinking";
@@ -235,15 +236,18 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
       blocksContainer.className = "blocks-container";
       contentEl.appendChild(blocksContainer);
 
-      const { block, output } = createExecBlock({
-        type: "thinking",
-        title: "Thought Process",
-        statusOk: true,
-        statusText: "processed"
-      });
-      output.textContent = thinking;
-      block.dataset.expandedContent = thinking;
-      blocksContainer.appendChild(block);
+      const segments = thinking.split(THINKING_SEGMENT_SEPARATOR).filter((s) => s.trim());
+      for (const segment of segments) {
+        const { block, output } = createExecBlock({
+          type: "thinking",
+          title: "Thought",
+          statusOk: true,
+          statusText: "processed"
+        });
+        output.textContent = segment;
+        block.dataset.expandedContent = segment;
+        blocksContainer.appendChild(block);
+      }
     }
 
     if (toolCalls && toolCalls.length > 0) {

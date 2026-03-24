@@ -141,6 +141,9 @@ test("sendMessage stores completed tool calls into the synced turn", async () =>
     finalizeThinkingBlock: () => {
       return;
     },
+    finalizeAllThinkingBlocks: () => {
+      return;
+    },
     getActiveAgent: () => null,
     ensureActiveSession: () => activeSession,
     renderToolCalls: () => {
@@ -368,6 +371,9 @@ test("sendMessage keeps checkpointId for interrupted turns", async () => {
         getActiveTextContainer: () => textContainer
       }) as any,
     finalizeThinkingBlock: () => {
+      return;
+    },
+    finalizeAllThinkingBlocks: () => {
       return;
     },
     getActiveAgent: () => null,

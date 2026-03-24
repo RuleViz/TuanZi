@@ -1339,10 +1339,10 @@ body {
   color: var(--text-main);
   width: 100%;
   word-break: break-word;
-  background: var(--bg-surface);
-  padding: 16px 20px;
-  border-radius: 16px;
-  border: 1px solid var(--border-light);
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  border: none;
   box-shadow: none;
 }
 
@@ -1493,6 +1493,54 @@ body {
   width: 100%;
 }
 
+/* ── Thinking 块：无容器包裹，纯文本内联样式 ── */
+.exec-block[data-exec-type="thinking"] {
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+  border: none;
+  padding: 0;
+  margin: 4px 0;
+}
+
+.exec-block[data-exec-type="thinking"] .exec-title {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: rgba(255, 255, 255, 0.25);
+  padding: 1px 0;
+  gap: 4px;
+}
+
+.exec-block[data-exec-type="thinking"] .exec-title:hover {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.exec-block[data-exec-type="thinking"] .exec-output {
+  border: none;
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 0;
+}
+
+.exec-block[data-exec-type="thinking"] .exec-output pre {
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.3);
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.exec-block[data-exec-type="thinking"].loading .exec-title::after {
+  border-color: rgba(255, 255, 255, 0.06);
+  border-top-color: rgba(255, 255, 255, 0.2);
+}
+
 /* 虚字小标题 */
 .exec-title {
   font-size: 11px;
@@ -1625,33 +1673,40 @@ body {
    工具调用容器 (Compact Tool Calls)
    ═══════════════════════════════════════════════ */
 .tool-calls-container {
-  margin: 8px 0;
+  margin: 4px 0;
   width: 100%;
+  background: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+  border: none;
+  padding: 0;
 }
 
 .tool-calls-header {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   cursor: pointer;
   user-select: none;
   font-size: 11px;
-  color: var(--text-muted);
-  padding: 4px 0;
+  color: rgba(255, 255, 255, 0.25);
+  padding: 1px 0;
   transition: color 0.2s;
 }
 
 .tool-calls-header:hover {
-  color: var(--text-secondary);
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .tool-calls-chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   transition: transform 0.2s ease;
+  opacity: 0.5;
 }
 
 .tool-calls-container:not(.collapsed) .tool-calls-chevron {
@@ -1660,15 +1715,15 @@ body {
 
 .tool-calls-summary {
   font-weight: 500;
-  letter-spacing: 0.03em;
+  letter-spacing: 0;
 }
 
 .tool-calls-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-left: 18px;
-  margin-top: 4px;
+  gap: 0;
+  padding-left: 12px;
+  margin-top: 2px;
 }
 
 .tool-calls-container.collapsed .tool-calls-list {
@@ -1678,21 +1733,21 @@ body {
 .tool-call-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  gap: 4px;
+  padding: 0 2px;
+  border-radius: 2px;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .tool-call-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .tool-call-name {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 10.5px;
+  color: rgba(255, 255, 255, 0.25);
   font-weight: 400;
 }
 
@@ -1707,9 +1762,10 @@ body {
 }
 
 .tool-call-status {
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 400;
   flex-shrink: 0;
+  opacity: 0.7;
 }
 
 /* ═══════════════════════════════════════════════

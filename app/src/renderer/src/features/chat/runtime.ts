@@ -4,6 +4,7 @@ import {
   beginStreamingUi as beginStreamingUiFeature,
   endStreamingUi as endStreamingUiFeature,
   finalizeThinkingBlock as finalizeThinkingBlockFeature,
+  finalizeAllThinkingBlocks as finalizeAllThinkingBlocksFeature,
   type ExecBlock,
   type StreamUiState
 } from "./stream-listeners";
@@ -145,6 +146,10 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
     finalizeThinkingBlockFeature(thinkingBlock);
   };
 
+  const finalizeAllThinkingBlocks = (blocks: ExecBlock[]): void => {
+    finalizeAllThinkingBlocksFeature(blocks);
+  };
+
   const sendMessage = async (): Promise<void> => {
     await sendMessageFeature({
       state: input.state,
@@ -161,6 +166,7 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       scrollToBottom: input.scrollToBottom,
       buildStreamingListeners,
       finalizeThinkingBlock,
+      finalizeAllThinkingBlocks,
       getActiveAgent: input.getActiveAgent,
       ensureActiveSession: input.ensureActiveSession,
       renderToolCalls: input.renderToolCalls,

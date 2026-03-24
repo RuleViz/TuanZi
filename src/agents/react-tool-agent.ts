@@ -71,7 +71,7 @@ export class ReactToolAgent {
     signal?: AbortSignal;
   }): Promise<ToolLoopOutput> {
     const temperature = input.resumeState?.temperature ?? input.temperature ?? 0.2;
-    const maxTurns = input.resumeState?.maxTurns ?? input.maxTurns ?? 12;
+    const maxTurns = input.resumeState?.maxTurns ?? input.maxTurns ?? 999999;
     this.toolContext.logger.info(
       `[agent] start tool-loop model=${this.model} allowedTools=${input.allowedTools.length} maxTurns=${maxTurns}`
     );

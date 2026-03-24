@@ -1,4 +1,4 @@
-﻿import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { findCustomModelConfig, loadCustomModelStore } from "./core/custom-model-store";
 import {
@@ -131,8 +131,8 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
     cacheTtlMs: 10 * 60 * 1000
   },
   toolLoop: {
-    searchMaxTurns: 12,
-    coderMaxTurns: 20,
+    searchMaxTurns: 999999,
+    coderMaxTurns: 999999,
     noProgressRepeatTurns: 2
   },
   mcp: {
@@ -266,11 +266,11 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
   if (toolLoopRaw) {
     const searchMaxTurns = asPositiveInt(toolLoopRaw.searchMaxTurns);
     if (searchMaxTurns !== null) {
-      base.toolLoop.searchMaxTurns = clamp(searchMaxTurns, 2, 50);
+      base.toolLoop.searchMaxTurns = clamp(searchMaxTurns, 2, 999999);
     }
     const coderMaxTurns = asPositiveInt(toolLoopRaw.coderMaxTurns);
     if (coderMaxTurns !== null) {
-      base.toolLoop.coderMaxTurns = clamp(coderMaxTurns, 2, 100);
+      base.toolLoop.coderMaxTurns = clamp(coderMaxTurns, 2, 999999);
     }
     const noProgressRepeatTurns = asPositiveInt(toolLoopRaw.noProgressRepeatTurns);
     if (noProgressRepeatTurns !== null) {

@@ -1,3 +1,5 @@
+export const THINKING_SEGMENT_SEPARATOR = "\n\n---THINKING_SEGMENT---\n\n";
+
 export interface StreamUiState {
   isSending: boolean;
   isStopping: boolean;
@@ -14,6 +16,7 @@ export interface ExecBlock {
 export interface StreamingListeners {
   getCurrentThinkingText: () => string;
   getThinkingBlock: () => ExecBlock | null;
+  getAllThinkingBlocks: () => ExecBlock[];
   getActiveTextContainer: () => HTMLDivElement;
   dispose: () => void;
 }
@@ -98,8 +101,12 @@ export function buildStreamingListeners(input: {
   updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: import("../../../../shared/ipc-contracts").SubagentSnapshotData[]) => void;
 }): StreamingListeners {
   let thinkingBlock = input.existingThinkingBlock ?? null;
+  const allThinkingBlocks: ExecBlock[] = input.existingThinkingBlock ? [input.existingThinkingBlock] : [];
   let planPreviewBlock: ExecBlock | null = null;
   let currentThinkingText = input.initialThinkingText ?? "";
+  let currentSegmentThinkingText = input.initialThinkingText ?? "";
+  let thinkingSegmentStartTime = Date.now();
+  let needNewThinkingBlock = false;
   let activeTextContainer = input.textContainer;
   let segmentStart = 0;
   const completedBeforeStartCounts = new Map<string, number>();
@@ -165,24 +172,53 @@ export function buildStreamingListeners(input: {
     input.smartScrollToBottom();
   });
 
+  const finalizeCurrentThinkingBlock = (): void => {
+    if (!thinkingBlock) {
+      return;
+    }
+    const elapsed = Math.round((Date.now() - thinkingSegmentStartTime) / 1000);
+    const titleEl = thinkingBlock.block.querySelector(".exec-title");
+    if (titleEl) {
+      const chevron = titleEl.querySelector(".chevron");
+      const icon = titleEl.querySelector(".tool-icon");
+      const chevronHtml = chevron ? chevron.outerHTML : "";
+      const iconHtml = icon ? icon.outerHTML : "";
+      titleEl.innerHTML = `${chevronHtml}${iconHtml}Thought for ${elapsed}s`;
+    }
+    thinkingBlock.block.classList.remove("loading");
+    thinkingBlock.block.classList.remove("expanded");
+    if (thinkingBlock.output.textContent) {
+      thinkingBlock.block.dataset.expandedContent = thinkingBlock.output.textContent;
+    }
+    currentThinkingText += THINKING_SEGMENT_SEPARATOR;
+  };
+
   const removeThinkingListener = window.tuanzi.onThinking((data) => {
     if (!isCurrentTask(data.taskId)) {
       return;
     }
     input.state.currentTaskId = data.taskId;
-    if (!thinkingBlock) {
+    if (!thinkingBlock || needNewThinkingBlock) {
+      if (thinkingBlock && needNewThinkingBlock) {
+        finalizeCurrentThinkingBlock();
+      }
       thinkingBlock = input.createExecBlock({
         type: "thinking",
-        title: "Thought Process",
+        title: "Thinking...",
         loading: true
       });
       thinkingBlock.block.classList.add("expanded");
+      allThinkingBlocks.push(thinkingBlock);
+      currentSegmentThinkingText = "";
+      thinkingSegmentStartTime = Date.now();
+      needNewThinkingBlock = false;
       input.blocksContainer.appendChild(thinkingBlock.block);
     }
     thinkingBlock.block.classList.add("loading");
     currentThinkingText += data.delta;
-    thinkingBlock.output.textContent = currentThinkingText;
-    thinkingBlock.block.dataset.expandedContent = currentThinkingText;
+    currentSegmentThinkingText += data.delta;
+    thinkingBlock.output.textContent = currentSegmentThinkingText;
+    thinkingBlock.block.dataset.expandedContent = currentSegmentThinkingText;
     input.smartScrollToBottom();
   });
 
@@ -238,6 +274,8 @@ export function buildStreamingListeners(input: {
     }
     input.state.currentRenderedToolCalls += 1;
 
+    needNewThinkingBlock = true;
+
     segmentStart = input.state.currentStreamText.length;
     activeTextContainer = document.createElement("div");
     activeTextContainer.className = "markdown-text";
@@ -257,6 +295,7 @@ export function buildStreamingListeners(input: {
   return {
     getCurrentThinkingText: (): string => currentThinkingText,
     getThinkingBlock: () => thinkingBlock,
+    getAllThinkingBlocks: () => allThinkingBlocks,
     getActiveTextContainer: () => activeTextContainer,
     dispose: (): void => {
       removePhaseListener();
@@ -286,5 +325,11 @@ export function finalizeThinkingBlock(thinkingBlock: ExecBlock | null): void {
     badge.className = "status-badge status-ok";
     badge.textContent = "processed";
     title.appendChild(badge);
+  }
+}
+
+export function finalizeAllThinkingBlocks(blocks: ExecBlock[]): void {
+  for (const block of blocks) {
+    finalizeThinkingBlock(block);
   }
 }

@@ -33,7 +33,7 @@ const chatTaskServiceSource = readFileSync(
 test("streaming thinking listener sets dataset.expandedContent during accumulation", () => {
   assert.match(
     streamListenersSource,
-    /thinkingBlock\.block\.dataset\.expandedContent\s*=\s*currentThinkingText/,
+    /thinkingBlock\.block\.dataset\.expandedContent\s*=\s*currentSegmentThinkingText/,
     "onThinking handler must sync expandedContent with accumulated text"
   );
 });
@@ -49,7 +49,7 @@ test("finalizeThinkingBlock persists output to dataset.expandedContent", () => {
 test("addAssistantMessage sets dataset.expandedContent for historical thinking blocks", () => {
   assert.match(
     messageRenderSource,
-    /block\.dataset\.expandedContent\s*=\s*thinking/,
+    /block\.dataset\.expandedContent\s*=\s*segment/,
     "Historical thinking block must have expandedContent set"
   );
 });
