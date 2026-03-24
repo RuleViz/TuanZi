@@ -109,6 +109,7 @@ export function buildStreamingListeners(input: {
   let needNewThinkingBlock = false;
   let activeTextContainer = input.textContainer;
   let segmentStart = 0;
+  let thinkingInsertBefore: HTMLElement | null = null;
   const completedBeforeStartCounts = new Map<string, number>();
 
   const isCurrentTask = (taskId: string): boolean => taskId === input.taskId;
@@ -212,7 +213,11 @@ export function buildStreamingListeners(input: {
       currentSegmentThinkingText = "";
       thinkingSegmentStartTime = Date.now();
       needNewThinkingBlock = false;
-      input.blocksContainer.appendChild(thinkingBlock.block);
+      if (thinkingInsertBefore) {
+        input.contentEl.insertBefore(thinkingBlock.block, thinkingInsertBefore);
+      } else {
+        input.blocksContainer.appendChild(thinkingBlock.block);
+      }
     }
     thinkingBlock.block.classList.add("loading");
     currentThinkingText += data.delta;
@@ -280,6 +285,7 @@ export function buildStreamingListeners(input: {
     activeTextContainer = document.createElement("div");
     activeTextContainer.className = "markdown-text";
     input.contentEl.appendChild(activeTextContainer);
+    thinkingInsertBefore = activeTextContainer;
 
     input.smartScrollToBottom();
   });
