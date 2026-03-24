@@ -8,20 +8,21 @@ import type { SessionWorkbenchState } from "../../app/state";
 interface WorkbenchState {
   activeSessionId: string;
   sessions: Array<{ id: string; workspace: string }>;
-  workbenchOpen: boolean;
+  tasksExpanded: boolean;
+  filesExpanded: boolean;
   sessionWorkbench: Record<string, SessionWorkbenchState>;
 }
 
 interface WorkbenchFeatureDeps {
   state: WorkbenchState;
-  drawer: HTMLElement;
-  tasksContainer: HTMLDivElement;
+  tasksPanel: HTMLDivElement;
+  filesPanel: HTMLDivElement;
+  tasksToggle: HTMLButtonElement;
+  filesToggle: HTMLButtonElement;
+  tasksBody: HTMLDivElement;
+  filesBody: HTMLDivElement;
   tasksCount: HTMLSpanElement;
   filesCount: HTMLSpanElement;
-  filesContainer: HTMLDivElement;
-  pageButtons: HTMLButtonElement[];
-  toggleButton: HTMLButtonElement;
-  closeButton: HTMLButtonElement;
   api: Pick<TuanziAPI, "onTasks" | "onModifiedFiles">;
 }
 
@@ -31,7 +32,6 @@ export interface WorkbenchFeature {
   resetSessionWorkbench: (sessionId: string) => void;
 }
 
-type WorkbenchPage = "tasks" | "files";
 const WORKBENCH_STORAGE_KEY = "tuanzi.desktop.workbench.v1";
 const WORKBENCH_PERSIST_DEBOUNCE_MS = 180;
 
@@ -47,7 +47,6 @@ interface PersistedWorkbenchPayload {
 
 export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFeature {
   let persistTimer: number | null = null;
-  let activePage: WorkbenchPage = "tasks";
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -198,20 +197,20 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     return ensureSessionState(input.state.activeSessionId);
   }
 
-  function renderDrawerState(): void {
-    const isOpen = input.state.workbenchOpen;
-    input.drawer.classList.toggle("open", isOpen);
-    input.drawer.setAttribute("aria-hidden", isOpen ? "false" : "true");
-    input.drawer.setAttribute("data-workbench-page", activePage);
-    input.pageButtons.forEach((button) => {
-      const page = (button.dataset.workbenchPage as WorkbenchPage | undefined) ?? "tasks";
-      const isActive = page === activePage;
-      button.classList.toggle("active", isActive);
-      button.setAttribute("aria-selected", isActive ? "true" : "false");
-    });
-    input.toggleButton.classList.toggle("active", isOpen);
-    input.toggleButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
-    input.toggleButton.title = isOpen ? "Collapse Workbench" : "Expand Workbench";
+  function renderPanelState(tasks: WorkbenchTaskItem[], files: ModifiedFileEntry[]): void {
+    const hasTasks = tasks.length > 0;
+    const hasFiles = files.length > 0;
+    input.tasksPanel.classList.toggle("hidden", !hasTasks);
+    input.filesPanel.classList.toggle("hidden", !hasFiles);
+    input.tasksPanel.classList.toggle("expanded", input.state.tasksExpanded && hasTasks);
+    input.filesPanel.classList.toggle("expanded", input.state.filesExpanded && hasFiles);
+    input.tasksCount.setAttribute("data-count", String(tasks.length));
+    input.filesCount.setAttribute("data-count", String(files.length));
+  }
+
+  function closeAllPopovers(): void {
+    input.state.tasksExpanded = false;
+    input.state.filesExpanded = false;
   }
 
   const collapsedGroups = new Set<string>();
@@ -261,7 +260,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     const totalCount = groupHeaders.length + standaloneItems.length;
     input.tasksCount.textContent = String(totalCount || tasks.length);
     if (tasks.length === 0) {
-      input.tasksContainer.innerHTML = '<div class="workbench-empty">当前会话还没有任务记录</div>';
+      input.tasksBody.innerHTML = '';
       return;
     }
 
@@ -322,13 +321,13 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       container.appendChild(renderTaskItem(task));
     }
 
-    input.tasksContainer.replaceChildren(container);
+    input.tasksBody.replaceChildren(container);
   }
 
   function renderFiles(files: ModifiedFileEntry[]): void {
     input.filesCount.textContent = String(files.length);
     if (files.length === 0) {
-      input.filesContainer.innerHTML = '<div class="workbench-empty">当前会话还没有文件改动</div>';
+      input.filesBody.innerHTML = '';
       return;
     }
 
@@ -345,39 +344,44 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       `;
       list.appendChild(item);
     }
-    input.filesContainer.replaceChildren(list);
+    input.filesBody.replaceChildren(list);
   }
 
   function renderCurrentSessionWorkbench(): void {
-    renderDrawerState();
     const current = getCurrentSessionState();
     renderTasks(current.tasks);
     renderFiles(current.modifiedFiles);
+    renderPanelState(current.tasks, current.modifiedFiles);
   }
 
   function bind(): void {
     hydrateSessionWorkbenchFromStorage();
 
-    input.pageButtons.forEach((button) => {
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const page = button.dataset.workbenchPage as WorkbenchPage | undefined;
-        if (!page || page === activePage) {
-          return;
-        }
-        activePage = page;
-        renderCurrentSessionWorkbench();
-      });
-    });
-
-    input.toggleButton.addEventListener("click", () => {
-      input.state.workbenchOpen = !input.state.workbenchOpen;
+    input.tasksToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = !input.state.tasksExpanded;
+      closeAllPopovers();
+      input.state.tasksExpanded = opening;
       renderCurrentSessionWorkbench();
     });
 
-    input.closeButton.addEventListener("click", (event) => {
-      event.stopPropagation();
-      input.state.workbenchOpen = false;
+    input.filesToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const opening = !input.state.filesExpanded;
+      closeAllPopovers();
+      input.state.filesExpanded = opening;
+      renderCurrentSessionWorkbench();
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!input.state.tasksExpanded && !input.state.filesExpanded) {
+        return;
+      }
+      const target = e.target as Node;
+      if (input.tasksPanel.contains(target) || input.filesPanel.contains(target)) {
+        return;
+      }
+      closeAllPopovers();
       renderCurrentSessionWorkbench();
     });
 

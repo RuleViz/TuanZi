@@ -21,15 +21,20 @@ test("workspace label remains in top-left sidebar", () => {
   assert.match(html, /id="workspaceLabel"/);
 });
 
-test("workbench terminal panel markup is removed from renderer html", () => {
-  assert.match(html, /id="workbenchPageTasksBtn"/);
-  assert.match(html, /id="workbenchPageFilesBtn"/);
-  assert.doesNotMatch(html, /id="workbenchPageTerminalsBtn"/);
-  assert.doesNotMatch(html, /id="workbenchTerminalsCount"/);
-  assert.doesNotMatch(html, /id="workbenchTerminals"/);
-  assert.doesNotMatch(html, /id="newWorkbenchTerminalBtn"/);
-  assert.doesNotMatch(html, /id="workbenchTerminalTabs"/);
-  assert.doesNotMatch(html, /id="workbenchTerminalPanel"/);
+test("workbench drawer is removed and context panels exist above input", () => {
+  assert.doesNotMatch(html, /id="workbenchDrawer"/);
+  assert.doesNotMatch(html, /id="workbenchPageTasksBtn"/);
+  assert.doesNotMatch(html, /id="workbenchPageFilesBtn"/);
+  assert.doesNotMatch(html, /id="toggleWorkbench"/);
+  assert.doesNotMatch(html, /id="closeWorkbenchBtn"/);
+  assert.match(html, /id="contextPanelTasks"/);
+  assert.match(html, /id="contextPanelFiles"/);
+  assert.match(html, /id="contextTasksToggle"/);
+  assert.match(html, /id="contextFilesToggle"/);
+  assert.match(html, /id="contextTasksBody"/);
+  assert.match(html, /id="contextFilesBody"/);
+  assert.match(html, /id="contextTasksCount"/);
+  assert.match(html, /id="contextFilesCount"/);
 });
 
 test("thinking mode defaults to enabled and is not toggled by a button", () => {

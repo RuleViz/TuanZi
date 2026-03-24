@@ -39,36 +39,23 @@ test('global mesh does not add a full-window gray blur veil', () => {
   assert.match(styles, /\.glass-bg-mesh\s*\{[\s\S]*?-webkit-backdrop-filter:\s*none;/)
 })
 
-test('workbench drawer uses split collapsed and open sizing tokens', () => {
-  assert.match(styles, /--workbench-drawer-width-collapsed:\s*[^;]+;/)
-  assert.match(styles, /--workbench-drawer-width-open:\s*[^;]+;/)
-  assert.match(styles, /--workbench-collapsed-top:\s*[^;]+;/)
-  assert.match(styles, /--workbench-open-bottom:\s*[^;]+;/)
-  assert.match(styles, /\.workbench-drawer\s*\{[\s\S]*?top:\s*var\(--workbench-collapsed-top\);/)
-  assert.match(styles, /\.workbench-drawer\.open\s*\{[\s\S]*?width:\s*var\(--workbench-drawer-width-open\);/)
-})
-
-test('workbench drawer no longer has neon rail pseudo element', () => {
-  assert.doesNotMatch(styles, /\.workbench-drawer::before\s*\{/)
-})
-
-test('workbench tab pages use full available height without per-section max-height caps', () => {
-  assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?overflow-y:\s*auto;/)
-  assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?overflow-x:\s*hidden;/)
-  assert.match(styles, /\.workbench-section-body\s*\{[\s\S]*?flex:\s*1;/)
-  assert.doesNotMatch(styles, /#workbenchTasks\.workbench-section-body\s*\{[\s\S]*?max-height:/)
-  assert.doesNotMatch(styles, /\.workbench-terminals-body\s*\{[^}]*max-height:/)
-  assert.doesNotMatch(styles, /#workbenchFiles\.workbench-section-body\s*\{[\s\S]*?max-height:/)
+test('context bar uses lightweight icon buttons with popover dropdowns', () => {
+  assert.match(styles, /\.ctx-bar\s*\{/)
+  assert.match(styles, /\.ctx-icon-btn\s*\{/)
+  assert.match(styles, /\.ctx-popover\s*\{/)
+  assert.match(styles, /\.ctx-item\.expanded\s+\.ctx-popover\s*\{[\s\S]*?display:\s*block;/)
+  assert.match(styles, /\.ctx-item\.hidden\s*\{[\s\S]*?display:\s*none;/)
+  assert.match(styles, /\.ctx-badge\s*\{/)
 })
 
 test('workbench task detail wraps long tokens to avoid horizontal overflow', () => {
   assert.match(styles, /\.workbench-task-detail[\s\S]*?overflow-wrap:\s*anywhere;/)
 })
 
-test('workbench supports single-page switching for tasks and files', () => {
-  assert.match(styles, /\.workbench-page-switcher\s*\{/)
-  assert.match(styles, /\.workbench-page-btn\.active\s*\{/)
-  assert.match(styles, /\.workbench-drawer\[data-workbench-page="tasks"\]\s+\.workbench-section\[data-section="tasks"\]/)
-  assert.match(styles, /\.workbench-drawer\[data-workbench-page="files"\]\s+\.workbench-section\[data-section="files"\]/)
-  assert.doesNotMatch(styles, /\.workbench-drawer\[data-workbench-page="terminals"\]\s+\.workbench-section\[data-section="terminals"\]/)
+test('old workbench drawer styles are fully removed', () => {
+  assert.doesNotMatch(styles, /\.workbench-drawer\s*\{/)
+  assert.doesNotMatch(styles, /\.workbench-drawer\.open\s*\{/)
+  assert.doesNotMatch(styles, /\.workbench-page-switcher\s*\{/)
+  assert.doesNotMatch(styles, /\.workbench-page-btn\s*\{/)
+  assert.doesNotMatch(styles, /\.workbench-close-btn\s*\{/)
 })

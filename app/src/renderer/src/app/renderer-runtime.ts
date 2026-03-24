@@ -66,18 +66,17 @@ import {
   slashCommandList,
   slashCommandMenu,
   stopBtn,
-  toggleWorkbench,
+  contextPanelTasks,
+  contextPanelFiles,
+  contextTasksToggle,
+  contextFilesToggle,
+  contextTasksBody,
+  contextFilesBody,
+  contextTasksCount,
+  contextFilesCount,
   welcomeAvatar,
   welcomeState,
   welcomeTitle,
-  closeWorkbenchBtn,
-  workbenchDrawer,
-  workbenchFiles,
-  workbenchFilesCount,
-  workbenchTasks,
-  workbenchTasksCount,
-  workbenchPageTasksBtn,
-  workbenchPageFilesBtn,
   workspaceLabel
 } from "./dom"
 import { createChatViewport } from "./chat-viewport"
@@ -243,14 +242,14 @@ export function createRendererRuntime() {
 
   const workbenchFeature = createWorkbenchFeature({
     state,
-    drawer: workbenchDrawer,
-    tasksContainer: workbenchTasks,
-    tasksCount: workbenchTasksCount,
-    filesCount: workbenchFilesCount,
-    filesContainer: workbenchFiles,
-    pageButtons: [workbenchPageTasksBtn, workbenchPageFilesBtn],
-    toggleButton: toggleWorkbench,
-    closeButton: closeWorkbenchBtn,
+    tasksPanel: contextPanelTasks,
+    filesPanel: contextPanelFiles,
+    tasksToggle: contextTasksToggle,
+    filesToggle: contextFilesToggle,
+    tasksBody: contextTasksBody,
+    filesBody: contextFilesBody,
+    tasksCount: contextTasksCount,
+    filesCount: contextFilesCount,
     api: window.tuanzi
   })
   renderCurrentSessionWorkbench = () => {

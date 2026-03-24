@@ -19,11 +19,6 @@
       </svg>
     </button>
     <div class="top-bar-drag"></div>
-    <button class="top-bar-btn" id="toggleWorkbench" title="展开工作台" aria-controls="workbenchDrawer" aria-expanded="false">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path fill-rule="evenodd" d="M13.5 3a1.5 1.5 0 0 1 1.5 1.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 11.5v-7A1.5 1.5 0 0 1 2.5 3h11Zm-11 1a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h11a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5h-11ZM10.5 5.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5Z" />
-      </svg>
-    </button>
     <div class="window-controls" id="windowControls">
       <button class="window-control-btn" id="windowMinimizeBtn" title="最小化">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
@@ -98,6 +93,24 @@
       <div class="slash-command-menu" id="slashCommandMenu" aria-hidden="true">
         <div class="slash-command-list" id="slashCommandList"></div>
       </div>
+
+      <div class="ctx-bar" id="contextPanels">
+        <div class="ctx-item" id="contextPanelTasks">
+          <button class="ctx-icon-btn" id="contextTasksToggle" title="Tasks">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5Zm0 4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5Zm0 4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5Zm0 4a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5Z"/></svg>
+            <span class="ctx-badge" id="contextTasksCount">0</span>
+          </button>
+          <div class="ctx-popover" id="contextTasksBody"></div>
+        </div>
+        <div class="ctx-item" id="contextPanelFiles">
+          <button class="ctx-icon-btn" id="contextFilesToggle" title="Modified Files">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M4 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.5L9.5 0H4ZM3 2a1 1 0 0 1 1-1h5v3.5A1.5 1.5 0 0 0 10.5 6H13v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2Z"/></svg>
+            <span class="ctx-badge" id="contextFilesCount">0</span>
+          </button>
+          <div class="ctx-popover" id="contextFilesBody"></div>
+        </div>
+      </div>
+
       <div class="input-box" id="inputBox">
         <input id="imageFileInput" type="file" accept="image/*" hidden />
         <textarea id="inputTextarea" class="input-textarea" placeholder="描述你的请求，按 Enter 发送，Shift+Enter 换行..."
@@ -138,38 +151,6 @@
     </div>
   </div>
 
-  <aside class="workbench-drawer" id="workbenchDrawer" aria-hidden="true">
-    <div class="workbench-header">
-        <div>
-          <div class="workbench-eyebrow">Session Workbench</div>
-          <div class="workbench-title">执行工作台</div>
-        </div>
-        <button class="workbench-close-btn" id="closeWorkbenchBtn" title="收起工作台">×</button>
-      </div>
-
-      <div class="workbench-page-switcher" role="tablist" aria-label="工作台页面切换">
-        <button class="workbench-page-btn active" id="workbenchPageTasksBtn" data-workbench-page="tasks" role="tab"
-          aria-selected="true">Tasks</button>
-        <button class="workbench-page-btn" id="workbenchPageFilesBtn" data-workbench-page="files" role="tab"
-          aria-selected="false">Files</button>
-      </div>
-
-      <section class="workbench-section expanded" data-section="tasks">
-        <button class="workbench-section-title" data-workbench-toggle="tasks">
-          <span>Tasks</span>
-          <span class="workbench-section-count" id="workbenchTasksCount">0</span>
-        </button>
-        <div class="workbench-section-body" id="workbenchTasks"></div>
-      </section>
-
-      <section class="workbench-section expanded" data-section="files">
-        <button class="workbench-section-title" data-workbench-toggle="files">
-          <span>Modified Files</span>
-          <span class="workbench-section-count" id="workbenchFilesCount">0</span>
-        </button>
-        <div class="workbench-section-body" id="workbenchFiles"></div>
-      </section>
-    </aside>
 
   </div>
 
