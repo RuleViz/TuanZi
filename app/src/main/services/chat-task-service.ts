@@ -433,6 +433,7 @@ export function createRunChatTask(
     toolCalls: ConversationTurnToolCallRecord[];
     checkpointId: string | null;
     interrupted: boolean;
+    error?: string | null;
     modelSelection: ActiveModelSelection;
   }): Promise<ConversationTurnRecord> => {
     const state = await deps.conversationMemoryStore.getSessionState(input.workspace, input.sessionId);
@@ -453,6 +454,7 @@ export function createRunChatTask(
       toolCalls: cloneJson(input.toolCalls),
       checkpointId: input.checkpointId,
       interrupted: input.interrupted,
+      ...(input.error ? { error: input.error } : {}),
       createdAt: now
     };
     await deps.conversationMemoryStore.appendTurn(record);
@@ -770,7 +772,7 @@ export function createRunChatTask(
       const orchestrator = createOrchestrator(runtimeConfig, runtime);
 
       let streamedText = payload.resumeState?.partialAssistantMessage?.content ?? "";
-      let streamedThinking = payload.resumeState?.partialAssistantMessage?.thinking ?? "";
+      let streamedThinking = payload.resumeState?.partialAssistantMessage?.reasoning_content ?? payload.resumeState?.partialAssistantMessage?.thinking ?? "";
       latestStreamedText = streamedText;
       latestStreamedThinking = streamedThinking;
       const completedToolCalls = cloneToolCallSnapshots(payload.resumeState?.toolCalls ?? []);
@@ -1036,7 +1038,40 @@ export function createRunChatTask(
           checkpointId: currentCheckpointId
         };
       }
-      return { ok: false, taskId, error: message };
+      // Non-interruption errors (rate limit, model request limit, network errors, etc.)
+      // Still save the conversation turn so context is preserved for the next request.
+      const snapshot = loadMatchingChatResumeSnapshot(deps.chatResumeStore, sessionId, workspace);
+      if (currentModelSelection) {
+        const toolCallsFromError = normalizeToolCallsFromResume(completedToolCallsForInterrupt);
+        const assistantText = snapshot?.streamedText ?? latestStreamedText;
+        const thinkingText = snapshot?.streamedThinking ?? latestStreamedThinking;
+        try {
+          await appendConversationTurn({
+            workspace,
+            sessionId,
+            taskId,
+            turnId: `${taskId}-turn`,
+            user: currentMessage,
+            assistant: assistantText,
+            thinkingSummary: thinkingText,
+            toolCalls: toolCallsFromError,
+            checkpointId: currentCheckpointId,
+            interrupted: true,
+            error: message,
+            modelSelection: currentModelSelection
+          });
+        } catch (turnError) {
+          console.warn(`[memory] failed to append error turn: ${deps.toErrorMessage(turnError)}`);
+        }
+      }
+      return {
+        ok: false,
+        taskId,
+        error: message,
+        interrupted: true,
+        resumeSnapshot: snapshot,
+        checkpointId: currentCheckpointId
+      };
     } finally {
       deps.activeTasks.delete(taskId);
       if (runtimeToDispose && typeof runtimeToDispose.dispose === "function") {

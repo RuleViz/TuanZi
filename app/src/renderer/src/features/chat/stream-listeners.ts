@@ -182,6 +182,7 @@ export function buildStreamingListeners(input: {
     thinkingBlock.block.classList.add("loading");
     currentThinkingText += data.delta;
     thinkingBlock.output.textContent = currentThinkingText;
+    thinkingBlock.block.dataset.expandedContent = currentThinkingText;
     input.smartScrollToBottom();
   });
 
@@ -272,6 +273,9 @@ export function buildStreamingListeners(input: {
 export function finalizeThinkingBlock(thinkingBlock: ExecBlock | null): void {
   if (!thinkingBlock) {
     return;
+  }
+  if (thinkingBlock.output.textContent) {
+    thinkingBlock.block.dataset.expandedContent = thinkingBlock.output.textContent;
   }
   thinkingBlock.block.classList.remove("loading");
   thinkingBlock.block.classList.remove("expanded");

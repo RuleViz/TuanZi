@@ -29,6 +29,7 @@ export interface ChatMessageSnapshot {
     };
   }>;
   thinking?: string;
+  reasoning_content?: string;
 }
 
 export interface ToolLoopResumeAnchorSnapshot {

@@ -36,6 +36,135 @@ test("buildPersistedResumeSnapshot should keep full streamed text, thinking, and
   assert.equal(snapshot.checkpointId, "checkpoint-1");
 });
 
+test("createRunChatTask saves error turn and returns resumeSnapshot for non-interruption errors", async () => {
+  let savedSnapshot: AppChatResumeSnapshot | null = null;
+  const appendedTurns: Array<{ checkpointId: string | null; interrupted: boolean; error?: string | null }> = [];
+  const sessionState = {
+    version: 1 as const,
+    workspace: "E:/project",
+    workspaceHash: "workspace-hash",
+    sessionId: "session-1",
+    nextSeq: 1,
+    lastCompactedSeq: 0,
+    modelSnapshot: null,
+    createdAt: "2026-03-20T00:00:00.000Z",
+    updatedAt: "2026-03-20T00:00:00.000Z"
+  };
+
+  const runChatTask = createRunChatTask({
+    activeTasks: new Map(),
+    chatResumeStore: {
+      save: async (snapshot: AppChatResumeSnapshot) => {
+        savedSnapshot = snapshot;
+        return 1;
+      },
+      load: () => savedSnapshot,
+      clear: async () => {
+        savedSnapshot = null;
+      }
+    } as any,
+    conversationMemoryStore: {
+      getSessionState: async () => sessionState,
+      saveSessionState: async () => {
+        return;
+      },
+      appendTurn: async (record: { checkpointId: string | null; interrupted: boolean; error?: string | null }) => {
+        appendedTurns.push({
+          checkpointId: record.checkpointId,
+          interrupted: record.interrupted,
+          error: record.error
+        });
+      },
+      resolveWorkspaceHash: () => "workspace-hash",
+      getSummary: async () => null,
+      listTurns: async () => []
+    } as any,
+    loadCoreModules: () => ({
+      loadRuntimeConfig: () => ({
+        agentBackend: {
+          config: {
+            activeProviderId: "",
+            providers: []
+          }
+        },
+        agentSettings: {
+          modelRequest: {
+            thinking: {}
+          }
+        }
+      }),
+      createToolRuntime: () => ({
+        registry: {
+          getToolDefinitions: () => []
+        },
+        toolContext: {},
+        dispose: async () => {
+          return;
+        }
+      }),
+      createOrchestrator: () => ({
+        run: async (_input: unknown, hooks?: { onAssistantTextDelta?: (delta: string) => void }) => {
+          hooks?.onAssistantTextDelta?.("partial error text");
+          throw new Error("Model request limit reached");
+        }
+      }),
+      createSubagentBridge: () => null
+    }),
+    normalizeOptionalString: (input: unknown) => {
+      if (typeof input !== "string") {
+        return null;
+      }
+      const trimmed = input.trim();
+      return trimmed ? trimmed : null;
+    },
+    toErrorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    closePerfLog: () => {
+      return;
+    },
+    isShutdownDrainInProgress: () => false,
+    isShutdownDrainCompleted: () => false,
+    snapshotFlushIntervalMs: 1,
+    snapshotMaxStreamChars: 24000,
+    snapshotMaxToolCalls: 80,
+    maxChatImageCount: 1,
+    maxChatImageBytes: 8 * 1024 * 1024,
+    terminalManager: {
+      executeCommand: async () => ({
+        ok: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: ""
+      })
+    } as any,
+    createTurnCheckpoint: async () => "checkpoint-err"
+  });
+
+  const result = await runChatTask(
+    {
+      send: () => {
+        return true;
+      }
+    } as any,
+    {
+      taskId: "task-err",
+      sessionId: "session-1",
+      message: "hello",
+      workspace: "E:/project",
+      thinking: false,
+      planMode: false
+    }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.interrupted, true);
+  assert.equal(result.error, "Model request limit reached");
+  assert.equal(result.checkpointId, "checkpoint-err");
+  assert.equal(appendedTurns.length, 1);
+  assert.equal(appendedTurns[0].interrupted, true);
+  assert.equal(appendedTurns[0].error, "Model request limit reached");
+  assert.equal(appendedTurns[0].checkpointId, "checkpoint-err");
+});
+
 test("createRunChatTask returns checkpointId for interrupted tasks", async () => {
   let savedSnapshot: AppChatResumeSnapshot | null = null;
   const appendedTurns: Array<{ checkpointId: string | null; interrupted: boolean }> = [];

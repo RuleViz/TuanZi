@@ -46,6 +46,7 @@ export interface ConversationTurnRecord {
   toolCalls: ConversationTurnToolCallRecord[];
   checkpointId: string | null;
   interrupted: boolean;
+  error?: string | null;
   createdAt: string;
   tokenEstimate?: TokenEstimateRecord | null;
 }

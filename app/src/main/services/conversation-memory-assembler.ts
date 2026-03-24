@@ -89,14 +89,23 @@ function formatTurn(turn: ConversationTurnRecord): string {
           .join("\n")
       : "(none)";
 
-  return [
-    `Turn #${turn.seq}${turn.interrupted ? " [INTERRUPTED]" : ""}`,
+  const errorTag = turn.error ? " [ERROR]" : "";
+  const interruptedTag = turn.interrupted ? " [INTERRUPTED]" : "";
+
+  const parts = [
+    `Turn #${turn.seq}${interruptedTag}${errorTag}`,
     `User: ${turn.user || "(empty)"}`,
     `Assistant: ${turn.assistant || "(empty)"}`,
     turn.thinkingSummary ? `Thinking:\n${indentBlock(turn.thinkingSummary)}` : "Thinking: (none)",
     "Tool Calls:",
     toolCallsSummary
-  ].join("\n");
+  ];
+
+  if (turn.error) {
+    parts.push(`Error: ${turn.error}`);
+  }
+
+  return parts.join("\n");
 }
 
 function serializeValue(value: unknown): string {

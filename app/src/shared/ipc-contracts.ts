@@ -28,6 +28,7 @@ export interface ChatResumeSnapshot {
   streamedText: string;
   streamedThinking: string;
   toolCalls: ChatResumeToolCall[];
+  resumeState?: unknown | null;
   checkpointId?: string | null;
   updatedAt: string;
 }
@@ -59,6 +60,7 @@ export interface SendMessagePayload {
   agentId?: string | null;
   thinking?: boolean;
   planMode?: boolean;
+  resumeState?: unknown | null;
 }
 
 export interface MemoryStatusPayload {

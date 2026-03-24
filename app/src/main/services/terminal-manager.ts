@@ -4,7 +4,6 @@ import * as pty from "node-pty";
 import type { TerminalSessionSummary } from "../../shared/ipc-contracts";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 
-const PROCESS_TERMINATE_WAIT_MS = 400;
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 30;
 
@@ -18,8 +17,6 @@ export interface TerminalCommandResult {
 }
 
 interface PendingCommand {
-  token: string;
-  stdout: string;
   resolve: (value: TerminalCommandResult) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout | null;
@@ -146,66 +143,15 @@ export function createTerminalManager(input: {
       }
       session.summary.status = "exited";
       session.summary.exitCode = exitCode;
-      if (session.pending) {
-        settlePending(session, {
-          terminalId: session.terminalId,
-          exitCode,
-          stdout: session.pending.stdout,
-          stderr: "",
-          timedOut: false,
-          interrupted: true
-        });
-      }
       emitExit(session, exitCode);
     });
   }
 
   function handlePtyData(session: TerminalSession, chunk: string): void {
-    if (!session.pending) {
-      emitData(session, chunk);
+    if (session.pending) {
       return;
     }
-
-    session.outputBuffer += chunk;
-    while (true) {
-      const newlineIndex = session.outputBuffer.indexOf("\n");
-      if (newlineIndex < 0) {
-        break;
-      }
-      const lineWithNewline = session.outputBuffer.slice(0, newlineIndex + 1);
-      session.outputBuffer = session.outputBuffer.slice(newlineIndex + 1);
-      const stripped = stripAnsi(lineWithNewline).replace(/\r?\n$/, "");
-      const match = stripped.match(/^__TUANZI_DONE__:(.+?):(-?\d+)$/);
-      if (match && session.pending && session.pending.token === match[1]) {
-        // Don't emit the sentinel line to the renderer
-        settlePending(session, {
-          terminalId: session.terminalId,
-          exitCode: Number.parseInt(match[2], 10),
-          stdout: session.pending.stdout,
-          stderr: "",
-          timedOut: false,
-          interrupted: false
-        });
-        // Flush any remaining buffer content after sentinel
-        if (session.outputBuffer) {
-          emitData(session, session.outputBuffer);
-          session.outputBuffer = "";
-        }
-        continue;
-      }
-      if (session.pending) {
-        session.pending.stdout += stripAnsi(lineWithNewline);
-      }
-      emitData(session, lineWithNewline);
-    }
-  }
-
-  function settlePending(session: TerminalSession, result: TerminalCommandResult): void {
-    const pending = takePending(session);
-    if (!pending) {
-      return;
-    }
-    pending.resolve(result);
+    emitData(session, chunk);
   }
 
   function rejectPending(session: TerminalSession, error: Error): void {
@@ -227,133 +173,6 @@ export function createTerminalManager(input: {
     }
     pending.abortCleanup?.();
     return pending;
-  }
-
-  function buildWrappedCommandWithEnv(
-    token: string,
-    cwd: string,
-    command: string,
-    env: Record<string, string>
-  ): string {
-    if (process.platform === "win32") {
-      const escapedCwd = cwd.replace(/'/g, "''");
-      const envSetup = Object.entries(env)
-        .map(([key, value]) => `$env:${key} = '${value.replace(/'/g, "''")}'`)
-        .join("; ");
-      return [
-        `try {`,
-        `  Set-Location -LiteralPath '${escapedCwd}'`,
-        envSetup ? `  ; ${envSetup}` : "",
-        `  ; ${command}`,
-        `} finally {`,
-        `  $__tuanziExit = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }`,
-        `  ; Write-Output "__TUANZI_DONE__:${token}:$($__tuanziExit)"`,
-        `}`
-      ]
-        .filter(Boolean)
-        .join("\n");
-    }
-
-    const escapedCwd = cwd.replace(/'/g, `'\\''`);
-    const envSetup = Object.entries(env)
-      .map(([key, value]) => `export ${key}='${value.replace(/'/g, `'\\''`)}'`)
-      .join("\n");
-    return [
-      `cd '${escapedCwd}'`,
-      envSetup,
-      `{`,
-      command,
-      `}`,
-      `__TUANZI_EXIT_CODE=$?`,
-      `printf '__TUANZI_DONE__:${token}:%s\\n' "$__TUANZI_EXIT_CODE"`
-    ].join("\n");
-  }
-
-  function commandTerminator(): string {
-    return "\r";
-  }
-
-  async function terminatePty(ptyRef: pty.IPty): Promise<void> {
-    const pid = ptyRef.pid;
-    if (!pid) {
-      return;
-    }
-
-    if (process.platform === "win32") {
-      await new Promise<void>((resolve) => {
-        const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-          stdio: "ignore",
-          windowsHide: true,
-          shell: false
-        });
-        let settled = false;
-        const done = (): void => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          clearTimeout(timeout);
-          resolve();
-        };
-        const timeout = setTimeout(done, PROCESS_TERMINATE_WAIT_MS);
-        killer.once("exit", done);
-        killer.once("error", done);
-      });
-      return;
-    }
-
-    try {
-      ptyRef.kill();
-    } catch {
-      // ignore
-    }
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(resolve, PROCESS_TERMINATE_WAIT_MS);
-      ptyRef.onExit(() => {
-        clearTimeout(timeout);
-        resolve();
-      });
-    });
-  }
-
-  async function recoverTerminalSession(
-    session: TerminalSession,
-    reason: "timeout" | "interrupt",
-    timeoutMs: number
-  ): Promise<{ recovered: boolean; message: string }> {
-    const previousPty = session.pty;
-    session.recovering = true;
-    await terminatePty(previousPty);
-    if (session.closed) {
-      session.recovering = false;
-      return { recovered: false, message: "Terminal already closed." };
-    }
-
-    try {
-      const generation = session.ptyGeneration + 1;
-      const replacement = createPty(session.workspace, session.cols, session.rows);
-      session.pty = replacement;
-      session.ptyGeneration = generation;
-      session.summary.status = "running";
-      session.summary.exitCode = undefined;
-      session.outputBuffer = "";
-      wirePty(session, replacement, generation);
-      session.recovering = false;
-      const detail =
-        reason === "timeout"
-          ? `Command timed out after ${timeoutMs}ms; terminal recovered and ready for next command.`
-          : "Command interrupted by user; terminal recovered and ready for next command.";
-      emitData(session, `\r\n[terminal recovered] ${detail}\r\n`);
-      return { recovered: true, message: detail };
-    } catch (error) {
-      session.recovering = false;
-      const message = error instanceof Error ? error.message : String(error);
-      session.summary.status = "exited";
-      session.summary.exitCode = null;
-      emitData(session, `\r\n[terminal recovery failed] ${message}\r\n`);
-      emitExit(session, null);
-      return { recovered: false, message };
-    }
   }
 
   async function createSession(inputData: { sessionId: string; workspace: string; title?: string }): Promise<TerminalSessionSummary> {
@@ -431,85 +250,161 @@ export function createTerminalManager(input: {
       throw new Error("Interrupted by user");
     }
 
-    const token = randomUUID();
-    const wrapped = buildWrappedCommandWithEnv(token, inputData.cwd, inputData.command, inputData.env);
+    const shell = getDefaultShell();
+    const shellArgs = getShellArgs(shell, inputData.command);
+    const mergedEnv = {
+      ...process.env,
+      ...inputData.env,
+      TERM: "xterm-256color",
+      PAGER: "cat",
+      GIT_PAGER: "cat",
+      SYSTEMD_PAGER: "",
+      MANPAGER: "cat"
+    };
 
-    return new Promise<TerminalCommandResult>((resolve, reject) => {
-      const pending: PendingCommand = {
-        token,
-        stdout: "",
-        resolve,
-        reject,
-        timeout: null,
-        abortCleanup: null
-      };
+    const isCmd = process.platform === "win32" && shell.toLowerCase().includes("cmd");
+    const child = isCmd
+      ? spawn(shell, shellArgs, {
+          cwd: inputData.cwd,
+          env: mergedEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+          shell: true
+        })
+      : spawn(shell, shellArgs, {
+          cwd: inputData.cwd,
+          env: mergedEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+          detached: process.platform !== "win32"
+        });
 
-      if (inputData.timeoutMs > 0) {
-        pending.timeout = setTimeout(() => {
-          const inflight = takePending(session);
-          if (!inflight) {
-            return;
-          }
-          void recoverTerminalSession(session, "timeout", inputData.timeoutMs).then((recovery) => {
-            const details = [
-              `Command timed out after ${inputData.timeoutMs}ms.`,
-              recovery.recovered
-                ? "Terminal recovered and remains available in workbench."
-                : `Terminal recovery failed: ${recovery.message}`
-            ].join("\n");
-            inflight.resolve({
-              terminalId: session.terminalId,
-              exitCode: null,
-              stdout: inflight.stdout,
-              stderr: details,
-              timedOut: true,
-              interrupted: false
-            });
-          });
-        }, inputData.timeoutMs);
+    emitData(session, `\x1b[90m$ ${inputData.command}\x1b[0m\r\n`);
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let interrupted = false;
+    let exited = false;
+
+    child.stdout?.on("data", (chunk: Buffer | string) => {
+      const text = normalizeNewlines(String(chunk));
+      stdout += text;
+      emitData(session, text);
+    });
+
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      const text = normalizeNewlines(String(chunk));
+      stderr += text;
+      emitData(session, text);
+    });
+
+    const killChild = (): void => {
+      if (exited || child.pid === undefined) {
+        return;
       }
+      if (process.platform === "win32") {
+        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+          shell: false
+        });
+        return;
+      }
+      try {
+        if (child.pid) {
+          process.kill(-child.pid, "SIGTERM");
+        } else {
+          child.kill("SIGTERM");
+        }
+      } catch {
+        try { child.kill("SIGTERM"); } catch { /* ignore */ }
+      }
+    };
 
-      if (inputData.signal) {
-        const onAbort = (): void => {
-          const inflight = takePending(session);
-          if (!inflight) {
-            return;
-          }
-          void recoverTerminalSession(session, "interrupt", inputData.timeoutMs).then((recovery) => {
-            const details = [
-              "Interrupted by user.",
-              recovery.recovered
-                ? "Terminal recovered and remains available in workbench."
-                : `Terminal recovery failed: ${recovery.message}`
-            ].join("\n");
-            inflight.resolve({
-              terminalId: session.terminalId,
-              exitCode: null,
-              stdout: inflight.stdout,
-              stderr: details,
-              timedOut: false,
-              interrupted: true
-            });
-          });
-        };
-        if (inputData.signal.aborted) {
-          onAbort();
+    return new Promise<TerminalCommandResult>((resolve) => {
+      let settled = false;
+      const settle = (result: TerminalCommandResult): void => {
+        if (settled) {
           return;
         }
-        inputData.signal.addEventListener("abort", onAbort, { once: true });
-        pending.abortCleanup = () => {
-          inputData.signal?.removeEventListener("abort", onAbort);
-        };
+        settled = true;
+        session.pending = null;
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+        }
+        if (inputData.signal) {
+          inputData.signal.removeEventListener("abort", onAbort);
+        }
+        resolve(result);
+      };
+
+      const onAbort = (): void => {
+        interrupted = true;
+        killChild();
+      };
+
+      const timeoutTimer = inputData.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            killChild();
+          }, inputData.timeoutMs)
+        : null;
+
+      if (inputData.signal) {
+        if (inputData.signal.aborted) {
+          interrupted = true;
+          killChild();
+        } else {
+          inputData.signal.addEventListener("abort", onAbort, { once: true });
+        }
       }
 
-      session.pending = pending;
-      session.outputBuffer = "";
-      try {
-        session.pty.write(`${wrapped}${commandTerminator()}`);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        rejectPending(session, new Error(`Failed to dispatch command: ${message}`));
-      }
+      session.pending = {
+        resolve: (result: TerminalCommandResult) => settle(result),
+        reject: (error: Error) => {
+          killChild();
+          settle({
+            terminalId: session.terminalId,
+            exitCode: 1,
+            stdout,
+            stderr: `${stderr}\n${error.message}`,
+            timedOut,
+            interrupted: true
+          });
+        },
+        timeout: timeoutTimer,
+        abortCleanup: inputData.signal
+          ? () => { inputData.signal?.removeEventListener("abort", onAbort); }
+          : null
+      };
+
+      child.on("error", (err: Error) => {
+        exited = true;
+        stderr += `\n[Process error: ${err.message}]`;
+        emitData(session, `\r\n\x1b[31m[Process error: ${err.message}]\x1b[0m\r\n`);
+        settle({
+          terminalId: session.terminalId,
+          exitCode: 1,
+          stdout,
+          stderr,
+          timedOut,
+          interrupted
+        });
+      });
+
+      child.on("close", (exitCode) => {
+        exited = true;
+        emitData(session, `\r\n\x1b[90m[exit: ${exitCode ?? "null"}]\x1b[0m\r\n`);
+        settle({
+          terminalId: session.terminalId,
+          exitCode,
+          stdout,
+          stderr,
+          timedOut,
+          interrupted
+        });
+      });
     });
   }
 
@@ -569,8 +464,25 @@ export function createTerminalManager(input: {
   };
 }
 
-function stripAnsi(text: string): string {
-  return text.replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
+function getDefaultShell(): string {
+  if (process.platform === "win32") {
+    return process.env.COMSPEC || "cmd.exe";
+  }
+  return process.env.SHELL || "/bin/bash";
+}
+
+function getShellArgs(shell: string, command: string): string[] {
+  if (process.platform === "win32") {
+    if (shell.toLowerCase().includes("powershell") || shell.toLowerCase().includes("pwsh")) {
+      return ["-NoLogo", "-NoProfile", "-Command", command];
+    }
+    return ["/c", command];
+  }
+  return ["-l", "-c", command];
+}
+
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r?\n/g, "\r\n");
 }
 
 function compactTitle(command: string): string {

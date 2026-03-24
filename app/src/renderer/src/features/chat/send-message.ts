@@ -142,6 +142,23 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
 
   try {
     const activeAgent = input.getActiveAgent();
+
+    let resumeStatePayload: unknown | null = null;
+    const lastTurn = active.history.length > 0 ? active.history[active.history.length - 1] : null;
+    if (lastTurn && lastTurn.interrupted) {
+      try {
+        const resumeResult = await window.tuanzi.getResumeState({
+          sessionId: active.id,
+          workspace: active.workspace
+        });
+        if (resumeResult.ok && resumeResult.resumeSnapshot?.resumeState) {
+          resumeStatePayload = resumeResult.resumeSnapshot.resumeState;
+        }
+      } catch {
+        // ignore resume state load failure, proceed without it
+      }
+    }
+
     const result = await window.tuanzi.sendMessage({
       taskId: newTaskId,
       sessionId: active.id,
@@ -160,7 +177,8 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
       workspace: active.workspace,
       agentId: activeAgent?.id ?? null,
       thinking: input.state.isThinking,
-      planMode: input.state.planModeEnabled
+      planMode: input.state.planModeEnabled,
+      ...(resumeStatePayload ? { resumeState: resumeStatePayload } : {})
     });
 
     listeners.dispose();
@@ -210,6 +228,27 @@ export async function sendMessage(input: SendMessageDeps): Promise<void> {
       input.renderSessionList();
     } else if (result.interrupted && result.resumeSnapshot) {
       markPendingToolCallsFailed();
+      input.syncInterruptedTurn(active, {
+        user: userHistoryText,
+        assistant: result.resumeSnapshot.streamedText,
+        thinking: result.resumeSnapshot.streamedThinking || undefined,
+        interrupted: true,
+        toolCalls: result.resumeSnapshot.toolCalls.map((toolCall) => ({
+          id: toolCall.id,
+          toolName: toolCall.name,
+          args: { ...toolCall.args },
+          result: { ...toolCall.result }
+        })),
+        checkpointId: result.checkpointId
+      });
+      input.touchActiveSession();
+      input.persistSessions();
+      input.renderSessionList();
+    } else if (result.resumeSnapshot) {
+      markPendingToolCallsFailed();
+      const activeText = listeners.getActiveTextContainer();
+      const errorHtml = `<p style="color: var(--status-err);">${input.escapeHtml(result.error || "Execution failed")}</p>`;
+      activeText.innerHTML = errorHtml;
       input.syncInterruptedTurn(active, {
         user: userHistoryText,
         assistant: result.resumeSnapshot.streamedText,

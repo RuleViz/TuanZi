@@ -7,6 +7,58 @@ import test from "node:test";
 import { ConversationMemoryAssembler } from "./conversation-memory-assembler.js";
 import { ConversationMemoryStore } from "./conversation-memory-store.js";
 
+test("assembler should format error turns with [ERROR] tag and error message", async () => {
+  const baseDir = mkdtempSync(path.join(os.tmpdir(), "conversation-assembler-err-"));
+  const workspace = path.join(baseDir, "workspace");
+  const sessionId = "session-err";
+
+  try {
+    const store = new ConversationMemoryStore(baseDir);
+    await store.getSessionState(workspace, sessionId);
+
+    await store.appendTurn({
+      version: 1,
+      workspace,
+      workspaceHash: store.resolveWorkspaceHash(workspace),
+      sessionId,
+      seq: 1,
+      turnId: "turn-err",
+      taskId: "task-err",
+      turnIndex: 1,
+      user: "do something complex",
+      assistant: "partial response before error",
+      thinkingSummary: "",
+      toolCalls: [
+        {
+          toolName: "bash",
+          args: { command: "echo hello" },
+          result: { ok: true, data: { stdout: "hello" } },
+          timestamp: "2026-03-20T00:00:00.000Z"
+        }
+      ],
+      checkpointId: null,
+      interrupted: true,
+      error: "Model request limit reached (429 Too Many Requests)",
+      createdAt: "2026-03-20T00:00:00.000Z"
+    });
+
+    const assembler = new ConversationMemoryAssembler(store);
+    const assembled = await assembler.assembleContext({
+      workspace,
+      sessionId,
+      currentUserMessage: "continue"
+    });
+
+    assert.match(assembled.contextText, /\[INTERRUPTED\]/);
+    assert.match(assembled.contextText, /\[ERROR\]/);
+    assert.match(assembled.contextText, /Error: Model request limit reached/);
+    assert.match(assembled.contextText, /partial response before error/);
+    assert.match(assembled.contextText, /bash/);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});
+
 test("assembler should include full raw turns even after compaction state advances", async () => {
   const baseDir = mkdtempSync(path.join(os.tmpdir(), "conversation-assembler-"));
   const workspace = path.join(baseDir, "workspace");

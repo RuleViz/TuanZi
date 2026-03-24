@@ -242,6 +242,7 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
         statusText: "processed"
       });
       output.textContent = thinking;
+      block.dataset.expandedContent = thinking;
       blocksContainer.appendChild(block);
     }
 
@@ -511,13 +512,6 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     showSubagentModal,
     updateSubagentSnapshots
   };
-}
-
-function setExecBlockContent(block: HTMLDivElement, output: HTMLPreElement, fullText: string): void {
-  const contentState = buildExecContentState(fullText);
-  block.dataset.collapsedContent = contentState.collapsedText;
-  block.dataset.expandedContent = contentState.expandedText;
-  syncExecPreview(block, output);
 }
 
 function syncExecPreview(block: HTMLDivElement, output: HTMLPreElement): void {

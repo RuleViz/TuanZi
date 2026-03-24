@@ -1,17 +1,22 @@
 import { ipcMain } from "electron";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
 import type { GetResumeStatePayload, SendMessagePayload, StopMessagePayload } from "../../shared/ipc-contracts";
+import type { ToolLoopResumeStateSnapshot } from "../chat-resume-store";
 import type { ActiveTaskEntry } from "../services/active-task";
 
+type ChatSendMessagePayload = SendMessagePayload & {
+  resumeState?: ToolLoopResumeStateSnapshot | null;
+};
+
 export interface ChatHandlersDeps {
-  runChatTask: (webContents: Electron.WebContents, payload: SendMessagePayload) => Promise<unknown>;
+  runChatTask: (webContents: Electron.WebContents, payload: ChatSendMessagePayload) => Promise<unknown>;
   normalizeOptionalString: (input: unknown) => string | null;
   loadMatchingChatResumeSnapshot: (sessionId: string, workspace: string) => unknown;
   activeTasks: Map<string, ActiveTaskEntry>;
 }
 
 export function registerChatHandlers(deps: ChatHandlersDeps): void {
-  ipcMain.handle(IPC_CHANNELS.chatSendMessage, async (event, payload: SendMessagePayload) => {
+  ipcMain.handle(IPC_CHANNELS.chatSendMessage, async (event, payload: ChatSendMessagePayload) => {
     return deps.runChatTask(event.sender, payload);
   });
 
