@@ -42,8 +42,18 @@ export class EditTool implements Tool {
       return { ok: false, error: "targetFile and diff are required and must be strings." };
     }
 
-    const targetFile = resolveSafePath(targetFileValue, context.workspaceRoot, "targetFile");
-    assertInsideWorkspace(targetFile, context.workspaceRoot);
+    let targetFile: string;
+    try {
+      targetFile = resolveSafePath(targetFileValue, context.workspaceRoot, "targetFile");
+      assertInsideWorkspace(targetFile, context.workspaceRoot);
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          `Invalid targetFile path: ${toErrorMessage(error)} ` +
+          "Ensure targetFile points to a file inside the current workspace root."
+      };
+    }
 
     const originalContent = await fs.readFile(targetFile, "utf8").catch(() => null);
     if (originalContent === null) {
@@ -52,7 +62,20 @@ export class EditTool implements Tool {
 
     const hunks = parseUnifiedDiff(diffText);
     if (hunks.length === 0) {
-      return { ok: false, error: "No valid unified diff hunks found." };
+      if (!looksLikeUnifiedDiff(diffText)) {
+        return {
+          ok: false,
+          error:
+            "Diff format is invalid. Expected unified diff with @@ hunk headers (e.g. @@ -1,3 +1,4 @@). " +
+            "Hunk body lines must start with ' ' (context), '-' (remove), or '+' (add)."
+        };
+      }
+      return {
+        ok: false,
+        error:
+          "No valid unified diff hunks found. Ensure each hunk has a valid @@ -oldStart,oldCount +newStart,newCount @@ header " +
+          "and body lines that start with ' ', '-' or '+'."
+      };
     }
 
     const fuzz = clampInt(asNumber(input.fuzz) ?? 2, 0, 5);
@@ -62,9 +85,15 @@ export class EditTool implements Tool {
     for (const hunk of sortedHunks) {
       const match = findHunkPosition(lines, hunk, fuzz);
       if (!match.found) {
+        const mismatch = describeHunkMismatch(lines, hunk);
+        const mismatchHint = mismatch
+          ? ` Mismatch near file line ${mismatch.line}: expected ${quoteForError(mismatch.expected)} but found ${quoteForError(mismatch.actual)}.`
+          : "";
         return {
           ok: false,
-          error: `Hunk failed to match near original line ${hunk.originalStart}. Try increasing fuzz or refresh file context first.`
+          error:
+            `Hunk failed to match near original line ${hunk.originalStart}.${mismatchHint} ` +
+            "Re-read the target file and regenerate the diff with exact context lines."
         };
       }
       applyHunk(lines, hunk, match.offset);
@@ -102,8 +131,15 @@ export class EditTool implements Tool {
       }
     }
 
-    await context.backupManager.backupFile(targetFile);
-    await atomicWriteTextFile(targetFile, newContent);
+    try {
+      await context.backupManager.backupFile(targetFile);
+      await atomicWriteTextFile(targetFile, newContent);
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Failed to write updated content to ${targetFile}: ${toErrorMessage(error)}`
+      };
+    }
 
     return {
       ok: true,
@@ -240,4 +276,49 @@ function joinPreserveEmptyLastLine(lines: string[]): string {
 function clampInt(value: number, min: number, max: number): number {
   const integer = Math.floor(value);
   return Math.max(min, Math.min(max, integer));
+}
+
+function looksLikeUnifiedDiff(diffText: string): boolean {
+  const hasHunkHeader = /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/m.test(diffText);
+  const hasPrefixedLine = /^[ +\-].*$/m.test(diffText);
+  return hasHunkHeader || hasPrefixedLine;
+}
+
+function describeHunkMismatch(
+  fileLines: string[],
+  hunk: DiffHunk
+): { line: number; expected: string; actual: string } | null {
+  const expectedLines = hunk.operations
+    .filter((operation) => operation.type === "context" || operation.type === "remove")
+    .map((operation) => operation.content);
+  if (expectedLines.length === 0) {
+    return null;
+  }
+
+  const startIndex = Math.max(0, hunk.originalStart - 1);
+  for (let index = 0; index < expectedLines.length; index += 1) {
+    const expected = expectedLines[index];
+    const actual = fileLines[startIndex + index];
+    if (actual !== expected) {
+      return {
+        line: startIndex + index + 1,
+        expected,
+        actual: actual ?? "<end of file>"
+      };
+    }
+  }
+
+  return null;
+}
+
+function quoteForError(line: string): string {
+  const compact = line.length > 120 ? `${line.slice(0, 117)}...` : line;
+  return JSON.stringify(compact);
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return String(error);
 }

@@ -33,7 +33,13 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
   },
   edit: {
     name: "edit",
-    prompt: "Use edit (unified diff) for precise local modifications; this is usually better than broad overwrite."
+    prompt:
+      "Use edit (unified diff) for precise local modifications. " +
+      "The 'diff' parameter must be a valid unified diff with @@ hunk headers (e.g. @@ -1,3 +1,4 @@). " +
+      "Each line in the hunk body must start with ' ' (context/unchanged), '-' (remove), or '+' (add). " +
+      "Context lines must exactly match file content. " +
+      "Always read the target file first to ensure accurate context lines. " +
+      "If a hunk fails to apply, re-read the target file and retry with corrected context."
   },
   delete_file: {
     name: "delete_file",
