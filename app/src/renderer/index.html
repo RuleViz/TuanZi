@@ -150,8 +150,6 @@
       <div class="workbench-page-switcher" role="tablist" aria-label="工作台页面切换">
         <button class="workbench-page-btn active" id="workbenchPageTasksBtn" data-workbench-page="tasks" role="tab"
           aria-selected="true">Tasks</button>
-        <button class="workbench-page-btn" id="workbenchPageTerminalsBtn" data-workbench-page="terminals" role="tab"
-          aria-selected="false">Terminals</button>
         <button class="workbench-page-btn" id="workbenchPageFilesBtn" data-workbench-page="files" role="tab"
           aria-selected="false">Files</button>
       </div>
@@ -162,22 +160,6 @@
           <span class="workbench-section-count" id="workbenchTasksCount">0</span>
         </button>
         <div class="workbench-section-body" id="workbenchTasks"></div>
-      </section>
-
-      <section class="workbench-section expanded" data-section="terminals">
-        <button class="workbench-section-title" data-workbench-toggle="terminals">
-          <span>Terminals</span>
-          <span class="workbench-section-count" id="workbenchTerminalsCount">0</span>
-        </button>
-        <div class="workbench-section-body workbench-terminals-body" id="workbenchTerminals">
-          <div class="workbench-terminal-toolbar">
-            <button class="workbench-action-btn" id="newWorkbenchTerminalBtn">+ 新建终端</button>
-          </div>
-          <div class="workbench-terminal-tabs" id="workbenchTerminalTabs"></div>
-          <div class="workbench-terminal-panel" id="workbenchTerminalPanel">
-            <div class="workbench-empty">当前会话还没有终端</div>
-          </div>
-        </div>
       </section>
 
       <section class="workbench-section expanded" data-section="files">

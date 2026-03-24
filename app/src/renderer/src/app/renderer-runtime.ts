@@ -76,13 +76,8 @@ import {
   workbenchFilesCount,
   workbenchTasks,
   workbenchTasksCount,
-  workbenchTerminalPanel,
-  workbenchTerminalTabs,
-  workbenchTerminalsCount,
   workbenchPageTasksBtn,
-  workbenchPageTerminalsBtn,
   workbenchPageFilesBtn,
-  newWorkbenchTerminalBtn,
   workspaceLabel
 } from "./dom"
 import { createChatViewport } from "./chat-viewport"
@@ -251,16 +246,11 @@ export function createRendererRuntime() {
     drawer: workbenchDrawer,
     tasksContainer: workbenchTasks,
     tasksCount: workbenchTasksCount,
-    terminalsCount: workbenchTerminalsCount,
     filesCount: workbenchFilesCount,
     filesContainer: workbenchFiles,
-    terminalTabs: workbenchTerminalTabs,
-    terminalPanel: workbenchTerminalPanel,
-    pageButtons: [workbenchPageTasksBtn, workbenchPageTerminalsBtn, workbenchPageFilesBtn],
+    pageButtons: [workbenchPageTasksBtn, workbenchPageFilesBtn],
     toggleButton: toggleWorkbench,
     closeButton: closeWorkbenchBtn,
-    newTerminalButton: newWorkbenchTerminalBtn,
-    showError,
     api: window.tuanzi
   })
   renderCurrentSessionWorkbench = () => {

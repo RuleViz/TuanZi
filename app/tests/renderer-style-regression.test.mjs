@@ -65,10 +65,10 @@ test('workbench task detail wraps long tokens to avoid horizontal overflow', () 
   assert.match(styles, /\.workbench-task-detail[\s\S]*?overflow-wrap:\s*anywhere;/)
 })
 
-test('workbench supports single-page switching for tasks terminals and files', () => {
+test('workbench supports single-page switching for tasks and files', () => {
   assert.match(styles, /\.workbench-page-switcher\s*\{/)
   assert.match(styles, /\.workbench-page-btn\.active\s*\{/)
   assert.match(styles, /\.workbench-drawer\[data-workbench-page="tasks"\]\s+\.workbench-section\[data-section="tasks"\]/)
-  assert.match(styles, /\.workbench-drawer\[data-workbench-page="terminals"\]\s+\.workbench-section\[data-section="terminals"\]/)
   assert.match(styles, /\.workbench-drawer\[data-workbench-page="files"\]\s+\.workbench-section\[data-section="files"\]/)
+  assert.doesNotMatch(styles, /\.workbench-drawer\[data-workbench-page="terminals"\]\s+\.workbench-section\[data-section="terminals"\]/)
 })

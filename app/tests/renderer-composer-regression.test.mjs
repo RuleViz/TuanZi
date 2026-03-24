@@ -21,6 +21,17 @@ test("workspace label remains in top-left sidebar", () => {
   assert.match(html, /id="workspaceLabel"/);
 });
 
+test("workbench terminal panel markup is removed from renderer html", () => {
+  assert.match(html, /id="workbenchPageTasksBtn"/);
+  assert.match(html, /id="workbenchPageFilesBtn"/);
+  assert.doesNotMatch(html, /id="workbenchPageTerminalsBtn"/);
+  assert.doesNotMatch(html, /id="workbenchTerminalsCount"/);
+  assert.doesNotMatch(html, /id="workbenchTerminals"/);
+  assert.doesNotMatch(html, /id="newWorkbenchTerminalBtn"/);
+  assert.doesNotMatch(html, /id="workbenchTerminalTabs"/);
+  assert.doesNotMatch(html, /id="workbenchTerminalPanel"/);
+});
+
 test("thinking mode defaults to enabled and is not toggled by a button", () => {
   assert.match(stateSource, /isThinking:\s*true,/);
   assert.doesNotMatch(initEventsSource, /input\.state\.isThinking\s*=\s*!input\.state\.isThinking/);

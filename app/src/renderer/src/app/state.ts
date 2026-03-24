@@ -9,7 +9,6 @@ import type {
 } from "../../../shared/domain-types";
 import type {
   ModifiedFileEntry,
-  TerminalSessionSummary,
   WorkbenchTaskItem
 } from "../../../shared/ipc-contracts";
 
@@ -69,15 +68,9 @@ export interface PendingChatImage extends ChatImageInput {
   sizeBytes: number;
 }
 
-export interface WorkbenchTerminalState extends TerminalSessionSummary {
-  output: string;
-}
-
 export interface SessionWorkbenchState {
   tasks: WorkbenchTaskItem[];
-  terminals: WorkbenchTerminalState[];
   modifiedFiles: ModifiedFileEntry[];
-  selectedTerminalId: string | null;
 }
 
 export const state = {
