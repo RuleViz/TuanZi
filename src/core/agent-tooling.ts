@@ -73,6 +73,11 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     prompt:
       "Use skill_load to retrieve full SKILL.md instructions when a skill from <skill_catalog> looks relevant."
   },
+  skill_list: {
+    name: "skill_list",
+    prompt:
+      "Use skill_list to refresh and inspect currently available skills when skill availability may have changed during the session."
+  },
   skill_read_resource: {
     name: "skill_read_resource",
     prompt:
@@ -81,6 +86,7 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
 };
 
 const ALWAYS_ENABLED_INTERNAL_TOOLS = [
+  "skill_list",
   "skill_load",
   "skill_read_resource",
   "spawn_subagent",

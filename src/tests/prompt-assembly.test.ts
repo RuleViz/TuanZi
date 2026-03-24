@@ -67,5 +67,6 @@ test("coderSystemPrompt should keep layered structure and escape dynamic values"
   assert.equal(prompt.includes('<skill name="skill&lt;alpha&gt;">desc &amp; detail</skill>'), true);
   assert.equal(prompt.includes('<tool name="mcp__web__search">Use for new facts.</tool>'), true);
   assert.equal(prompt.includes("Recommended workflow: ls -> glob -> grep -> read before edit/write"), true);
-  assert.equal(prompt.includes("it is recommended to call skill_load"), true);
+  assert.equal(prompt.includes("call skill_list first to refresh"), true);
+  assert.equal(prompt.includes("prefer names[] for multiple skills"), true);
 });

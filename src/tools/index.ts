@@ -9,6 +9,7 @@ import { LsTool } from "./ls";
 import { ReadTool } from "./read";
 import { ListSubagentsTool } from "./list-subagents";
 import { SkillLoadTool } from "./skill-load";
+import { SkillListTool } from "./skill-list";
 import { SkillReadResourceTool } from "./skill-read-resource";
 import { SpawnSubagentTool } from "./spawn-subagent";
 import { WaitSubagentsTool } from "./wait-subagents";
@@ -28,6 +29,7 @@ export function createDefaultTools(): Tool[] {
     new SpawnSubagentTool(),
     new WaitSubagentsTool(),
     new ListSubagentsTool(),
+    new SkillListTool(),
     new SkillLoadTool(),
     new SkillReadResourceTool()
   ];

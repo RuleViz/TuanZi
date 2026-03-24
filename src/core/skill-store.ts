@@ -36,6 +36,11 @@ export class FileSystemSkillRuntime implements SkillRuntime {
     return [...this.catalog!.values()].map((item) => ({ ...item }));
   }
 
+  refreshCatalog(): void {
+    this.catalog = null;
+    this.ensureCatalogLoaded();
+  }
+
   loadSkill(name: string): SkillDocument {
     const catalogItem = this.getCatalogItem(name);
     const raw = readFileSync(catalogItem.skillFile, "utf8");

@@ -93,3 +93,35 @@ test("FileSystemSkillRuntime should skip invalid skill directories", () => {
     rmSync(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("FileSystemSkillRuntime refreshCatalog should pick up newly added skills", () => {
+  const homeDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-home-"));
+  const workspaceDir = mkdtempSync(path.join(os.tmpdir(), "tuanzi-workspace-"));
+  const workspaceSkillRoot = path.join(workspaceDir, ".tuanzi", "skills");
+
+  try {
+    writeSkill(workspaceSkillRoot, "doc", "doc skill");
+    withEnv({ TUANZI_HOME: homeDir, MYCODERAGENT_HOME: null }, () => {
+      const runtime = new FileSystemSkillRuntime(workspaceDir);
+      assert.deepEqual(
+        runtime.listCatalog().map((item) => item.name),
+        ["doc"]
+      );
+
+      writeSkill(workspaceSkillRoot, "slides", "slides skill");
+      assert.deepEqual(
+        runtime.listCatalog().map((item) => item.name),
+        ["doc"]
+      );
+
+      runtime.refreshCatalog();
+      assert.deepEqual(
+        runtime.listCatalog().map((item) => item.name),
+        ["doc", "slides"]
+      );
+    });
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+  }
+});

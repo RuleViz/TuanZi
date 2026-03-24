@@ -30,6 +30,7 @@ export interface SkillResource {
 }
 
 export interface SkillRuntime {
+  refreshCatalog(): void;
   listCatalog(): SkillCatalogItem[];
   loadSkill(name: string): SkillDocument;
   readSkillResource(name: string, relativePath: string): SkillResource;
