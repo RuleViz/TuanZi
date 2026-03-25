@@ -103,3 +103,4 @@ export const settingsCancelBtn = byId<HTMLButtonElement>("settingsCancelBtn");
 export const settingsSaveBtn = byId<HTMLButtonElement>("settingsSaveBtn");
 export const slashCommandMenu = byId<HTMLDivElement>("slashCommandMenu");
 export const slashCommandList = byId<HTMLDivElement>("slashCommandList");
+export const themeToggleBtn = byId<HTMLButtonElement>("themeToggleBtn");

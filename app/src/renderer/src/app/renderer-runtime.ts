@@ -501,6 +501,29 @@ export function createRendererRuntime() {
     resetSessionWorkbench: (sessionId: string) => workbenchFeature.resetSessionWorkbench(sessionId)
   })
 
+  const THEME_STORAGE_KEY = "tuanzi.desktop.theme.v1"
+
+  const applyTheme = (theme: "dark" | "light"): void => {
+    if (theme === "light") {
+      document.documentElement.setAttribute("data-theme", "light")
+    } else {
+      document.documentElement.removeAttribute("data-theme")
+    }
+  }
+
+  const toggleTheme = (): void => {
+    const current = document.documentElement.getAttribute("data-theme")
+    const next = current === "light" ? "dark" : "light"
+    applyTheme(next)
+    window.localStorage.setItem(THEME_STORAGE_KEY, next)
+  }
+
+  // Restore saved theme preference on startup
+  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+  if (savedTheme === "light" || savedTheme === "dark") {
+    applyTheme(savedTheme)
+  }
+
   const bindInitEvents = createBindInitEvents({
     state,
     api: window.tuanzi,
@@ -526,7 +549,8 @@ export function createRendererRuntime() {
     closeProviderModelModal,
     closeMcpJsonModal,
     bindAgentEditorEvents,
-    bindSettingsEvents
+    bindSettingsEvents,
+    toggleTheme
   })
 
   return {

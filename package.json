@@ -31,6 +31,13 @@
     "typescript": "^5.7.2"
   },
   "dependencies": {
-    "puppeteer-core": "^24.37.5"
+    "docx": "^9.6.1",
+    "fontkit": "^2.0.4",
+    "linebreak": "^1.1.0",
+    "mathjax-full": "^3.2.1",
+    "pptxgenjs": "^4.0.1",
+    "prismjs": "^1.30.0",
+    "puppeteer-core": "^24.37.5",
+    "skia-canvas": "^3.0.8"
   }
 }

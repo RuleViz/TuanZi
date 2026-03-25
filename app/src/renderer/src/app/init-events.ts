@@ -30,6 +30,7 @@ interface InitEventsDeps {
   agentEditorSaveBtn: HTMLButtonElement;
   agentEditorDeleteBtn: HTMLButtonElement;
   settingsBtn: HTMLButtonElement;
+  themeToggleBtn: HTMLButtonElement;
   closeSettingsModalBtn: HTMLButtonElement;
   settingsCancelBtn: HTMLButtonElement;
   settingsSaveBtn: HTMLButtonElement;
@@ -61,6 +62,7 @@ interface InitEventsDeps {
   closeMcpJsonModal: () => void;
   bindAgentEditorEvents: () => void;
   bindSettingsEvents: () => void;
+  toggleTheme: () => void;
 }
 
 export function bindInitEvents(input: InitEventsDeps): void {
@@ -217,6 +219,10 @@ export function bindInitEvents(input: InitEventsDeps): void {
 
   input.settingsBtn.addEventListener("click", () => {
     void input.openSettingsModal();
+  });
+
+  input.themeToggleBtn.addEventListener("click", () => {
+    input.toggleTheme();
   });
   input.closeSettingsModalBtn.addEventListener("click", input.closeSettingsModal);
   input.settingsCancelBtn.addEventListener("click", input.closeSettingsModal);

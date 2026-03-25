@@ -25,6 +25,7 @@ import {
   sidebar,
   slashCommandMenu,
   stopBtn,
+  themeToggleBtn,
   toggleSidebar,
   topBar,
   topBarDrag,
@@ -82,6 +83,7 @@ interface EventBindingDeps {
   closeMcpJsonModal: () => void
   bindAgentEditorEvents: () => void
   bindSettingsEvents: () => void
+  toggleTheme: () => void
 }
 
 export function createBindTopBarDrag(input: TopbarBindingDeps): () => void {
@@ -124,6 +126,7 @@ export function createBindInitEvents(input: EventBindingDeps): () => void {
       agentEditorSaveBtn,
       agentEditorDeleteBtn,
       settingsBtn,
+      themeToggleBtn,
       closeSettingsModalBtn,
       settingsCancelBtn,
       settingsSaveBtn,
@@ -154,7 +157,8 @@ export function createBindInitEvents(input: EventBindingDeps): () => void {
       closeProviderModelModal: input.closeProviderModelModal,
       closeMcpJsonModal: input.closeMcpJsonModal,
       bindAgentEditorEvents: input.bindAgentEditorEvents,
-      bindSettingsEvents: input.bindSettingsEvents
+      bindSettingsEvents: input.bindSettingsEvents,
+      toggleTheme: input.toggleTheme
     })
   }
 }

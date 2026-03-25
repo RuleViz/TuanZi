@@ -54,3 +54,4 @@ temp/
 *.temp
 
 prototypes/
+output/
