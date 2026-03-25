@@ -21,6 +21,31 @@ export interface StreamingListeners {
   dispose: () => void;
 }
 
+function settleThinkingBlockTitle(thinkingBlock: ExecBlock, titleText: string): void {
+  const titleEl = thinkingBlock.block.querySelector(".exec-title");
+  if (!titleEl) {
+    return;
+  }
+  const chevron = titleEl.querySelector(".chevron");
+  const icon = titleEl.querySelector(".tool-icon");
+  const existingBadge = titleEl.querySelector(".status-badge");
+  const chevronHtml = chevron ? chevron.outerHTML : "";
+  const iconHtml = icon ? icon.outerHTML : "";
+  const badgeHtml =
+    existingBadge?.outerHTML ?? '<span class="status-badge status-ok">processed</span>';
+  titleEl.innerHTML = `${chevronHtml}${iconHtml}${titleText}${badgeHtml}`;
+}
+
+function getSettledThinkingTitle(thinkingBlock: ExecBlock): string {
+  const startedAtRaw = thinkingBlock.block.dataset.thinkingStartedAt;
+  const startedAt = Number(startedAtRaw);
+  if (Number.isFinite(startedAt)) {
+    const elapsed = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    return `Thought for ${elapsed}s`;
+  }
+  return "Thought";
+}
+
 export function beginStreamingUi(input: {
   state: StreamUiState;
   taskId: string;
@@ -177,15 +202,8 @@ export function buildStreamingListeners(input: {
     if (!thinkingBlock) {
       return;
     }
-    const elapsed = Math.round((Date.now() - thinkingSegmentStartTime) / 1000);
-    const titleEl = thinkingBlock.block.querySelector(".exec-title");
-    if (titleEl) {
-      const chevron = titleEl.querySelector(".chevron");
-      const icon = titleEl.querySelector(".tool-icon");
-      const chevronHtml = chevron ? chevron.outerHTML : "";
-      const iconHtml = icon ? icon.outerHTML : "";
-      titleEl.innerHTML = `${chevronHtml}${iconHtml}Thought for ${elapsed}s`;
-    }
+    const elapsed = Math.max(0, Math.round((Date.now() - thinkingSegmentStartTime) / 1000));
+    settleThinkingBlockTitle(thinkingBlock, `Thought for ${elapsed}s`);
     thinkingBlock.block.classList.remove("loading");
     thinkingBlock.block.classList.remove("expanded");
     if (thinkingBlock.output.textContent) {
@@ -212,6 +230,7 @@ export function buildStreamingListeners(input: {
       allThinkingBlocks.push(thinkingBlock);
       currentSegmentThinkingText = "";
       thinkingSegmentStartTime = Date.now();
+      thinkingBlock.block.dataset.thinkingStartedAt = String(thinkingSegmentStartTime);
       needNewThinkingBlock = false;
       if (thinkingInsertBefore) {
         input.contentEl.insertBefore(thinkingBlock.block, thinkingInsertBefore);
@@ -322,16 +341,9 @@ export function finalizeThinkingBlock(thinkingBlock: ExecBlock | null): void {
   if (thinkingBlock.output.textContent) {
     thinkingBlock.block.dataset.expandedContent = thinkingBlock.output.textContent;
   }
+  settleThinkingBlockTitle(thinkingBlock, getSettledThinkingTitle(thinkingBlock));
   thinkingBlock.block.classList.remove("loading");
   thinkingBlock.block.classList.remove("expanded");
-  const title = thinkingBlock.block.querySelector(".exec-title");
-  const existingBadge = title?.querySelector(".status-badge");
-  if (!existingBadge && title) {
-    const badge = document.createElement("span");
-    badge.className = "status-badge status-ok";
-    badge.textContent = "processed";
-    title.appendChild(badge);
-  }
 }
 
 export function finalizeAllThinkingBlocks(blocks: ExecBlock[]): void {

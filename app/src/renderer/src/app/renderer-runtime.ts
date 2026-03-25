@@ -518,12 +518,6 @@ export function createRendererRuntime() {
     window.localStorage.setItem(THEME_STORAGE_KEY, next)
   }
 
-  // Restore saved theme preference on startup
-  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
-  if (savedTheme === "light" || savedTheme === "dark") {
-    applyTheme(savedTheme)
-  }
-
   const bindInitEvents = createBindInitEvents({
     state,
     api: window.tuanzi,

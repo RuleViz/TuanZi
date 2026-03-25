@@ -46,6 +46,19 @@ test("finalizeThinkingBlock persists output to dataset.expandedContent", () => {
   );
 });
 
+test("finalizeThinkingBlock settles the last thinking title using stored segment timing", () => {
+  assert.match(
+    streamListenersSource,
+    /dataset\.thinkingStartedAt/,
+    "Thinking blocks must store a segment start timestamp for final settlement"
+  );
+  assert.match(
+    streamListenersSource,
+    /Thought for \$\{elapsed\}s/,
+    "Last thinking segment should settle from Thinking... to a completed title"
+  );
+});
+
 test("addAssistantMessage sets dataset.expandedContent for historical thinking blocks", () => {
   assert.match(
     messageRenderSource,
