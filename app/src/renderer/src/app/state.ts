@@ -68,8 +68,15 @@ export interface PendingChatImage extends ChatImageInput {
   sizeBytes: number;
 }
 
-export interface SessionWorkbenchState {
+export interface SessionWorkbenchTaskGroup {
+  taskId: string;
+  title: string;
   tasks: WorkbenchTaskItem[];
+  updatedAt: string;
+}
+
+export interface SessionWorkbenchState {
+  taskGroups: SessionWorkbenchTaskGroup[];
   modifiedFiles: ModifiedFileEntry[];
 }
 

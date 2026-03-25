@@ -77,6 +77,18 @@ function createFakeSurface() {
   };
 }
 
+function createStreamingListenersStub(textContainer: { innerHTML: string }) {
+  return {
+    dispose: () => {
+      return;
+    },
+    getCurrentThinkingText: () => "",
+    getThinkingBlock: () => null,
+    getAllThinkingBlocks: () => [],
+    getActiveTextContainer: () => textContainer
+  } as any;
+}
+
 test("sendMessage stores completed tool calls into the synced turn", async () => {
   installBrowserStubs();
 
@@ -129,15 +141,7 @@ test("sendMessage stores completed tool calls into the synced turn", async () =>
     scrollToBottom: () => {
       return;
     },
-    buildStreamingListeners: ({ textContainer }) =>
-      ({
-        dispose: () => {
-          return;
-        },
-        getCurrentThinkingText: () => "",
-        getThinkingBlock: () => null,
-        getActiveTextContainer: () => textContainer
-      }) as any,
+    buildStreamingListeners: ({ textContainer }) => createStreamingListenersStub(textContainer),
     finalizeThinkingBlock: () => {
       return;
     },
@@ -361,15 +365,7 @@ test("sendMessage keeps checkpointId for interrupted turns", async () => {
     scrollToBottom: () => {
       return;
     },
-    buildStreamingListeners: ({ textContainer }) =>
-      ({
-        dispose: () => {
-          return;
-        },
-        getCurrentThinkingText: () => "",
-        getThinkingBlock: () => null,
-        getActiveTextContainer: () => textContainer
-      }) as any,
+    buildStreamingListeners: ({ textContainer }) => createStreamingListenersStub(textContainer),
     finalizeThinkingBlock: () => {
       return;
     },

@@ -3,7 +3,7 @@ import type {
   TuanziAPI,
   WorkbenchTaskItem
 } from "../../../../shared/ipc-contracts";
-import type { SessionWorkbenchState } from "../../app/state";
+import type { SessionWorkbenchState, SessionWorkbenchTaskGroup } from "../../app/state";
 
 interface WorkbenchState {
   activeSessionId: string;
@@ -34,27 +34,53 @@ export interface WorkbenchFeature {
 
 const WORKBENCH_STORAGE_KEY = "tuanzi.desktop.workbench.v1";
 const WORKBENCH_PERSIST_DEBOUNCE_MS = 180;
+const LEGACY_TASK_GROUP_TIMESTAMP = "1970-01-01T00:00:00.000Z";
 
-interface PersistedWorkbenchSessionState {
+interface PersistedWorkbenchTaskGroup {
+  taskId: string;
+  title: string;
   tasks: WorkbenchTaskItem[];
+  updatedAt: string;
+}
+
+interface PersistedWorkbenchSessionStateV2 {
+  taskGroups: PersistedWorkbenchTaskGroup[];
   modifiedFiles: ModifiedFileEntry[];
 }
 
-interface PersistedWorkbenchPayload {
-  version: 1;
-  sessions: Record<string, PersistedWorkbenchSessionState>;
+interface PersistedWorkbenchPayloadV2 {
+  version: 2;
+  sessions: Record<string, PersistedWorkbenchSessionStateV2>;
 }
 
 export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFeature {
   let persistTimer: number | null = null;
+  const collapsedPlanGroups = new Set<string>();
+  const collapsedTaskGroups = new Set<string>();
 
   function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === "object" && !Array.isArray(value);
   }
 
-  function toPersistedSessionState(state: SessionWorkbenchState): PersistedWorkbenchSessionState {
+  function createEmptySessionState(): SessionWorkbenchState {
     return {
-      tasks: state.tasks,
+      taskGroups: [],
+      modifiedFiles: []
+    };
+  }
+
+  function toPersistedTaskGroup(group: SessionWorkbenchTaskGroup): PersistedWorkbenchTaskGroup {
+    return {
+      taskId: group.taskId,
+      title: group.title,
+      tasks: group.tasks,
+      updatedAt: group.updatedAt
+    };
+  }
+
+  function toPersistedSessionState(state: SessionWorkbenchState): PersistedWorkbenchSessionStateV2 {
+    return {
+      taskGroups: state.taskGroups.map((group) => toPersistedTaskGroup(group)),
       modifiedFiles: state.modifiedFiles
     };
   }
@@ -106,25 +132,69 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     };
   }
 
-  function normalizePersistedSessionState(value: unknown): SessionWorkbenchState | null {
+  function normalizePersistedTaskGroup(value: unknown): SessionWorkbenchTaskGroup | null {
+    if (!isRecord(value) || typeof value.taskId !== "string" || typeof value.title !== "string") {
+      return null;
+    }
+    if (!Array.isArray(value.tasks) || typeof value.updatedAt !== "string") {
+      return null;
+    }
+    const tasks = value.tasks.map(normalizeTask).filter((item): item is WorkbenchTaskItem => item !== null);
+    return {
+      taskId: value.taskId,
+      title: value.title,
+      tasks,
+      updatedAt: value.updatedAt
+    };
+  }
+
+  function deriveTaskGroupTitle(tasks: WorkbenchTaskItem[], fallbackIndex: number): string {
+    const primaryTask =
+      tasks.find((task) => !task.parentGroupId && task.kind === "plan") ??
+      tasks.find((task) => !task.parentGroupId) ??
+      tasks[0];
+    const title = primaryTask?.title.trim();
+    return title || `Task ${fallbackIndex}`;
+  }
+
+  function normalizePersistedSessionState(value: unknown, sessionId: string): SessionWorkbenchState | null {
     if (!isRecord(value)) {
       return null;
     }
-    const tasks = Array.isArray(value.tasks)
-      ? value.tasks.map(normalizeTask).filter((item): item is WorkbenchTaskItem => item !== null)
+    const taskGroups = Array.isArray(value.taskGroups)
+      ? value.taskGroups.map(normalizePersistedTaskGroup).filter((item): item is SessionWorkbenchTaskGroup => item !== null)
       : [];
     const modifiedFiles = Array.isArray(value.modifiedFiles)
       ? value.modifiedFiles.map(normalizeModifiedFile).filter((item): item is ModifiedFileEntry => item !== null)
       : [];
+    if (taskGroups.length > 0) {
+      return {
+        taskGroups,
+        modifiedFiles: sortModifiedFiles(modifiedFiles)
+      };
+    }
+    const legacyTasks = Array.isArray(value.tasks)
+      ? value.tasks.map(normalizeTask).filter((item): item is WorkbenchTaskItem => item !== null)
+      : [];
     return {
-      tasks,
-      modifiedFiles
+      taskGroups:
+        legacyTasks.length > 0
+          ? [
+              {
+                taskId: `legacy-${sessionId}`,
+                title: deriveTaskGroupTitle(legacyTasks, 1),
+                tasks: legacyTasks,
+                updatedAt: LEGACY_TASK_GROUP_TIMESTAMP
+              }
+            ]
+          : [],
+      modifiedFiles: sortModifiedFiles(modifiedFiles)
     };
   }
 
   function flushPersistSessionWorkbench(): void {
-    const payload: PersistedWorkbenchPayload = {
-      version: 1,
+    const payload: PersistedWorkbenchPayloadV2 = {
+      version: 2,
       sessions: {}
     };
     const validSessionIds = new Set(input.state.sessions.map((session) => session.id));
@@ -163,7 +233,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       return;
     }
 
-    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.sessions)) {
+    if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2) || !isRecord(parsed.sessions)) {
       return;
     }
 
@@ -172,7 +242,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       if (!validSessionIds.has(sessionId)) {
         continue;
       }
-      const normalized = normalizePersistedSessionState(persistedState);
+      const normalized = normalizePersistedSessionState(persistedState, sessionId);
       if (!normalized) {
         continue;
       }
@@ -185,10 +255,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     if (existing) {
       return existing;
     }
-    const created: SessionWorkbenchState = {
-      tasks: [],
-      modifiedFiles: []
-    };
+    const created = createEmptySessionState();
     input.state.sessionWorkbench[sessionId] = created;
     return created;
   }
@@ -197,14 +264,52 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     return ensureSessionState(input.state.activeSessionId);
   }
 
-  function renderPanelState(tasks: WorkbenchTaskItem[], files: ModifiedFileEntry[]): void {
-    const hasTasks = tasks.length > 0;
+  function sortModifiedFiles(files: ModifiedFileEntry[]): ModifiedFileEntry[] {
+    return [...files].sort((a, b) => a.path.localeCompare(b.path));
+  }
+
+  function mergeModifiedFiles(existing: ModifiedFileEntry[], next: ModifiedFileEntry[]): ModifiedFileEntry[] {
+    if (next.length === 0) {
+      return existing;
+    }
+    const merged = new Map<string, ModifiedFileEntry>();
+    for (const file of existing) {
+      merged.set(file.path, file);
+    }
+    for (const file of next) {
+      merged.set(file.path, file);
+    }
+    return sortModifiedFiles(Array.from(merged.values()));
+  }
+
+  function upsertTaskGroup(sessionState: SessionWorkbenchState, taskId: string, tasks: WorkbenchTaskItem[]): void {
+    if (tasks.length === 0) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const existingIndex = sessionState.taskGroups.findIndex((group) => group.taskId === taskId);
+    const fallbackIndex = existingIndex >= 0 ? existingIndex + 1 : sessionState.taskGroups.length + 1;
+    const nextGroup: SessionWorkbenchTaskGroup = {
+      taskId,
+      title: deriveTaskGroupTitle(tasks, fallbackIndex),
+      tasks,
+      updatedAt: now
+    };
+    if (existingIndex >= 0) {
+      sessionState.taskGroups[existingIndex] = nextGroup;
+      return;
+    }
+    sessionState.taskGroups.push(nextGroup);
+  }
+
+  function renderPanelState(taskGroups: SessionWorkbenchTaskGroup[], files: ModifiedFileEntry[]): void {
+    const hasTasks = taskGroups.length > 0;
     const hasFiles = files.length > 0;
     input.tasksPanel.classList.toggle("hidden", !hasTasks);
     input.filesPanel.classList.toggle("hidden", !hasFiles);
     input.tasksPanel.classList.toggle("expanded", input.state.tasksExpanded && hasTasks);
     input.filesPanel.classList.toggle("expanded", input.state.filesExpanded && hasFiles);
-    input.tasksCount.setAttribute("data-count", String(tasks.length));
+    input.tasksCount.setAttribute("data-count", String(taskGroups.length));
     input.filesCount.setAttribute("data-count", String(files.length));
   }
 
@@ -212,8 +317,6 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     input.state.tasksExpanded = false;
     input.state.filesExpanded = false;
   }
-
-  const collapsedGroups = new Set<string>();
 
   function renderTaskItem(task: WorkbenchTaskItem): HTMLDivElement {
     const item = document.createElement("div");
@@ -239,7 +342,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     return item;
   }
 
-  function renderTasks(tasks: WorkbenchTaskItem[]): void {
+  function renderTaskEntries(tasks: WorkbenchTaskItem[]): HTMLDivElement {
     const groupHeaders = tasks.filter((task) => !task.parentGroupId && task.kind === "plan");
     const groupChildren = new Map<string, WorkbenchTaskItem[]>();
     const standaloneItems: WorkbenchTaskItem[] = [];
@@ -257,18 +360,11 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       }
     }
 
-    const totalCount = groupHeaders.length + standaloneItems.length;
-    input.tasksCount.textContent = String(totalCount || tasks.length);
-    if (tasks.length === 0) {
-      input.tasksBody.innerHTML = '';
-      return;
-    }
-
     const container = document.createElement("div");
     container.className = "workbench-task-list";
 
     for (const header of groupHeaders) {
-      const isCollapsed = collapsedGroups.has(header.id);
+      const isCollapsed = collapsedPlanGroups.has(header.id);
       const children = groupChildren.get(header.id) ?? [];
 
       const group = document.createElement("div");
@@ -277,12 +373,12 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       const groupHeader = document.createElement("div");
       groupHeader.className = "workbench-task-group-header";
       groupHeader.addEventListener("click", () => {
-        if (collapsedGroups.has(header.id)) {
-          collapsedGroups.delete(header.id);
+        if (collapsedPlanGroups.has(header.id)) {
+          collapsedPlanGroups.delete(header.id);
         } else {
-          collapsedGroups.add(header.id);
+          collapsedPlanGroups.add(header.id);
         }
-        renderTasks(tasks);
+        renderCurrentSessionWorkbench();
       });
 
       const arrow = document.createElement("span");
@@ -321,6 +417,87 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       container.appendChild(renderTaskItem(task));
     }
 
+    return container;
+  }
+
+  function summarizeTaskGroup(group: SessionWorkbenchTaskGroup): {
+    status: "pending" | "running" | "done" | "failed";
+    doneCount: number;
+    totalCount: number;
+  } {
+    if (group.tasks.length === 0) {
+      return { status: "pending", doneCount: 0, totalCount: 0 };
+    }
+    const doneCount = group.tasks.filter((task) => task.status === "done").length;
+    if (group.tasks.some((task) => task.status === "failed")) {
+      return { status: "failed", doneCount, totalCount: group.tasks.length };
+    }
+    if (group.tasks.every((task) => task.status === "done")) {
+      return { status: "done", doneCount, totalCount: group.tasks.length };
+    }
+    if (group.tasks.some((task) => task.status === "running")) {
+      return { status: "running", doneCount, totalCount: group.tasks.length };
+    }
+    return { status: "pending", doneCount, totalCount: group.tasks.length };
+  }
+
+  function renderTasks(taskGroups: SessionWorkbenchTaskGroup[]): void {
+    input.tasksCount.textContent = String(taskGroups.length);
+    if (taskGroups.length === 0) {
+      input.tasksBody.innerHTML = "";
+      return;
+    }
+
+    const container = document.createElement("div");
+    container.className = "workbench-task-list";
+
+    for (const taskGroup of taskGroups) {
+      const summary = summarizeTaskGroup(taskGroup);
+      const isCollapsed = collapsedTaskGroups.has(taskGroup.taskId);
+      const group = document.createElement("div");
+      group.className = `workbench-task-group${isCollapsed ? " collapsed" : ""}`;
+
+      const groupHeader = document.createElement("div");
+      groupHeader.className = "workbench-task-group-header";
+      groupHeader.addEventListener("click", () => {
+        if (collapsedTaskGroups.has(taskGroup.taskId)) {
+          collapsedTaskGroups.delete(taskGroup.taskId);
+        } else {
+          collapsedTaskGroups.add(taskGroup.taskId);
+        }
+        renderCurrentSessionWorkbench();
+      });
+
+      const arrow = document.createElement("span");
+      arrow.className = "workbench-task-group-arrow";
+      arrow.textContent = isCollapsed ? "+" : "-";
+
+      const status = document.createElement("div");
+      status.className = `workbench-task-status ${summary.status}`;
+      status.textContent =
+        summary.status === "done" ? "ok" : summary.status === "failed" ? "!" : summary.status === "running" ? "..." : "";
+
+      const title = document.createElement("div");
+      title.className = "workbench-task-group-title";
+      title.textContent = taskGroup.title;
+
+      const meta = document.createElement("span");
+      meta.className = "workbench-task-group-meta";
+      meta.textContent = `${summary.doneCount}/${summary.totalCount}`;
+
+      groupHeader.append(arrow, status, title, meta);
+      group.appendChild(groupHeader);
+
+      if (!isCollapsed) {
+        const groupBody = document.createElement("div");
+        groupBody.className = "workbench-task-group-body";
+        groupBody.appendChild(renderTaskEntries(taskGroup.tasks));
+        group.appendChild(groupBody);
+      }
+
+      container.appendChild(group);
+    }
+
     input.tasksBody.replaceChildren(container);
   }
 
@@ -349,9 +526,9 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
 
   function renderCurrentSessionWorkbench(): void {
     const current = getCurrentSessionState();
-    renderTasks(current.tasks);
+    renderTasks(current.taskGroups);
     renderFiles(current.modifiedFiles);
-    renderPanelState(current.tasks, current.modifiedFiles);
+    renderPanelState(current.taskGroups, current.modifiedFiles);
   }
 
   function bind(): void {
@@ -390,13 +567,14 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     });
 
     input.api.onTasks((data) => {
-      ensureSessionState(data.sessionId).tasks = data.tasks;
+      upsertTaskGroup(ensureSessionState(data.sessionId), data.taskId, data.tasks);
       schedulePersistSessionWorkbench();
       renderCurrentSessionWorkbench();
     });
 
     input.api.onModifiedFiles((data) => {
-      ensureSessionState(data.sessionId).modifiedFiles = data.files;
+      const sessionState = ensureSessionState(data.sessionId);
+      sessionState.modifiedFiles = mergeModifiedFiles(sessionState.modifiedFiles, data.files);
       schedulePersistSessionWorkbench();
       renderCurrentSessionWorkbench();
     });
@@ -405,10 +583,7 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
   }
 
   function resetSessionWorkbench(sessionId: string): void {
-    input.state.sessionWorkbench[sessionId] = {
-      tasks: [],
-      modifiedFiles: []
-    };
+    input.state.sessionWorkbench[sessionId] = createEmptySessionState();
     schedulePersistSessionWorkbench();
     renderCurrentSessionWorkbench();
   }

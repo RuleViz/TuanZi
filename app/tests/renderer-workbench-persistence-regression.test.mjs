@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const source = readFileSync(
-  join(process.cwd(), "src", "renderer", "src", "features", "workbench", "workbench-feature.ts"),
+  fileURLToPath(new URL("../src/renderer/src/features/workbench/workbench-feature.ts", import.meta.url)),
   "utf8"
 );
 
@@ -17,6 +17,8 @@ test("workbench feature hydrates and persists session workbench state", () => {
   assert.match(source, /localStorage\.setItem\(WORKBENCH_STORAGE_KEY,\s*JSON\.stringify\(/);
   assert.match(source, /function\s+hydrateSessionWorkbenchFromStorage\(/);
   assert.match(source, /hydrateSessionWorkbenchFromStorage\(\);/);
+  assert.match(source, /version:\s*2/);
+  assert.match(source, /parsed\.version !== 1 && parsed\.version !== 2/);
 });
 
 test("workbench updates from task and file streams are persisted", () => {
