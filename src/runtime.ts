@@ -46,6 +46,7 @@ export function createToolRuntime(
     approvalGate,
     backupManager,
     logger,
+    modelTokenBudget: runtimeConfig.model.tokenBudget ?? undefined,
     policyEngine,
     agentSettings: runtimeConfig.agentSettings,
     mcpBridge,

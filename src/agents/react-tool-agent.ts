@@ -106,6 +106,7 @@ export class ReactToolAgent {
         content: "Your previous response was interrupted. Continue from where you left off without repeating text. Continue using tools if needed."
       });
     }
+    updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
 
     // Frequent per-token resume snapshots can starve streaming throughput.
     const stateEmitThrottleMs = 250;
@@ -276,6 +277,7 @@ export class ReactToolAgent {
           name: call.function.name,
           content: JSON.stringify(toolResponse.result)
         });
+        updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
         emitState(null, { force: true });
       }
     }
@@ -732,4 +734,102 @@ function arraysEqual(left: string[], right: string[]): boolean {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function updateSystemPromptTokenWarning(
+  messages: ChatMessage[],
+  modelTokenBudget?: { total: number; reserve: number; limit: number }
+): void {
+  if (messages.length === 0) {
+    return;
+  }
+  const systemMessage = messages[0];
+  if (!systemMessage || systemMessage.role !== "system" || typeof systemMessage.content !== "string") {
+    return;
+  }
+  if (!systemMessage.content.includes("<budget:token_budget>") || !systemMessage.content.includes("<system_warning>")) {
+    return;
+  }
+  const budgetTotal = resolveTokenBudgetTotal(systemMessage.content, modelTokenBudget);
+  if (budgetTotal <= 0) {
+    return;
+  }
+
+  const estimated = estimateMessagesTokenUsage(messages);
+  const used = Math.min(estimated, budgetTotal);
+  const remaining = Math.max(budgetTotal - used, 0);
+  const nextWarning = `<system_warning>Token usage: ${used}/${budgetTotal}; ${remaining} remaining</system_warning>`;
+  systemMessage.content = systemMessage.content.replace(
+    /<system_warning>[\s\S]*?<\/system_warning>/,
+    nextWarning
+  );
+}
+
+function resolveTokenBudgetTotal(
+  systemPrompt: string,
+  modelTokenBudget?: { total: number; reserve: number; limit: number }
+): number {
+  const modelLimit =
+    typeof modelTokenBudget?.limit === "number" && Number.isFinite(modelTokenBudget.limit) && modelTokenBudget.limit > 0
+      ? Math.floor(modelTokenBudget.limit)
+      : null;
+  if (modelLimit !== null) {
+    return modelLimit;
+  }
+
+  const match = systemPrompt.match(/<budget:token_budget>\s*(\d+)\s*<\/budget:token_budget>/);
+  if (!match) {
+    return 0;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function estimateMessagesTokenUsage(messages: ChatMessage[]): number {
+  let total = 0;
+  for (const message of messages) {
+    total += 4;
+    total += estimateMessageContentTokens(message.content);
+    if (message.name) {
+      total += estimateTextTokens(message.name);
+    }
+    if (message.tool_call_id) {
+      total += estimateTextTokens(message.tool_call_id);
+    }
+    if (message.reasoning_content) {
+      total += estimateTextTokens(message.reasoning_content);
+    }
+    if (Array.isArray(message.tool_calls)) {
+      total += estimateTextTokens(JSON.stringify(message.tool_calls));
+    }
+  }
+  return total;
+}
+
+function estimateMessageContentTokens(content: ChatMessageContent): number {
+  if (typeof content === "string") {
+    return estimateTextTokens(content);
+  }
+
+  let total = 0;
+  for (const part of content) {
+    if (part.type === "text") {
+      total += estimateTextTokens(part.text);
+      continue;
+    }
+    if (part.type === "image_url") {
+      total += 256;
+    }
+  }
+  return total;
+}
+
+function estimateTextTokens(text: string): number {
+  if (!text) {
+    return 0;
+  }
+  return Math.ceil(text.length / 4);
 }

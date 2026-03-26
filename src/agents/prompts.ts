@@ -1,8 +1,18 @@
 import type { SkillCatalogItem } from "../core/skill-types";
 
+export interface PromptTokenBudget {
+  total: number;
+  used: number;
+  remaining: number;
+}
+
+const DEFAULT_PROJECT_CONTEXT = "TUANZI.md not found in workspace root.";
+
 export function plannerSystemPrompt(input: {
   workspaceRoot: string;
   enabledTools: string[];
+  projectContext: string;
+  tokenBudget: PromptTokenBudget;
 }): string {
   const workspaceRoot = normalizeOptionalText(input.workspaceRoot) ?? "unknown";
   const enabledTools = dedupeNonEmpty(input.enabledTools);
@@ -38,6 +48,7 @@ export function plannerSystemPrompt(input: {
     `    <workspace_root>${escapeXml(workspaceRoot)}</workspace_root>`,
     "    <path_resolution>Relative paths are resolved against workspace_root.</path_resolution>",
     "  </runtime_context>",
+    ...buildProjectContextXml(input.projectContext),
     "  <tool_policies>",
     ...toolPolicies,
     "  </tool_policies>",
@@ -60,6 +71,7 @@ export function plannerSystemPrompt(input: {
     "    <reminder>Use professional plain text and avoid decorative symbols unless user requests it.</reminder>",
     "    <reminder>The instruction field is critical — it will be the only guidance the execution agent receives along with the task list.</reminder>",
     "  </runtime_reminders>",
+    ...buildTokenBudgetXml(input.tokenBudget),
     "</system_prompt>"
   ].join("\n");
 }
@@ -67,6 +79,8 @@ export function plannerSystemPrompt(input: {
 export function searcherSystemPrompt(input: {
   workspaceRoot: string;
   enabledTools: string[];
+  projectContext: string;
+  tokenBudget: PromptTokenBudget;
 }): string {
   const workspaceRoot = normalizeOptionalText(input.workspaceRoot) ?? "unknown";
   const enabledTools = dedupeNonEmpty(input.enabledTools);
@@ -99,6 +113,7 @@ export function searcherSystemPrompt(input: {
     `    <workspace_root>${escapeXml(workspaceRoot)}</workspace_root>`,
     "    <path_resolution>Relative paths are resolved against workspace_root.</path_resolution>",
     "  </runtime_context>",
+    ...buildProjectContextXml(input.projectContext),
     "  <tool_policies>",
     ...toolPolicies,
     "  </tool_policies>",
@@ -112,6 +127,7 @@ export function searcherSystemPrompt(input: {
     "    <reminder>Searcher summaries are evidence aids and may require follow-up verification.</reminder>",
     "    <reminder>Use professional plain text and avoid decorative symbols unless user requests it.</reminder>",
     "  </runtime_reminders>",
+    ...buildTokenBudgetXml(input.tokenBudget),
     "</system_prompt>"
   ].join("\n");
 }
@@ -119,6 +135,8 @@ export function searcherSystemPrompt(input: {
 export function subagentExplorerSystemPrompt(input: {
   workspaceRoot: string;
   enabledTools: string[];
+  projectContext: string;
+  tokenBudget: PromptTokenBudget;
 }): string {
   const workspaceRoot = normalizeOptionalText(input.workspaceRoot) ?? "unknown";
   const enabledTools = dedupeNonEmpty(input.enabledTools);
@@ -151,6 +169,7 @@ export function subagentExplorerSystemPrompt(input: {
     "  <runtime_context>",
     `    <workspace_root>${escapeXml(workspaceRoot)}</workspace_root>`,
     "  </runtime_context>",
+    ...buildProjectContextXml(input.projectContext),
     "  <tool_policies>",
     ...toolPolicies,
     "  </tool_policies>",
@@ -160,6 +179,7 @@ export function subagentExplorerSystemPrompt(input: {
     "    <rule>Each webReferences item must include url and reason.</rule>",
     "    <rule>Do not output markdown fences.</rule>",
     "  </output_contract>",
+    ...buildTokenBudgetXml(input.tokenBudget),
     "</system_prompt>"
   ].join("\n");
 }
@@ -169,6 +189,8 @@ export function coderSystemPrompt(input: {
   agentName: string;
   agentPrompt: string;
   skillCatalog: SkillCatalogItem[];
+  projectContext: string;
+  tokenBudget: PromptTokenBudget;
   toolInstructions: Array<{ name: string; prompt: string }>;
 }): string {
   const workspaceRoot = normalizeOptionalText(input.workspaceRoot) ?? "unknown";
@@ -215,7 +237,7 @@ export function coderSystemPrompt(input: {
     "    <rule>If you dispatch multiple subagents, keep the batch small, then use wait_subagents to inspect their full returned results.</rule>",
     "    <rule>After wait_subagents returns, read completed[*].fullText, toolCalls, references, and webReferences directly and incorporate that evidence into your next reasoning step.</rule>",
     "    <rule>When a task has ambiguous requirements, multiple viable approaches, or needs user preference before proceeding, use ask_user_question to present structured questions (single_select, multi_select, or text) and wait for answers instead of making assumptions.</rule>",
-  "  </mode_policy>",
+    "  </mode_policy>",
     "  <agent_persona>",
     `    <name>${escapeXml(agentName)}</name>`,
     "    <role>Implementation specialist with practical engineering focus.</role>",
@@ -227,6 +249,7 @@ export function coderSystemPrompt(input: {
     `    <workspace_root>${escapeXml(workspaceRoot)}</workspace_root>`,
     skillCatalogXml,
     "  </runtime_context>",
+    ...buildProjectContextXml(input.projectContext),
     "  <tool_policies>",
     toolPoliciesXml,
     "  </tool_policies>",
@@ -239,8 +262,44 @@ export function coderSystemPrompt(input: {
     "    <reminder>Searcher summaries are hints, not guaranteed facts; verify critical claims when feasible.</reminder>",
     "    <reminder>Use professional plain text and avoid decorative symbols unless user requests it.</reminder>",
     "  </runtime_reminders>",
+    ...buildTokenBudgetXml(input.tokenBudget),
     "</system_prompt>"
   ].join("\n");
+}
+
+function buildProjectContextXml(projectContextInput: string): string[] {
+  const projectContext = normalizeOptionalText(projectContextInput) ?? DEFAULT_PROJECT_CONTEXT;
+  return [
+    "  <project_context>",
+    ...escapeXml(projectContext).split(/\r?\n/).map((line) => `    ${line}`),
+    "  </project_context>"
+  ];
+}
+
+function buildTokenBudgetXml(input: PromptTokenBudget): string[] {
+  const normalized = normalizeTokenBudget(input);
+  return [
+    "  <token_budget>",
+    `    <budget:token_budget>${normalized.total}</budget:token_budget>`,
+    `    <system_warning>Token usage: ${normalized.used}/${normalized.total}; ${normalized.remaining} remaining</system_warning>`,
+    "  </token_budget>"
+  ];
+}
+
+function normalizeTokenBudget(input: PromptTokenBudget): PromptTokenBudget {
+  const total = asNonNegativeInt(input.total);
+  const usedRaw = asNonNegativeInt(input.used);
+  const remainingRaw = asNonNegativeInt(input.remaining);
+  const used = Math.min(usedRaw, total);
+  const remaining = Math.min(remainingRaw, Math.max(total - used, 0));
+  return { total, used, remaining };
+}
+
+function asNonNegativeInt(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }
 
 function dedupeNonEmpty(values: string[]): string[] {

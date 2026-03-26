@@ -10,6 +10,7 @@ import type {
 } from "../core/types";
 import type { ChatCompletionClient } from "./model-types";
 import { subagentExplorerSystemPrompt } from "./prompts";
+import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 import type { ToolRegistry } from "../core/tool-registry";
 
@@ -48,6 +49,8 @@ export class SubagentExplorerAgent {
     const allowedTools = [...BASE_EXPLORER_TOOLS, ...mcpTools.map((tool) => tool.namespacedName)];
     const additionalToolDefinitions = mcpTools.map((tool) => toModelToolDefinition(tool));
     const userPrompt = buildUserPrompt(input.task, input.context ?? "");
+    const projectContext = loadProjectContextFromWorkspace(this.toolContext.workspaceRoot, this.toolContext.logger);
+    const tokenBudget = buildInitialPromptTokenBudget(this.toolContext.modelTokenBudget);
     const agent = new ReactToolAgent(
       this.client,
       this.model,
@@ -57,7 +60,9 @@ export class SubagentExplorerAgent {
     const output = await agent.run({
       systemPrompt: subagentExplorerSystemPrompt({
         workspaceRoot: this.toolContext.workspaceRoot,
-        enabledTools: allowedTools
+        enabledTools: allowedTools,
+        projectContext,
+        tokenBudget
       }),
       userPrompt,
       allowedTools,

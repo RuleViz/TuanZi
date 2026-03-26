@@ -10,6 +10,7 @@ import type {
 } from "../core/types";
 import type { ChatCompletionClient } from "./model-types";
 import { searcherSystemPrompt } from "./prompts";
+import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
 const SEARCH_TOOLS = [
@@ -65,13 +66,17 @@ export class SearcherAgent {
     }
     userPromptSections.push("", "Find relevant files and return strict JSON.");
     const userPrompt = userPromptSections.join("\n");
+    const projectContext = loadProjectContextFromWorkspace(this.toolContext.workspaceRoot, this.toolContext.logger);
+    const tokenBudget = buildInitialPromptTokenBudget(this.toolContext.modelTokenBudget);
 
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
     const maxTurns = this.toolContext.agentSettings?.toolLoop.searchMaxTurns ?? 12;
     const output = await agent.run({
       systemPrompt: searcherSystemPrompt({
         workspaceRoot: this.toolContext.workspaceRoot,
-        enabledTools: SEARCH_TOOLS
+        enabledTools: SEARCH_TOOLS,
+        projectContext,
+        tokenBudget
       }),
       userPrompt,
       allowedTools: SEARCH_TOOLS,

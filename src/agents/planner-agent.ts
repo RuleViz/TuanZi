@@ -4,6 +4,7 @@ import type { ExecutionPlan, PlanStep, ToolCallRecord, ToolExecutionContext } fr
 import { parseJsonObject } from "../core/json-utils";
 import type { ChatCompletionClient } from "./model-types";
 import { plannerSystemPrompt } from "./prompts";
+import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
 const PLANNER_TOOLS = [
@@ -51,13 +52,17 @@ export class PlannerAgent {
       "Explore the codebase using read-only tools to understand the relevant files and code structure, then produce a detailed execution plan as strict JSON."
     );
     const userPrompt = userPromptSections.join("\n");
+    const projectContext = loadProjectContextFromWorkspace(this.workspaceRoot, this.toolContext.logger);
+    const tokenBudget = buildInitialPromptTokenBudget(this.toolContext.modelTokenBudget);
 
     const agent = new ReactToolAgent(this.client, this.model, this.toolRegistry, this.toolContext);
     const maxTurns = this.toolContext.agentSettings?.toolLoop.searchMaxTurns ?? 12;
     const output = await agent.run({
       systemPrompt: plannerSystemPrompt({
         workspaceRoot: this.workspaceRoot,
-        enabledTools: PLANNER_TOOLS
+        enabledTools: PLANNER_TOOLS,
+        projectContext,
+        tokenBudget
       }),
       userPrompt,
       allowedTools: PLANNER_TOOLS,

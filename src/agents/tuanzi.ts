@@ -13,6 +13,7 @@ import { resolveActiveTools } from "../core/agent-tooling";
 import type { SkillCatalogItem } from "../core/skill-types";
 import type { ChatCompletionClient, ChatInputImage } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
+import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
 
 export class TuanZiAgent {
@@ -53,6 +54,8 @@ export class TuanZiAgent {
       `[agent] profile=${this.activeAgent.filename} activeTools=${activeTools.activeToolNames.length}`
     );
     const skillCatalog = listSkillCatalogSafely(this.toolContext);
+    const projectContext = loadProjectContextFromWorkspace(this.toolContext.workspaceRoot, this.toolContext.logger);
+    const tokenBudget = buildInitialPromptTokenBudget(this.toolContext.modelTokenBudget);
     const mcpTooling = await discoverMcpTooling(this.toolContext);
     const mergedAllowedTools = dedupeStrings([
       ...activeTools.activeToolNames,
@@ -108,6 +111,8 @@ export class TuanZiAgent {
       agentName: this.activeAgent.name,
       agentPrompt: this.activeAgent.prompt,
       skillCatalog,
+      projectContext,
+      tokenBudget,
       toolInstructions: dedupeToolInstructions([...localToolInstructions, ...mcpToolInstructions])
     });
 

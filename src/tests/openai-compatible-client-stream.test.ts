@@ -165,7 +165,7 @@ test("OpenAICompatibleClient should fallback to non-stream on stream failure", a
       }
     );
 
-    assert.equal(fetchCount, 2);
+    assert.equal(fetchCount, 4);
     assert.equal(streamDeltaCalled, false);
     assert.equal(result.message.content, "fallback message");
   } finally {

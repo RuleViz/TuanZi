@@ -232,6 +232,11 @@ export interface ToolExecutionContext {
   approvalGate: ApprovalGate;
   backupManager: BackupManager;
   logger: Logger;
+  modelTokenBudget?: {
+    total: number;
+    reserve: number;
+    limit: number;
+  };
   policyEngine?: PolicyEngine;
   agentSettings?: AgentSettings;
   taskId?: string;

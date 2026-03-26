@@ -22,6 +22,11 @@ export interface RuntimeConfig {
     plannerModel: string | null;
     searchModel: string | null;
     coderModel: string | null;
+    tokenBudget: {
+      total: number;
+      reserve: number;
+      limit: number;
+    } | null;
     requestOptions: ChatCompletionRequestOptions | null;
   };
   agentBackend: {
@@ -55,6 +60,7 @@ export function loadRuntimeConfig(input: {
   let plannerModel: string | null;
   let searchModel: string | null;
   let coderModel: string | null;
+  let tokenBudget: RuntimeConfig["model"]["tokenBudget"];
 
   if (selectedCustomModel) {
     keySource = "openai";
@@ -63,6 +69,10 @@ export function loadRuntimeConfig(input: {
     plannerModel = selectedCustomModel.modelId;
     searchModel = selectedCustomModel.modelId;
     coderModel = selectedCustomModel.modelId;
+    tokenBudget = computeModelTokenBudget({
+      contextWindowTokens: null,
+      maxOutputTokens: null
+    });
   } else if (providerModel) {
     keySource = "openai";
     baseUrl = providerModel.baseUrl;
@@ -70,6 +80,10 @@ export function loadRuntimeConfig(input: {
     plannerModel = providerModel.model;
     searchModel = providerModel.model;
     coderModel = providerModel.model;
+    tokenBudget = computeModelTokenBudget({
+      contextWindowTokens: providerModel.contextWindowTokens,
+      maxOutputTokens: providerModel.maxOutputTokens
+    });
   } else {
     keySource = "none";
     baseUrl = "https://api.openai.com/v1";
@@ -77,6 +91,7 @@ export function loadRuntimeConfig(input: {
     plannerModel = null;
     searchModel = null;
     coderModel = null;
+    tokenBudget = null;
   }
 
   if (modelOverride && !selectedCustomModel) {
@@ -94,6 +109,7 @@ export function loadRuntimeConfig(input: {
       plannerModel,
       searchModel,
       coderModel,
+      tokenBudget,
       requestOptions: toChatCompletionRequestOptions(agentSettings)
     },
     agentBackend: {
@@ -424,7 +440,13 @@ function normalizeOptionalString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
-function normalizeProviderModel(config: AgentBackendConfig): { baseUrl: string; apiKey: string; model: string } | null {
+function normalizeProviderModel(config: AgentBackendConfig): {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
+} | null {
   const providers = Array.isArray(config.providers) ? config.providers : [];
   const activeProviderId = normalizeOptionalString(config.activeProviderId);
   if (!activeProviderId) {
@@ -445,10 +467,34 @@ function normalizeProviderModel(config: AgentBackendConfig): { baseUrl: string; 
   if (!baseUrl || !apiKey || !model) {
     return null;
   }
+  const modelMetadata = candidateProvider.models.find((item) => item.id === model) ?? null;
   return {
     baseUrl,
     apiKey,
-    model
+    model,
+    contextWindowTokens: modelMetadata?.contextWindowTokens ?? null,
+    maxOutputTokens: modelMetadata?.maxOutputTokens ?? null
+  };
+}
+
+function computeModelTokenBudget(input: {
+  contextWindowTokens: number | null;
+  maxOutputTokens: number | null;
+}): { total: number; reserve: number; limit: number } {
+  const fallbackReserve = 8000;
+  const fallbackLimit = 120000;
+  const fallbackTotal = fallbackLimit + fallbackReserve;
+  const minLimit = 4096;
+
+  const total = input.contextWindowTokens ?? fallbackTotal;
+  const reserve = input.maxOutputTokens ?? fallbackReserve;
+  const rawLimit = input.contextWindowTokens !== null ? total - reserve : fallbackLimit;
+  const limit = clamp(rawLimit, minLimit, Number.MAX_SAFE_INTEGER);
+
+  return {
+    total,
+    reserve,
+    limit
   };
 }
 
