@@ -14,6 +14,7 @@ import { SkillReadResourceTool } from "./skill-read-resource";
 import { SpawnSubagentTool } from "./spawn-subagent";
 import { WaitSubagentsTool } from "./wait-subagents";
 import { WriteTool } from "./write";
+import { AskUserQuestionTool } from "./ask-user-question";
 
 export function createDefaultTools(): Tool[] {
   return [
@@ -31,6 +32,7 @@ export function createDefaultTools(): Tool[] {
     new ListSubagentsTool(),
     new SkillListTool(),
     new SkillLoadTool(),
-    new SkillReadResourceTool()
+    new SkillReadResourceTool(),
+    new AskUserQuestionTool()
   ];
 }

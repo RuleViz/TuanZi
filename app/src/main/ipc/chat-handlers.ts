@@ -1,12 +1,19 @@
 import { ipcMain } from "electron";
 import { IPC_CHANNELS } from "../../shared/ipc-channels";
-import type { GetResumeStatePayload, SendMessagePayload, StopMessagePayload } from "../../shared/ipc-contracts";
+import type { GetResumeStatePayload, SendMessagePayload, StopMessagePayload, UserQuestionAnswerPayload } from "../../shared/ipc-contracts";
 import type { ToolLoopResumeStateSnapshot } from "../chat-resume-store";
 import type { ActiveTaskEntry } from "../services/active-task";
 
 type ChatSendMessagePayload = SendMessagePayload & {
   resumeState?: ToolLoopResumeStateSnapshot | null;
 };
+
+export interface PendingUserQuestion {
+  resolve: (answer: { requestId: string; answers: Record<string, string | string[]>; skipped?: boolean }) => void;
+  reject: (error: Error) => void;
+}
+
+export const pendingUserQuestions = new Map<string, PendingUserQuestion>();
 
 export interface ChatHandlersDeps {
   runChatTask: (webContents: Electron.WebContents, payload: ChatSendMessagePayload) => Promise<unknown>;
@@ -49,5 +56,19 @@ export function registerChatHandlers(deps: ChatHandlersDeps): void {
     }
 
     return { ok: true, status: "accepted" as const };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.chatUserQuestionAnswer, async (_event, payload: UserQuestionAnswerPayload) => {
+    const pending = pendingUserQuestions.get(payload.requestId);
+    if (!pending) {
+      return { ok: false, error: "No pending question found for this requestId." };
+    }
+    pendingUserQuestions.delete(payload.requestId);
+    pending.resolve({
+      requestId: payload.requestId,
+      answers: payload.answers,
+      skipped: payload.skipped
+    });
+    return { ok: true };
   });
 }

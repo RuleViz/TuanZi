@@ -3748,3 +3748,182 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── User Question Form ─────────────────────────── */
+.uq-form-wrapper {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  margin: 12px 0;
+  transition: opacity 0.3s ease;
+}
+
+.uq-form-wrapper.uq-submitted {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.uq-header {
+  margin-bottom: 14px;
+}
+
+.uq-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 4px;
+}
+
+.uq-description {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.uq-field {
+  margin-bottom: 14px;
+}
+
+.uq-field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.uq-required {
+  color: var(--status-err);
+  font-weight: 600;
+}
+
+.uq-field-error .uq-field-label {
+  color: var(--status-err);
+}
+
+.uq-field-error .uq-option-btn,
+.uq-field-error .uq-text-input {
+  border-color: var(--status-err) !important;
+}
+
+.uq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.uq-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  width: 100%;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+.uq-option-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--brand-primary);
+}
+
+.uq-option-btn.selected {
+  background: var(--brand-light);
+  border-color: var(--brand-primary);
+}
+
+.uq-option-label {
+  font-weight: 500;
+  color: var(--text-main);
+}
+
+.uq-option-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.uq-text-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 40px;
+  transition: border-color 0.15s ease;
+}
+
+.uq-text-input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.uq-text-input:focus {
+  outline: none;
+  border-color: var(--brand-primary);
+}
+
+.uq-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-light);
+}
+
+.uq-btn {
+  padding: 7px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.uq-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.uq-btn-skip {
+  background: transparent;
+  border-color: var(--border-light);
+  color: var(--text-secondary);
+}
+
+.uq-btn-skip:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.uq-btn-submit {
+  background: var(--brand-primary);
+  color: #fff;
+}
+
+.uq-btn-submit:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.uq-status {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  font-style: italic;
+}

@@ -82,6 +82,14 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     name: "skill_read_resource",
     prompt:
       "Use skill_read_resource to read scripts/references/assets files only after SKILL.md indicates the resource is needed."
+  },
+  ask_user_question: {
+    name: "ask_user_question",
+    prompt:
+      "Use ask_user_question to present structured questions to the user and wait for their answers before proceeding. " +
+      "Supports single_select, multi_select, and text question types. " +
+      "Use this when you need to gather requirements, preferences, or confirmations from the user " +
+      "instead of making assumptions. Provide clear, concise questions with well-defined options."
   }
 };
 
@@ -91,7 +99,8 @@ const ALWAYS_ENABLED_INTERNAL_TOOLS = [
   "skill_read_resource",
   "spawn_subagent",
   "wait_subagents",
-  "list_subagents"
+  "list_subagents",
+  "ask_user_question"
 ] as const;
 
 export function getSystemToolProfile(name: string): SystemToolProfile | null {

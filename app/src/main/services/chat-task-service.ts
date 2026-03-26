@@ -22,6 +22,7 @@ import {
 import { buildPersistedResumeSnapshot } from "./chat-task-snapshot.js";
 import { ConversationMemoryStore } from "./conversation-memory-store";
 import type { ActiveTaskEntry } from "./active-task";
+import { pendingUserQuestions } from "../ipc/chat-handlers";
 import type {
   ConversationModelSnapshot,
   ConversationTurnRecord,
@@ -697,6 +698,20 @@ export function createRunChatTask(
               terminalId: input.terminalId,
               title: input.title
             })
+          }
+        },
+        userInteractionBridge: {
+          askQuestion: (request) => {
+            return new Promise((resolve, reject) => {
+              pendingUserQuestions.set(request.requestId, { resolve, reject });
+              webContents.send(IPC_CHANNELS.chatUserQuestion, {
+                taskId,
+                requestId: request.requestId,
+                title: request.title,
+                description: request.description,
+                fields: request.fields
+              });
+            });
           }
         },
         sessionId

@@ -95,6 +95,7 @@ export class ReactToolAgent {
     const requestTools = mergedToolDefinitions.length > 0 ? mergedToolDefinitions : undefined;
     let previousRequestedCalls: string[] | null = null;
     let repeatedNoProgressTurns = 0;
+    let consecutiveApiErrors = 0;
     let nextTurn = clampTurnIndex(input.resumeState?.nextTurn ?? 0);
     const resumeAnchor = input.resumeState?.resumeAnchor;
 
@@ -192,13 +193,34 @@ export class ReactToolAgent {
       } catch (error) {
         if (isInterruptedAssistantMessageError(error)) {
           emitState(error.partialMessage, { force: true });
-        } else {
-          emitState(partialAssistantMessage, { force: true });
+          throw error;
         }
-        throw error;
+        if (isAbortError(error)) {
+          emitState(partialAssistantMessage, { force: true });
+          throw error;
+        }
+        consecutiveApiErrors += 1;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        this.toolContext.logger.warn(`[agent] API error at turn=${turn + 1} consecutive=${consecutiveApiErrors}: ${errorMessage}`);
+        if (consecutiveApiErrors >= 3) {
+          this.toolContext.logger.warn(`[agent] giving up after ${consecutiveApiErrors} consecutive API errors`);
+          emitState(null, { force: true });
+          return {
+            finalText: `Tool loop stopped after ${consecutiveApiErrors} consecutive API errors. Last error: ${errorMessage}`,
+            toolCalls,
+            messages
+          };
+        }
+        messages.push({
+          role: "user",
+          content: `[System: The previous API call failed with error: ${errorMessage}. Please continue your task.]`
+        });
+        emitState(null, { force: true });
+        continue;
       }
 
-      const assistantMessage = completion.message;
+      consecutiveApiErrors = 0;
+      const assistantMessage = completion.message ?? { role: "assistant" as const, content: "" };
       messages.push(cloneMessage(assistantMessage));
       nextTurn = turn + 1;
       emitState(null, { force: true });
@@ -327,7 +349,14 @@ export class ReactToolAgent {
       }
     }
 
-    const result = await this.toolRegistry.execute(functionName, args, this.toolContext);
+    let result: ToolExecutionResult;
+    try {
+      result = await this.toolRegistry.execute(functionName, args, this.toolContext);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.toolContext.logger.warn(`[tool] unexpected error ${functionName} error=${message}`);
+      result = { ok: false, error: message };
+    }
     this.toolContext.logger.info(`[tool] done ${functionName} id=${call.id} ok=${result.ok}`);
     return { args, result };
   }
@@ -699,4 +728,8 @@ function arraysEqual(left: string[], right: string[]): boolean {
     }
   }
   return true;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }

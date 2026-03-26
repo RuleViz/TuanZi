@@ -214,6 +214,7 @@ export function coderSystemPrompt(input: {
     "    <rule>Do not use subagents for code edits, shell execution, or tasks that are already local and easy to inspect directly.</rule>",
     "    <rule>If you dispatch multiple subagents, keep the batch small, then use wait_subagents to inspect their full returned results.</rule>",
     "    <rule>After wait_subagents returns, read completed[*].fullText, toolCalls, references, and webReferences directly and incorporate that evidence into your next reasoning step.</rule>",
+    "    <rule>When a task has ambiguous requirements, multiple viable approaches, or needs user preference before proceeding, use ask_user_question to present structured questions (single_select, multi_select, or text) and wait for answers instead of making assumptions.</rule>",
   "  </mode_policy>",
     "  <agent_persona>",
     `    <name>${escapeXml(agentName)}</name>`,

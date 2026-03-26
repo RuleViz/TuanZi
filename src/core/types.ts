@@ -194,6 +194,39 @@ export interface BackupManager {
   backupFile(absoluteFilePath: string): Promise<string | null>;
 }
 
+export interface UserQuestionOption {
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface UserQuestionField {
+  id: string;
+  type: "single_select" | "multi_select" | "text";
+  question: string;
+  options?: UserQuestionOption[];
+  placeholder?: string;
+  required?: boolean;
+  default_value?: string | string[];
+}
+
+export interface UserQuestionRequest {
+  requestId: string;
+  title?: string;
+  description?: string;
+  fields: UserQuestionField[];
+}
+
+export interface UserQuestionAnswer {
+  requestId: string;
+  answers: Record<string, string | string[]>;
+  skipped?: boolean;
+}
+
+export interface UserInteractionBridge {
+  askQuestion(request: UserQuestionRequest): Promise<UserQuestionAnswer>;
+}
+
 export interface ToolExecutionContext {
   workspaceRoot: string;
   approvalGate: ApprovalGate;
@@ -207,6 +240,7 @@ export interface ToolExecutionContext {
   subagentBridge?: SubagentBridge;
   skillRuntime?: SkillRuntime;
   terminalBridge?: TerminalBridge;
+  userInteractionBridge?: UserInteractionBridge;
   signal?: AbortSignal;
 }
 

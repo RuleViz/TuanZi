@@ -1,3 +1,5 @@
+import type { UserQuestionRequestData } from "../../../../shared/ipc-contracts";
+
 export const THINKING_SEGMENT_SEPARATOR = "\n\n---THINKING_SEGMENT---\n\n";
 
 export interface StreamUiState {
@@ -317,6 +319,13 @@ export function buildStreamingListeners(input: {
     input.smartScrollToBottom();
   });
 
+  const removeUserQuestionListener = window.tuanzi.onUserQuestion((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return;
+    }
+    renderUserQuestionForm(data, input.contentEl, input.smartScrollToBottom);
+  });
+
   return {
     getCurrentThinkingText: (): string => currentThinkingText,
     getThinkingBlock: () => thinkingBlock,
@@ -330,6 +339,7 @@ export function buildStreamingListeners(input: {
       removeLogListener();
       removeToolCallCompletedListener();
       removeSubagentSnapshotListener();
+      removeUserQuestionListener();
     }
   };
 }
@@ -350,4 +360,206 @@ export function finalizeAllThinkingBlocks(blocks: ExecBlock[]): void {
   for (const block of blocks) {
     finalizeThinkingBlock(block);
   }
+}
+
+function escapeFormHtml(text: string): string {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function renderUserQuestionForm(
+  data: UserQuestionRequestData,
+  contentEl: HTMLDivElement,
+  scrollToBottom: () => void
+): void {
+  const wrapper = document.createElement("div");
+  wrapper.className = "uq-form-wrapper";
+  wrapper.dataset.requestId = data.requestId;
+
+  let headerHtml = "";
+  if (data.title) {
+    headerHtml += `<div class="uq-title">${escapeFormHtml(data.title)}</div>`;
+  }
+  if (data.description) {
+    headerHtml += `<div class="uq-description">${escapeFormHtml(data.description)}</div>`;
+  }
+  if (headerHtml) {
+    const header = document.createElement("div");
+    header.className = "uq-header";
+    header.innerHTML = headerHtml;
+    wrapper.appendChild(header);
+  }
+
+  const formState: Record<string, string | string[]> = {};
+
+  for (const field of data.fields) {
+    if (field.default_value !== undefined) {
+      formState[field.id] = field.default_value;
+    } else if (field.type === "multi_select") {
+      formState[field.id] = [];
+    } else {
+      formState[field.id] = "";
+    }
+
+    const fieldEl = document.createElement("div");
+    fieldEl.className = "uq-field";
+    fieldEl.dataset.fieldId = field.id;
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "uq-field-label";
+    labelEl.textContent = field.question;
+    if (field.required !== false) {
+      const reqSpan = document.createElement("span");
+      reqSpan.className = "uq-required";
+      reqSpan.textContent = " *";
+      labelEl.appendChild(reqSpan);
+    }
+    fieldEl.appendChild(labelEl);
+
+    if (field.type === "single_select" && field.options) {
+      const optionsContainer = document.createElement("div");
+      optionsContainer.className = "uq-options";
+      for (const opt of field.options) {
+        const optBtn = document.createElement("button");
+        optBtn.type = "button";
+        optBtn.className = "uq-option-btn";
+        if (formState[field.id] === opt.value) {
+          optBtn.classList.add("selected");
+        }
+        optBtn.dataset.value = opt.value;
+        let optHtml = `<span class="uq-option-label">${escapeFormHtml(opt.label)}</span>`;
+        if (opt.description) {
+          optHtml += `<span class="uq-option-desc">${escapeFormHtml(opt.description)}</span>`;
+        }
+        optBtn.innerHTML = optHtml;
+        optBtn.addEventListener("click", () => {
+          formState[field.id] = opt.value;
+          optionsContainer.querySelectorAll(".uq-option-btn").forEach((b) => b.classList.remove("selected"));
+          optBtn.classList.add("selected");
+        });
+        optionsContainer.appendChild(optBtn);
+      }
+      fieldEl.appendChild(optionsContainer);
+    } else if (field.type === "multi_select" && field.options) {
+      const optionsContainer = document.createElement("div");
+      optionsContainer.className = "uq-options uq-options-multi";
+      const defaultArr = Array.isArray(field.default_value) ? field.default_value : [];
+      for (const opt of field.options) {
+        const optBtn = document.createElement("button");
+        optBtn.type = "button";
+        optBtn.className = "uq-option-btn";
+        if (defaultArr.includes(opt.value)) {
+          optBtn.classList.add("selected");
+        }
+        optBtn.dataset.value = opt.value;
+        let optHtml = `<span class="uq-option-label">${escapeFormHtml(opt.label)}</span>`;
+        if (opt.description) {
+          optHtml += `<span class="uq-option-desc">${escapeFormHtml(opt.description)}</span>`;
+        }
+        optBtn.innerHTML = optHtml;
+        optBtn.addEventListener("click", () => {
+          const current = (formState[field.id] as string[]) || [];
+          const idx = current.indexOf(opt.value);
+          if (idx >= 0) {
+            current.splice(idx, 1);
+            optBtn.classList.remove("selected");
+          } else {
+            current.push(opt.value);
+            optBtn.classList.add("selected");
+          }
+          formState[field.id] = current;
+        });
+        optionsContainer.appendChild(optBtn);
+      }
+      fieldEl.appendChild(optionsContainer);
+    } else {
+      const textInput = document.createElement("textarea");
+      textInput.className = "uq-text-input";
+      textInput.placeholder = field.placeholder || "";
+      textInput.rows = 2;
+      if (typeof field.default_value === "string") {
+        textInput.value = field.default_value;
+      }
+      textInput.addEventListener("input", () => {
+        formState[field.id] = textInput.value;
+      });
+      fieldEl.appendChild(textInput);
+    }
+
+    wrapper.appendChild(fieldEl);
+  }
+
+  const actionsEl = document.createElement("div");
+  actionsEl.className = "uq-actions";
+
+  const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
+  skipBtn.className = "uq-btn uq-btn-skip";
+  skipBtn.textContent = "Skip";
+  skipBtn.addEventListener("click", () => {
+    wrapper.classList.add("uq-submitted");
+    disableForm(wrapper);
+    showFormStatus(wrapper, "Skipped");
+    window.tuanzi.answerUserQuestion({
+      requestId: data.requestId,
+      answers: {},
+      skipped: true
+    });
+  });
+  actionsEl.appendChild(skipBtn);
+
+  const submitBtn = document.createElement("button");
+  submitBtn.type = "button";
+  submitBtn.className = "uq-btn uq-btn-submit";
+  submitBtn.textContent = "Submit";
+  submitBtn.addEventListener("click", () => {
+    for (const field of data.fields) {
+      if (field.required !== false) {
+        const val = formState[field.id];
+        if (!val || (Array.isArray(val) && val.length === 0)) {
+          const fieldEl = wrapper.querySelector(`[data-field-id="${field.id}"]`);
+          if (fieldEl) {
+            fieldEl.classList.add("uq-field-error");
+            setTimeout(() => fieldEl.classList.remove("uq-field-error"), 1500);
+          }
+          return;
+        }
+      }
+    }
+    wrapper.classList.add("uq-submitted");
+    disableForm(wrapper);
+    showFormStatus(wrapper, "Submitted");
+    window.tuanzi.answerUserQuestion({
+      requestId: data.requestId,
+      answers: formState,
+      skipped: false
+    });
+  });
+  actionsEl.appendChild(submitBtn);
+
+  wrapper.appendChild(actionsEl);
+  contentEl.appendChild(wrapper);
+  scrollToBottom();
+}
+
+function disableForm(wrapper: HTMLDivElement): void {
+  wrapper.querySelectorAll<HTMLButtonElement>("button").forEach((btn) => {
+    btn.disabled = true;
+  });
+  wrapper.querySelectorAll<HTMLTextAreaElement>("textarea").forEach((ta) => {
+    ta.disabled = true;
+  });
+}
+
+function showFormStatus(wrapper: HTMLDivElement, text: string): void {
+  const existing = wrapper.querySelector(".uq-status");
+  if (existing) {
+    existing.textContent = text;
+    return;
+  }
+  const statusEl = document.createElement("div");
+  statusEl.className = "uq-status";
+  statusEl.textContent = text;
+  wrapper.appendChild(statusEl);
 }

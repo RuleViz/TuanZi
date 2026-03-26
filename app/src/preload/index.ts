@@ -245,6 +245,18 @@ const tuanziAPI: TuanziAPI = {
     };
     ipcRenderer.on(IPC_CHANNELS.chatSubagentSnapshot, handler);
     return () => ipcRenderer.removeListener(IPC_CHANNELS.chatSubagentSnapshot, handler);
+  },
+
+  onUserQuestion: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: unknown): void => {
+      callback(data as Parameters<typeof callback>[0]);
+    };
+    ipcRenderer.on(IPC_CHANNELS.chatUserQuestion, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.chatUserQuestion, handler);
+  },
+
+  answerUserQuestion: (payload) => {
+    return ipcRenderer.invoke(IPC_CHANNELS.chatUserQuestionAnswer, payload);
   }
 };
 

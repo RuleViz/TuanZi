@@ -188,6 +188,36 @@ export interface SubagentSnapshotData {
   error: string | null;
 }
 
+export interface UserQuestionOptionData {
+  label: string;
+  description?: string;
+  value: string;
+}
+
+export interface UserQuestionFieldData {
+  id: string;
+  type: "single_select" | "multi_select" | "text";
+  question: string;
+  options?: UserQuestionOptionData[];
+  placeholder?: string;
+  required?: boolean;
+  default_value?: string | string[];
+}
+
+export interface UserQuestionRequestData {
+  taskId: string;
+  requestId: string;
+  title?: string;
+  description?: string;
+  fields: UserQuestionFieldData[];
+}
+
+export interface UserQuestionAnswerPayload {
+  requestId: string;
+  answers: Record<string, string | string[]>;
+  skipped?: boolean;
+}
+
 export interface TuanziAPI {
   sendMessage: (payload: SendMessagePayload) => Promise<ChatResult>;
   getResumeState: (
@@ -365,4 +395,10 @@ export interface TuanziAPI {
   onSubagentSnapshot: (
     callback: (data: { taskId: string; snapshots: SubagentSnapshotData[] }) => void
   ) => () => void;
+  onUserQuestion: (
+    callback: (data: UserQuestionRequestData) => void
+  ) => () => void;
+  answerUserQuestion: (
+    payload: UserQuestionAnswerPayload
+  ) => Promise<{ ok: boolean; error?: string }>;
 }

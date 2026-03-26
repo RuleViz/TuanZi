@@ -17,7 +17,8 @@ import type {
   SubagentBridge,
   SubagentSnapshot,
   TerminalBridge,
-  ToolExecutionContext
+  ToolExecutionContext,
+  UserInteractionBridge
 } from "./core/types";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
@@ -31,7 +32,7 @@ export interface ToolRuntime {
 
 export function createToolRuntime(
   runtimeConfig: RuntimeConfig,
-  overrides?: { logger?: Logger; approvalGate?: ApprovalGate; terminalBridge?: TerminalBridge; sessionId?: string }
+  overrides?: { logger?: Logger; approvalGate?: ApprovalGate; terminalBridge?: TerminalBridge; userInteractionBridge?: UserInteractionBridge; sessionId?: string }
 ): ToolRuntime {
   const logger = overrides?.logger ?? new ConsoleLogger();
   const approvalGate = overrides?.approvalGate ?? new ConsoleApprovalGate(runtimeConfig.approvalMode);
@@ -50,6 +51,7 @@ export function createToolRuntime(
     mcpBridge,
     skillRuntime,
     terminalBridge: overrides?.terminalBridge,
+    userInteractionBridge: overrides?.userInteractionBridge,
     sessionId: overrides?.sessionId
   };
 

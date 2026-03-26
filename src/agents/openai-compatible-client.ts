@@ -69,7 +69,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.buildHeaders(),
         body: JSON.stringify(buildChatCompletionsPayload(input, false)),
@@ -122,7 +122,7 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     const toolCallsByIndex = new Map<number, ToolCall>();
 
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      const response = await this.fetchWithRetry(`${this.baseUrl}/chat/completions`, {
         method: "POST",
         headers: this.buildHeaders(),
         body: JSON.stringify(buildChatCompletionsPayload(input, true)),
@@ -192,6 +192,30 @@ export class OpenAICompatibleClient implements ChatCompletionClient {
     }
   }
 
+  private async fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+    const maxRetries = 2;
+    const baseDelayMs = 1000;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, init);
+        if (response.ok || !isRetryableStatus(response.status) || attempt === maxRetries) {
+          return response;
+        }
+        lastError = new Error(`Model request failed: ${response.status} ${response.statusText}`);
+      } catch (error) {
+        if (isAbortError(error) || attempt === maxRetries) {
+          throw error;
+        }
+        lastError = error;
+      }
+      await sleep(baseDelayMs * Math.pow(2, attempt));
+    }
+
+    throw lastError;
+  }
+
   private buildHeaders(): Record<string, string> {
     return {
       "Content-Type": "application/json",
@@ -211,6 +235,14 @@ function parseJsonChunk(text: string): StreamChunk | null {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function assistantContentToText(content: ChatMessageContent): string {
