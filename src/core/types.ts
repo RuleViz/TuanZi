@@ -77,6 +77,30 @@ export interface McpToolCallResult {
   [key: string]: unknown;
 }
 
+export type McpToolSchemaMode = "full" | "description_only";
+
+export interface McpAccessPolicy {
+  /**
+   * When true, keep parent policy restrictions when deriving child context policy.
+   * Defaults to true in policy resolution helpers.
+   */
+  inheritParent?: boolean;
+  /**
+   * Optional allowlist of MCP server ids.
+   */
+  allowedServers?: string[];
+  /**
+   * Optional allowlist of namespaced MCP tools.
+   * Supports exact tool names and wildcard patterns such as mcp__files__*.
+   */
+  allowedTools?: string[];
+  /**
+   * Controls how MCP tool schemas are exposed to the model.
+   * description_only keeps only name/description with a loose object schema.
+   */
+  schemaMode?: McpToolSchemaMode;
+}
+
 export interface ModelFunctionToolDefinition {
   type: "function";
   function: {
@@ -95,9 +119,17 @@ export interface McpDiscoveredTool {
 }
 
 export interface McpBridge {
-  callTool(name: string, args: JsonObject, options?: { signal?: AbortSignal }): Promise<McpToolCallResult>;
-  listTools?(): Promise<McpDiscoveredTool[]>;
-  getModelToolDefinitions?(): Promise<ModelFunctionToolDefinition[]>;
+  callTool(
+    name: string,
+    args: JsonObject,
+    options?: { signal?: AbortSignal; mcpServers?: string[]; accessPolicy?: McpAccessPolicy }
+  ): Promise<McpToolCallResult>;
+  listTools?(options?: { mcpServers?: string[]; accessPolicy?: McpAccessPolicy }): Promise<McpDiscoveredTool[]>;
+  getModelToolDefinitions?(options?: {
+    mcpServers?: string[];
+    accessPolicy?: McpAccessPolicy;
+    schemaMode?: McpToolSchemaMode;
+  }): Promise<ModelFunctionToolDefinition[]>;
 }
 
 export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -140,6 +172,7 @@ export interface SubagentBridge {
     task: string;
     context?: string;
     agentType?: SubagentTaskKind;
+    mcpServers?: string[];
   }): Promise<{ subagentId: string; status: SubagentStatus }>;
   wait(input?: {
     ids?: string[];
@@ -242,6 +275,7 @@ export interface ToolExecutionContext {
   taskId?: string;
   sessionId?: string;
   mcpBridge?: McpBridge;
+  mcpAccessPolicy?: McpAccessPolicy;
   subagentBridge?: SubagentBridge;
   skillRuntime?: SkillRuntime;
   terminalBridge?: TerminalBridge;
