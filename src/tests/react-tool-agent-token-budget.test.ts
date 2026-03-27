@@ -49,6 +49,13 @@ const minimalSettings: AgentSettings = {
     coderMaxTurns: 20,
     noProgressRepeatTurns: 2
   },
+  contextPruning: {
+    toolOutput: {
+      protectRecentTokens: 40000,
+      pruneMinimumTokens: 20000,
+      pruneStrategy: "truncate"
+    }
+  },
   mcp: {
     enabled: false,
     command: "",
@@ -79,7 +86,9 @@ test("ReactToolAgent should refresh system_warning token usage during tool loop"
       description: "No-op tool for tests.",
       parameters: {
         type: "object",
-        properties: {}
+        properties: {
+          value: { type: "number" }
+        }
       },
       readOnly: true
     },
@@ -129,7 +138,7 @@ test("ReactToolAgent should refresh system_warning token usage during tool loop"
           type: "function",
           function: {
             name: "noop_tool",
-            arguments: "{}"
+            arguments: "{\"value\":1}"
           }
         }
       ]
@@ -210,4 +219,134 @@ test("ReactToolAgent should keep compatibility when system prompt has no token b
   assert.equal(output.finalText, "done");
   assert.equal(client.requests.length, 1);
   assert.equal(client.requests[0][0].content, "system without budget markers");
+});
+
+test("ReactToolAgent should prune old tool outputs before subsequent requests", async () => {
+  const tool: Tool = {
+    definition: {
+      name: "noop_tool",
+      description: "No-op tool for pruning tests.",
+      parameters: {
+        type: "object",
+        properties: {}
+      },
+      readOnly: true
+    },
+    async execute() {
+      return {
+        ok: true,
+        data: {
+          payload: "x".repeat(600)
+        }
+      };
+    }
+  };
+
+  const settingsWithPruning = {
+    ...minimalSettings,
+    contextPruning: {
+      toolOutput: {
+        protectRecentTokens: 80,
+        pruneMinimumTokens: 20,
+        pruneStrategy: "truncate"
+      }
+    }
+  } as AgentSettings;
+
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: settingsWithPruning,
+    modelTokenBudget: {
+      total: 128000,
+      reserve: 8000,
+      limit: 120000
+    }
+  };
+
+  const client = new SequenceClient([
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call-1",
+          type: "function",
+          function: {
+            name: "noop_tool",
+            arguments: "{\"value\":2}"
+          }
+        }
+      ]
+    },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call-2",
+          type: "function",
+          function: {
+            name: "noop_tool",
+            arguments: "{\"value\":3}"
+          }
+        }
+      ]
+    },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call-3",
+          type: "function",
+          function: {
+            name: "noop_tool",
+            arguments: "{}"
+          }
+        }
+      ]
+    },
+    {
+      role: "assistant",
+      content: "done"
+    }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([tool]), context);
+  const output = await agent.run({
+    systemPrompt: "system",
+    userPrompt: "trigger multiple tool calls",
+    allowedTools: ["noop_tool"],
+    maxTurns: 8
+  });
+
+  assert.equal(output.finalText, "done");
+  assert.equal(client.requests.length, 4);
+
+  const placeholder = "[Tool output pruned - ";
+  const sawPlaceholderInRequests = client.requests.some((request) =>
+    request.some((message) => message.role === "tool" && typeof message.content === "string" && message.content.includes(placeholder))
+  );
+  assert.equal(sawPlaceholderInRequests, true);
+
+  const finalRequestToolContents = client.requests[3]
+    .filter((message) => message.role === "tool")
+    .map((message) => (typeof message.content === "string" ? message.content : ""));
+  assert.equal(finalRequestToolContents.some((content) => content.startsWith(placeholder)), true);
+  assert.equal(finalRequestToolContents.some((content) => content.includes("\"payload\"")), true);
 });

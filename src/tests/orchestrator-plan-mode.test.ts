@@ -117,6 +117,13 @@ function createToolContext(approved: boolean): ToolExecutionContext {
         coderMaxTurns: 2,
         noProgressRepeatTurns: 1
       },
+      contextPruning: {
+        toolOutput: {
+          protectRecentTokens: 40000,
+          pruneMinimumTokens: 20000,
+          pruneStrategy: "truncate"
+        }
+      },
       mcp: {
         enabled: false,
         command: "",

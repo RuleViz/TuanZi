@@ -151,6 +151,13 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
     coderMaxTurns: 999999,
     noProgressRepeatTurns: 2
   },
+  contextPruning: {
+    toolOutput: {
+      protectRecentTokens: 40000,
+      pruneMinimumTokens: 20000,
+      pruneStrategy: "truncate"
+    }
+  },
   mcp: {
     enabled: false,
     command: "",
@@ -294,6 +301,27 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
     }
   }
 
+  const contextPruningRaw = asObject(input.contextPruning);
+  if (contextPruningRaw) {
+    const toolOutputRaw = asObject(contextPruningRaw.toolOutput);
+    if (toolOutputRaw) {
+      const protectRecentTokens = asPositiveInt(toolOutputRaw.protectRecentTokens);
+      if (protectRecentTokens !== null) {
+        base.contextPruning.toolOutput.protectRecentTokens = clamp(protectRecentTokens, 1, 1_000_000);
+      }
+
+      const pruneMinimumTokens = asPositiveInt(toolOutputRaw.pruneMinimumTokens);
+      if (pruneMinimumTokens !== null) {
+        base.contextPruning.toolOutput.pruneMinimumTokens = clamp(pruneMinimumTokens, 1, 1_000_000);
+      }
+
+      const pruneStrategy = asPruneStrategy(toolOutputRaw.pruneStrategy);
+      if (pruneStrategy !== null) {
+        base.contextPruning.toolOutput.pruneStrategy = pruneStrategy;
+      }
+    }
+  }
+
   const mcpRaw = asObject(input.mcp);
   if (mcpRaw) {
     const enabled = asBoolean(mcpRaw.enabled);
@@ -427,6 +455,13 @@ function asReasoningEffort(value: unknown): "low" | "medium" | "high" | null {
 
 function asThinkingType(value: unknown): "enabled" | "disabled" | null {
   if (value === "enabled" || value === "disabled") {
+    return value;
+  }
+  return null;
+}
+
+function asPruneStrategy(value: unknown): "truncate" | "summarize" | null {
+  if (value === "truncate" || value === "summarize") {
     return value;
   }
   return null;

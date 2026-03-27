@@ -34,6 +34,16 @@ export interface ToolLoopSettings {
   noProgressRepeatTurns: number;
 }
 
+export interface ToolOutputPruningSettings {
+  protectRecentTokens: number;
+  pruneMinimumTokens: number;
+  pruneStrategy: "truncate" | "summarize";
+}
+
+export interface ContextPruningSettings {
+  toolOutput: ToolOutputPruningSettings;
+}
+
 export interface ModelRequestSettings {
   reasoningEffort: "low" | "medium" | "high" | null;
   thinking: {
@@ -48,6 +58,7 @@ export interface AgentSettings {
   policy: PolicySettings;
   webSearch: WebSearchSettings;
   toolLoop: ToolLoopSettings;
+  contextPruning: ContextPruningSettings;
   mcp: McpSettings;
   modelRequest: ModelRequestSettings;
 }

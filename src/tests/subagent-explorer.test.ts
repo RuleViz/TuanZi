@@ -191,6 +191,13 @@ test("SubagentExplorerAgent should fall back to collected tool evidence when too
         coderMaxTurns: 1,
         noProgressRepeatTurns: 2
       },
+      contextPruning: {
+        toolOutput: {
+          protectRecentTokens: 40000,
+          pruneMinimumTokens: 20000,
+          pruneStrategy: "truncate"
+        }
+      },
       mcp: {
         enabled: false,
         command: "",

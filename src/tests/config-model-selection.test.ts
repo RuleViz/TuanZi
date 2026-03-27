@@ -386,3 +386,62 @@ test("should map agent.config.json modelRequest into runtime model request optio
     rmSync(agentHome, { recursive: true, force: true });
   }
 });
+
+test("should load contextPruning.toolOutput from agent.config.json", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "tuanzi-workspace-"));
+  const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    writeFileSync(
+      path.join(workspace, "agent.config.json"),
+      JSON.stringify(
+        {
+          contextPruning: {
+            toolOutput: {
+              protectRecentTokens: 12345,
+              pruneMinimumTokens: 6789,
+              pruneStrategy: "summarize"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    writeFileSync(
+      path.join(agentHome, "config.json"),
+      JSON.stringify(
+        {
+          provider: {
+            type: "openai",
+            apiKey: "sk-provider",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4o"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    withEnv(
+      {
+        TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+        MYCODERAGENT_HOME: agentHome
+      },
+      () => {
+        const config = loadRuntimeConfig({ workspaceRoot: workspace, approvalMode: "manual" });
+        assert.deepEqual(config.agentSettings.contextPruning.toolOutput, {
+          protectRecentTokens: 12345,
+          pruneMinimumTokens: 6789,
+          pruneStrategy: "summarize"
+        });
+      }
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(agentHome, { recursive: true, force: true });
+  }
+});

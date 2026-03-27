@@ -1,11 +1,17 @@
 import type { ToolRegistry } from "../core/tool-registry";
 import type {
+  AgentSettings,
   JsonObject,
   McpToolCallResult,
   ModelFunctionToolDefinition,
   ToolExecutionContext,
   ToolExecutionResult
 } from "../core/types";
+import {
+  DEFAULT_TOOL_OUTPUT_PRUNING_CONFIG,
+  pruneToolOutputs,
+  type ToolOutputPruningConfig
+} from "./context-pruner";
 import {
   isInterruptedAssistantMessageError,
   type ChatCompletionClient,
@@ -76,6 +82,7 @@ export class ReactToolAgent {
       `[agent] start tool-loop model=${this.model} allowedTools=${input.allowedTools.length} maxTurns=${maxTurns}`
     );
     const noProgressRepeatTurns = this.toolContext.agentSettings?.toolLoop.noProgressRepeatTurns ?? 2;
+    const toolOutputPruningConfig = resolveToolOutputPruningConfig(this.toolContext.agentSettings);
     const messages = cloneMessages(
       input.resumeState?.messages ?? [
         { role: "system", content: input.systemPrompt },
@@ -106,6 +113,7 @@ export class ReactToolAgent {
         content: "Your previous response was interrupted. Continue from where you left off without repeating text. Continue using tools if needed."
       });
     }
+    applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
     updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
 
     // Frequent per-token resume snapshots can starve streaming throughput.
@@ -155,6 +163,9 @@ export class ReactToolAgent {
         emitState(null, { force: true });
         throw new Error("Interrupted by user");
       }
+
+      applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
+      updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
 
       let partialAssistantMessage: ChatMessage | null = null;
       let completion;
@@ -277,6 +288,7 @@ export class ReactToolAgent {
           name: call.function.name,
           content: JSON.stringify(toolResponse.result)
         });
+        applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
         updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
         emitState(null, { force: true });
       }
@@ -734,6 +746,37 @@ function arraysEqual(left: string[], right: string[]): boolean {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function resolveToolOutputPruningConfig(agentSettings?: AgentSettings): ToolOutputPruningConfig {
+  const configured = agentSettings?.contextPruning?.toolOutput;
+  if (!configured) {
+    return { ...DEFAULT_TOOL_OUTPUT_PRUNING_CONFIG };
+  }
+  return {
+    protectRecentTokens:
+      Number.isFinite(configured.protectRecentTokens) && configured.protectRecentTokens > 0
+        ? Math.floor(configured.protectRecentTokens)
+        : DEFAULT_TOOL_OUTPUT_PRUNING_CONFIG.protectRecentTokens,
+    pruneMinimumTokens:
+      Number.isFinite(configured.pruneMinimumTokens) && configured.pruneMinimumTokens > 0
+        ? Math.floor(configured.pruneMinimumTokens)
+        : DEFAULT_TOOL_OUTPUT_PRUNING_CONFIG.pruneMinimumTokens,
+    pruneStrategy: configured.pruneStrategy === "summarize" ? "summarize" : "truncate"
+  };
+}
+
+function applyToolOutputPruningIfNeeded(
+  messages: ChatMessage[],
+  config: ToolOutputPruningConfig,
+  logger: ToolExecutionContext["logger"]
+): void {
+  const result = pruneToolOutputs(messages, config);
+  if (result.prunedMessageCount > 0) {
+    logger.info(
+      `[context-pruner] pruned tool outputs messages=${result.prunedMessageCount} tokens=${result.prunedTokenCount}`
+    );
+  }
 }
 
 function updateSystemPromptTokenWarning(
