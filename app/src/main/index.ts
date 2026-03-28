@@ -1,6 +1,5 @@
 import { app, shell, BrowserWindow } from "electron"
 import { join, resolve } from "path"
-import { electronApp, optimizer, is } from "@electron-toolkit/utils"
 import icon from "../../resources/icon.png?asset"
 import {
   type AgentBackendConfig,
@@ -63,6 +62,7 @@ const WINDOW_CLOSE_FORCE_DESTROY_MS = Number.isFinite(configuredForceDestroyDela
 let shutdownDrainInProgress = false
 let shutdownDrainCompleted = false
 let closeForceDestroyTimer: NodeJS.Timeout | null = null
+const isDev = !app.isPackaged
 
 function closePerfLog(
   event: string,
@@ -112,6 +112,38 @@ function clearCloseForceDestroyTimer(): void {
   }
   clearTimeout(closeForceDestroyTimer)
   closeForceDestroyTimer = null
+}
+
+function setAppUserModelId(appId: string): void {
+  if (process.platform !== "win32") {
+    return
+  }
+  app.setAppUserModelId(isDev ? process.execPath : appId)
+}
+
+function watchWindowShortcuts(window: BrowserWindow): void {
+  const { webContents } = window
+  webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") {
+      return
+    }
+    if (!isDev) {
+      if (input.code === "KeyR" && (input.control || input.meta)) {
+        event.preventDefault()
+      }
+      if (input.code === "KeyI" && ((input.alt && input.meta) || (input.control && input.shift))) {
+        event.preventDefault()
+      }
+      return
+    }
+    if (input.code === "F12") {
+      if (webContents.isDevToolsOpened()) {
+        webContents.closeDevTools()
+      } else {
+        webContents.openDevTools({ mode: "undocked" })
+      }
+    }
+  })
 }
 
 function scheduleCloseForceDestroy(win: BrowserWindow, reason: string): void {
@@ -768,7 +800,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
@@ -994,10 +1026,10 @@ registerIpcHandlers({
 // ── App Lifecycle ──────────────────────────────────────
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.tuanzi.app')
+  setAppUserModelId('com.tuanzi.app')
 
   app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+    watchWindowShortcuts(window)
   })
 
   createWindow()

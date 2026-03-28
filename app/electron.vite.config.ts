@@ -21,6 +21,9 @@ export default defineConfig({
       alias: {
         '@': resolve('src/renderer/src')
       }
+    },
+    server: {
+      host: '127.0.0.1'
     }
   }
 })
