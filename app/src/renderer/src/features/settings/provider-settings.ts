@@ -6,6 +6,7 @@ import type {
 } from "../../../../shared/domain-types";
 import type { TuanziAPI } from "../../../../shared/ipc-contracts";
 import type { SettingsDraft } from "../../app/state";
+import { showConfirmDialog } from "../../app/confirm-dialog";
 
 interface ProviderSettingsState {
   settingsDraft: SettingsDraft | null;
@@ -53,7 +54,7 @@ export interface ProviderSettingsController {
   renderProviderEditor: () => void;
   updateActiveProviderFromInputs: () => void;
   addDraftProvider: () => void;
-  removeActiveDraftProvider: () => void;
+  removeActiveDraftProvider: () => Promise<void>;
   openProviderModelModal: () => void;
   closeProviderModelModal: () => void;
   addModelToActiveProvider: () => void;
@@ -385,7 +386,7 @@ export function createProviderSettingsController(input: ProviderSettingsDeps): P
     input.renderSettingsDraft();
   };
 
-  const removeActiveDraftProvider = (): void => {
+  const removeActiveDraftProvider = async (): Promise<void> => {
     const draft = ensureSettingsDraft();
     const current = getActiveDraftProvider();
     if (!current) {
@@ -395,7 +396,7 @@ export function createProviderSettingsController(input: ProviderSettingsDeps): P
       input.showError("At least one provider must remain");
       return;
     }
-    const confirmed = window.confirm(`Delete provider "${current.name}"?`);
+    const confirmed = await showConfirmDialog(`确定要删除供应商 "${current.name}" 吗？`, "删除供应商");
     if (!confirmed) {
       return;
     }

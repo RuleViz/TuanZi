@@ -33,7 +33,7 @@ interface SettingsEventsDeps {
   setActiveSettingsPanel: (panel: string) => void;
   refreshMcpServers: () => Promise<void>;
   addDraftProvider: () => void;
-  removeActiveDraftProvider: () => void;
+  removeActiveDraftProvider: () => Promise<void>;
   openProviderModelModal: () => void;
   toggleSwitch: (button: HTMLButtonElement, enabled: boolean) => void;
   readToggle: (button: HTMLButtonElement) => boolean;

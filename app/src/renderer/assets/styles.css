@@ -444,11 +444,14 @@ body {
 /* ── popover dropdown ── */
 .ctx-popover {
   display: none;
-  position: absolute;
-  left: 0;
-  top: calc(100% + 4px);
+  /* 在文档流中显示（相对定位），展开时推动下方内容而非覆盖 */
+  position: relative;
+  left: auto;
+  top: 0;
+  margin-top: 6px;
   min-width: 320px;
   max-width: 480px;
+  width: max-content;
   max-height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
@@ -3911,6 +3914,76 @@ body {
   color: var(--text-main);
 }
 
+/* ── Confirm Dialog ── */
+.confirm-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(var(--overlay-blur));
+  -webkit-backdrop-filter: blur(var(--overlay-blur));
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+
+.confirm-dialog-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.confirm-dialog-content {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01)),
+    rgba(12, 14, 20, 0.92);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.08);
+  width: 380px;
+  max-width: 90vw;
+  transform: translateY(8px) scale(0.97);
+  transition: transform 0.25s ease;
+}
+
+.confirm-dialog-overlay.visible .confirm-dialog-content {
+  transform: translateY(0) scale(1);
+}
+
+.confirm-dialog-header {
+  padding: 16px 20px 0;
+}
+
+.confirm-dialog-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.confirm-dialog-body {
+  padding: 12px 20px 16px;
+}
+
+.confirm-dialog-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.confirm-dialog-footer {
+  border-top: 1px solid var(--border-light);
+  padding: 12px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--bg-surface);
+  border-radius: 0 0 12px 12px;
+}
+
 .uq-btn-submit {
   background: var(--brand-primary);
   color: #fff;
@@ -3926,4 +3999,12 @@ body {
   color: var(--text-muted);
   margin-top: 10px;
   font-style: italic;
+}
+
+/* ── 浅色：Confirm Dialog ── */
+[data-theme="light"] .confirm-dialog-content {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.6)),
+    rgba(248, 250, 252, 0.95);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.8);
 }
