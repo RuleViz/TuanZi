@@ -147,6 +147,20 @@ export type SubagentStatus = "queued" | "running" | "completed" | "failed" | "ca
 
 export type SubagentTaskKind = "explorer";
 
+export type AgentExitReason = "completed" | "interrupted" | "error" | "max_turns" | "no_progress";
+
+export interface AgentResultContext<TMessage = unknown, TToolCall = unknown> {
+  messages: TMessage[];
+  toolCalls: TToolCall[];
+}
+
+export interface AgentResult<TData, TMessage = unknown, TToolCall = unknown> {
+  data: TData;
+  exitReason: AgentExitReason;
+  error?: string;
+  context: AgentResultContext<TMessage, TToolCall>;
+}
+
 export interface SubagentToolCallRecord {
   id: string;
   name: string;
@@ -154,15 +168,28 @@ export interface SubagentToolCallRecord {
   result: ToolExecutionResult;
 }
 
-export interface SubagentResultSummary {
+export interface SubagentConversationSnapshot<TMessage = unknown, TResumeState = unknown> {
+  messages: TMessage[];
+  resumeState: TResumeState;
+}
+
+export interface SubagentContextResult<TToolCall = unknown, TMessage = unknown, TResumeState = unknown> {
   summary: string;
-  fullText: string;
   references: SearchReference[];
   webReferences: Array<{ url: string; reason: string }>;
-  toolCalls: SubagentToolCallRecord[];
-  error?: string;
-  completedAt: string;
+  fullTextPreview?: string;
+  toolCallPreview?: SubagentToolCallRecord[];
+  metadata: {
+    toolCalls: TToolCall[];
+    turnCount: number;
+    tokenUsage?: { input: number; output: number };
+    completedAt: string;
+    error?: string;
+  };
+  conversationSnapshot?: SubagentConversationSnapshot<TMessage, TResumeState>;
 }
+
+export type SubagentResultSummary = AgentResult<SubagentContextResult>;
 
 export interface SubagentSnapshot {
   id: string;
@@ -184,6 +211,12 @@ export interface SubagentBridge {
     context?: string;
     agentType?: SubagentTaskKind;
     mcpServers?: string[];
+  }): Promise<{ subagentId: string; status: SubagentStatus }>;
+  resume(input: {
+    snapshotId: string;
+    task: string;
+    context?: string;
+    agentType?: SubagentTaskKind;
   }): Promise<{ subagentId: string; status: SubagentStatus }>;
   wait(input?: {
     ids?: string[];

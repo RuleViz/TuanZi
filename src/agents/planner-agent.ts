@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ToolRegistry } from "../core/tool-registry";
-import type { ExecutionPlan, PlanStep, ToolCallRecord, ToolExecutionContext } from "../core/types";
+import type { AgentResult, ExecutionPlan, PlanStep, ToolCallRecord, ToolExecutionContext } from "../core/types";
+import type { ChatMessage } from "./model-types";
 import { parseJsonObject } from "../core/json-utils";
 import type { ChatCompletionClient } from "./model-types";
 import { plannerSystemPrompt } from "./prompts";
@@ -30,10 +31,15 @@ export class PlannerAgent {
     hooks?: {
       onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
     }
-  ): Promise<{ plan: ExecutionPlan; toolCalls: ToolCallRecord[] }> {
-    throwIfAborted(signal);
+  ): Promise<AgentResult<{ plan: ExecutionPlan; toolCalls: ToolCallRecord[] }, ChatMessage, ToolLoopToolCallSnapshot>> {
+    if (signal?.aborted) {
+      return interruptedPlannerResult(task);
+    }
     if (!this.client || !this.model) {
-      return { plan: fallbackPlan(task), toolCalls: [] };
+      return completedPlannerResult({
+        plan: fallbackPlan(task),
+        toolCalls: []
+      });
     }
 
     const userPromptSections = [
@@ -72,16 +78,21 @@ export class PlannerAgent {
       signal
     });
 
-    const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
+    const toolCalls: ToolCallRecord[] = output.context.toolCalls.map((call) => ({
       toolName: call.name,
       args: call.args,
       result: call.result,
       timestamp: new Date().toISOString()
     }));
 
-    const parsed = parseJsonObject(output.finalText);
+    const parsed = parseJsonObject(output.data.finalText);
     if (!parsed) {
-      return { plan: fallbackPlan(task), toolCalls };
+      return {
+        data: { plan: fallbackPlan(task), toolCalls },
+        exitReason: output.exitReason,
+        ...(output.error ? { error: output.error } : {}),
+        context: output.context
+      };
     }
 
     const title = typeof parsed.title === "string" ? parsed.title.trim() : undefined;
@@ -94,26 +105,60 @@ export class PlannerAgent {
       .filter((step): step is PlanStep => step !== null);
 
     if (steps.length === 0) {
-      return { plan: fallbackPlan(task), toolCalls };
+      return {
+        data: { plan: fallbackPlan(task), toolCalls },
+        exitReason: output.exitReason,
+        ...(output.error ? { error: output.error } : {}),
+        context: output.context
+      };
     }
 
     return {
-      plan: {
-        title,
-        goal,
-        steps,
-        suggestedTestCommand,
-        instruction
+      data: {
+        plan: {
+          title,
+          goal,
+          steps,
+          suggestedTestCommand,
+          instruction
+        },
+        toolCalls
       },
-      toolCalls
+      exitReason: output.exitReason,
+      ...(output.error ? { error: output.error } : {}),
+      context: output.context
     };
   }
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new Error("Interrupted by user");
-  }
+function completedPlannerResult(
+  data: { plan: ExecutionPlan; toolCalls: ToolCallRecord[] }
+): AgentResult<{ plan: ExecutionPlan; toolCalls: ToolCallRecord[] }, ChatMessage, ToolLoopToolCallSnapshot> {
+  return {
+    data,
+    exitReason: "completed",
+    context: {
+      messages: [],
+      toolCalls: []
+    }
+  };
+}
+
+function interruptedPlannerResult(
+  task: string
+): AgentResult<{ plan: ExecutionPlan; toolCalls: ToolCallRecord[] }, ChatMessage, ToolLoopToolCallSnapshot> {
+  return {
+    data: {
+      plan: fallbackPlan(task),
+      toolCalls: []
+    },
+    exitReason: "interrupted",
+    error: "Interrupted by user",
+    context: {
+      messages: [],
+      toolCalls: []
+    }
+  };
 }
 
 function toStep(value: unknown): PlanStep | null {

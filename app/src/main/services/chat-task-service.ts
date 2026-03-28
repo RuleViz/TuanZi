@@ -737,11 +737,24 @@ export function createRunChatTask(
               startedAt: string | null;
               completedAt: string | null;
               result: {
-                summary: string;
-                fullText: string;
-                toolCalls: Array<{ id: string; name: string; args: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string } }>;
+                data: {
+                  summary: string;
+                  references: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }>;
+                  webReferences: Array<{ url: string; reason: string }>;
+                  fullTextPreview?: string;
+                  toolCallPreview?: Array<{
+                    id: string;
+                    name: string;
+                    args: Record<string, unknown>;
+                    result: { ok: boolean; data?: unknown; error?: string };
+                  }>;
+                  metadata: {
+                    completedAt: string;
+                    error?: string;
+                  };
+                };
+                exitReason: "completed" | "interrupted" | "error" | "max_turns" | "no_progress";
                 error?: string;
-                completedAt: string;
               } | null;
             }>) => {
               const mapped = snapshots.map((s) => ({
@@ -755,15 +768,29 @@ export function createRunChatTask(
                 updatedAt: s.updatedAt,
                 startedAt: s.startedAt,
                 completedAt: s.completedAt,
-                summary: s.result?.summary ?? "",
-                fullText: s.result?.fullText ?? "",
-                toolCalls: (s.result?.toolCalls ?? []).map((tc) => ({
-                  id: tc.id,
-                  name: tc.name,
-                  args: tc.args as Record<string, unknown>,
-                  result: tc.result as { ok: boolean; data?: unknown; error?: string }
-                })),
-                error: s.result?.error ?? null
+                exitReason: s.result?.exitReason ?? null,
+                result: s.result
+                  ? {
+                    summary: s.result.data.summary,
+                    references: s.result.data.references.map((reference) => ({
+                      path: reference.path,
+                      reason: reference.reason,
+                      confidence: reference.confidence
+                    })),
+                    webReferences: s.result.data.webReferences.map((reference) => ({
+                      url: reference.url,
+                      reason: reference.reason
+                    })),
+                    fullTextPreview: s.result.data.fullTextPreview ?? null,
+                    toolCallPreview: (s.result.data.toolCallPreview ?? []).map((tc) => ({
+                      id: tc.id,
+                      name: tc.name,
+                      args: tc.args as Record<string, unknown>,
+                      result: tc.result as { ok: boolean; data?: unknown; error?: string }
+                    }))
+                  }
+                  : null,
+                error: s.result?.error ?? s.result?.data.metadata.error ?? null
               }));
               webContents.send(IPC_CHANNELS.chatSubagentSnapshot, {
                 taskId,

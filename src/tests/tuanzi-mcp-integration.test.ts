@@ -159,7 +159,7 @@ test("TuanZiAgent should inject MCP tools in description-only mode and trim user
   const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, createAgent([]));
   const output = await agent.execute("Need MCP aware execution");
 
-  assert.equal(output.result.summary, "done");
+  assert.equal(output.data.result.summary, "done");
   const injected = findTool(client.lastInput?.tools, "mcp__files__read_file");
   assert.equal(Boolean(injected), true);
   assert.deepEqual(injected?.function.parameters, {
@@ -299,9 +299,9 @@ test("TuanZiAgent should return MCP authorization error context and restore orig
   };
   const output = await agent.execute("Try unauthorized call", "", { resumeState });
 
-  assert.equal(output.result.summary, "done");
-  assert.equal(output.toolCalls.length, 1);
-  const firstCall = output.toolCalls[0] as ToolCallRecord & { result: ToolExecutionResult };
+  assert.equal(output.data.result.summary, "done");
+  assert.equal(output.data.toolCalls.length, 1);
+  const firstCall = output.data.toolCalls[0] as ToolCallRecord & { result: ToolExecutionResult };
   assert.equal(firstCall.toolName, "mcp__files__delete_file");
   assert.equal(firstCall.result.ok, false);
   assert.match(String(firstCall.result.error), /not authorized/i);
@@ -329,6 +329,6 @@ test("TuanZiAgent should remove command-message narration lines from final summa
   const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, createAgent([]));
   const output = await agent.execute("Need summary sanitization");
 
-  assert.equal(output.result.summary.includes("<command-message>"), false);
-  assert.match(output.result.summary, /Real answer line\./);
+  assert.equal(output.data.result.summary.includes("<command-message>"), false);
+  assert.match(output.data.result.summary, /Real answer line\./);
 });

@@ -14,6 +14,7 @@ interface SubagentManagerOptions {
     task: string;
     context: string;
     signal: AbortSignal;
+    resumeFromSnapshotId?: string;
   }) => Promise<SubagentResultSummary>;
   onSnapshotsChange?: (snapshots: SubagentSnapshot[]) => void;
 }
@@ -21,6 +22,7 @@ interface SubagentManagerOptions {
 interface SubagentEntry {
   snapshot: SubagentSnapshot;
   controller: AbortController | null;
+  resumeFromSnapshotId?: string;
 }
 
 export class SubagentManager implements SubagentBridge {
@@ -43,6 +45,37 @@ export class SubagentManager implements SubagentBridge {
     context?: string;
     agentType?: SubagentTaskKind;
   }): Promise<{ subagentId: string; status: SubagentStatus }> {
+    return this.enqueue({
+      id: `subagent-${this.nextId++}`,
+      task: input.task,
+      context: input.context,
+      agentType: input.agentType
+    });
+  }
+
+  async resume(input: {
+    snapshotId: string;
+    task: string;
+    context?: string;
+    agentType?: SubagentTaskKind;
+  }): Promise<{ subagentId: string; status: SubagentStatus }> {
+    const snapshotId = normalizeRequiredText(input.snapshotId, "snapshotId");
+    return this.enqueue({
+      id: snapshotId,
+      task: input.task,
+      context: input.context,
+      agentType: input.agentType,
+      resumeFromSnapshotId: snapshotId
+    });
+  }
+
+  private async enqueue(input: {
+    id: string;
+    task: string;
+    context?: string;
+    agentType?: SubagentTaskKind;
+    resumeFromSnapshotId?: string;
+  }): Promise<{ subagentId: string; status: SubagentStatus }> {
     const task = normalizeRequiredText(input.task, "task");
     const kind = input.agentType ?? "explorer";
     if (kind !== "explorer") {
@@ -53,11 +86,11 @@ export class SubagentManager implements SubagentBridge {
     }
 
     const now = new Date().toISOString();
-    const id = `subagent-${this.nextId++}`;
-    this.entries.set(id, {
+    this.entries.set(input.id, {
       controller: null,
+      ...(input.resumeFromSnapshotId ? { resumeFromSnapshotId: input.resumeFromSnapshotId } : {}),
       snapshot: {
-        id,
+        id: input.id,
         parentTaskId: this.parentTaskId,
         kind,
         status: "queued",
@@ -70,11 +103,11 @@ export class SubagentManager implements SubagentBridge {
         result: null
       }
     });
-    this.queue.push(id);
+    this.queue.push(input.id);
     this.emitSnapshots();
     this.pumpQueue();
     return {
-      subagentId: id,
+      subagentId: input.id,
       status: "queued"
     };
   }
@@ -182,16 +215,14 @@ export class SubagentManager implements SubagentBridge {
         id: entry.snapshot.id,
         task: entry.snapshot.task,
         context: entry.snapshot.context,
-        signal: entry.controller.signal
+        signal: entry.controller.signal,
+        ...(entry.resumeFromSnapshotId ? { resumeFromSnapshotId: entry.resumeFromSnapshotId } : {})
       })
       .then((result) => {
-        if (entry.controller?.signal.aborted || this.disposed) {
-          this.markCancelled(entry, result.summary || "Cancelled.");
-          return;
-        }
-        entry.snapshot.status = "completed";
-        entry.snapshot.completedAt = result.completedAt;
-        entry.snapshot.updatedAt = result.completedAt;
+        const completedAt = result.data.metadata.completedAt;
+        entry.snapshot.status = toSnapshotStatus(result.exitReason);
+        entry.snapshot.completedAt = completedAt;
+        entry.snapshot.updatedAt = completedAt;
         entry.snapshot.result = cloneResult(result);
       })
       .catch((error) => {
@@ -203,15 +234,7 @@ export class SubagentManager implements SubagentBridge {
         entry.snapshot.status = "failed";
         entry.snapshot.completedAt = completedAt;
         entry.snapshot.updatedAt = completedAt;
-        entry.snapshot.result = {
-          summary: "",
-          fullText: "",
-          references: [],
-          webReferences: [],
-          toolCalls: [],
-          error: error instanceof Error ? error.message : String(error),
-          completedAt
-        };
+        entry.snapshot.result = buildFailedResult(error instanceof Error ? error.message : String(error), completedAt);
       })
       .finally(() => {
         this.activeCount = Math.max(0, this.activeCount - 1);
@@ -227,13 +250,8 @@ export class SubagentManager implements SubagentBridge {
     entry.snapshot.completedAt = completedAt;
     entry.snapshot.updatedAt = completedAt;
     entry.snapshot.result = {
-      summary: "",
-      fullText: "",
-      references: [],
-      webReferences: [],
-      toolCalls: [],
-      error: message,
-      completedAt
+      ...buildFailedResult(message, completedAt),
+      exitReason: "interrupted"
     };
   }
 
@@ -318,6 +336,40 @@ function clampTimeout(value: unknown): number | null {
 
 function isTerminalStatus(status: SubagentStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function toSnapshotStatus(exitReason: SubagentResultSummary["exitReason"]): SubagentStatus {
+  if (exitReason === "interrupted") {
+    return "cancelled";
+  }
+  if (exitReason === "error" || exitReason === "max_turns" || exitReason === "no_progress") {
+    return "failed";
+  }
+  return "completed";
+}
+
+function buildFailedResult(message: string, completedAt: string): SubagentResultSummary {
+  return {
+    data: {
+      summary: message,
+      references: [],
+      webReferences: [],
+      fullTextPreview: message,
+      toolCallPreview: [],
+      metadata: {
+        toolCalls: [],
+        turnCount: 0,
+        completedAt,
+        error: message
+      }
+    },
+    exitReason: "error",
+    error: message,
+    context: {
+      messages: [],
+      toolCalls: []
+    }
+  };
 }
 
 function cloneSnapshot(snapshot: SubagentSnapshot): SubagentSnapshot {

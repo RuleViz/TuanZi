@@ -171,6 +171,25 @@ export interface SubagentToolCallRecord {
   result: { ok: boolean; data?: unknown; error?: string };
 }
 
+export interface SubagentReferenceData {
+  path: string;
+  reason: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface SubagentWebReferenceData {
+  url: string;
+  reason: string;
+}
+
+export interface SubagentResultData {
+  summary: string;
+  references: SubagentReferenceData[];
+  webReferences: SubagentWebReferenceData[];
+  fullTextPreview: string | null;
+  toolCallPreview: SubagentToolCallRecord[];
+}
+
 export interface SubagentSnapshotData {
   id: string;
   parentTaskId: string | null;
@@ -182,9 +201,8 @@ export interface SubagentSnapshotData {
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
-  summary: string;
-  fullText: string;
-  toolCalls: SubagentToolCallRecord[];
+  exitReason: "completed" | "interrupted" | "error" | "max_turns" | "no_progress" | null;
+  result: SubagentResultData | null;
   error: string | null;
 }
 

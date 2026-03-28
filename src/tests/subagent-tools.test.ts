@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ListSubagentsTool } from "../tools/list-subagents";
+import { ResumeSubagentTool } from "../tools/resume-subagent";
 import { SpawnSubagentTool } from "../tools/spawn-subagent";
 import { WaitSubagentsTool } from "../tools/wait-subagents";
 import type { SubagentBridge, ToolExecutionContext } from "../core/types";
@@ -38,6 +39,12 @@ test("SpawnSubagentTool should delegate task creation to subagentBridge", async 
   const bridge: SubagentBridge = {
     async spawn(input) {
       calls.push(input);
+      return {
+        subagentId: "subagent-1",
+        status: "queued"
+      };
+    },
+    async resume() {
       return {
         subagentId: "subagent-1",
         status: "queued"
@@ -93,23 +100,40 @@ test("WaitSubagentsTool and ListSubagentsTool should pass through bridge options
     startedAt: "2026-03-20T00:00:00.100Z",
     completedAt: "2026-03-20T00:00:01.000Z",
     result: {
-      summary: "found auth files",
-      fullText: "full raw subagent output",
-      references: [],
-      webReferences: [],
-      toolCalls: [
-        {
-          id: "call-read-1",
-          name: "read",
-          args: { path: "src/auth.ts" },
-          result: { ok: true, data: { content: "auth content" } }
+      data: {
+        summary: "found auth files",
+        references: [],
+        webReferences: [],
+        fullTextPreview: "full raw subagent output",
+        toolCallPreview: [
+          {
+            id: "call-read-1",
+            name: "read",
+            args: { path: "src/auth.ts" },
+            result: { ok: true, data: { content: "auth content" } }
+          }
+        ],
+        metadata: {
+          toolCalls: [],
+          turnCount: 1,
+          completedAt: "2026-03-20T00:00:01.000Z"
         }
-      ],
-      completedAt: "2026-03-20T00:00:01.000Z"
+      },
+      exitReason: "completed",
+      context: {
+        messages: [],
+        toolCalls: []
+      }
     }
   } as any;
   const bridge: SubagentBridge = {
     async spawn() {
+      return {
+        subagentId: "subagent-1",
+        status: "queued"
+      };
+    },
+    async resume() {
       return {
         subagentId: "subagent-1",
         status: "queued"
@@ -156,22 +180,25 @@ test("WaitSubagentsTool and ListSubagentsTool should pass through bridge options
         task: "search auth flow",
         context: "focus on renderer",
         status: "completed",
+        exitReason: "completed",
         createdAt: "2026-03-20T00:00:00.000Z",
         updatedAt: "2026-03-20T00:00:01.000Z",
         startedAt: "2026-03-20T00:00:00.100Z",
         completedAt: "2026-03-20T00:00:01.000Z",
-        summary: "found auth files",
-        fullText: "full raw subagent output",
-        references: [],
-        webReferences: [],
-        toolCalls: [
-          {
-            id: "call-read-1",
-            name: "read",
-            args: { path: "src/auth.ts" },
-            result: { ok: true, data: { content: "auth content" } }
-          }
-        ],
+        result: {
+          summary: "found auth files",
+          references: [],
+          webReferences: [],
+          fullTextPreview: "full raw subagent output",
+          toolCallPreview: [
+            {
+              id: "call-read-1",
+              name: "read",
+              args: { path: "src/auth.ts" },
+              result: { ok: true, data: { content: "auth content" } }
+            }
+          ]
+        },
         error: null
       }
     ],
@@ -195,22 +222,25 @@ test("WaitSubagentsTool and ListSubagentsTool should pass through bridge options
         task: "search auth flow",
         context: "focus on renderer",
         status: "completed",
+        exitReason: "completed",
         createdAt: "2026-03-20T00:00:00.000Z",
         updatedAt: "2026-03-20T00:00:01.000Z",
         startedAt: "2026-03-20T00:00:00.100Z",
         completedAt: "2026-03-20T00:00:01.000Z",
-        summary: "found auth files",
-        fullText: "full raw subagent output",
-        references: [],
-        webReferences: [],
-        toolCalls: [
-          {
-            id: "call-read-1",
-            name: "read",
-            args: { path: "src/auth.ts" },
-            result: { ok: true, data: { content: "auth content" } }
-          }
-        ],
+        result: {
+          summary: "found auth files",
+          references: [],
+          webReferences: [],
+          fullTextPreview: "full raw subagent output",
+          toolCallPreview: [
+            {
+              id: "call-read-1",
+              name: "read",
+              args: { path: "src/auth.ts" },
+              result: { ok: true, data: { content: "auth content" } }
+            }
+          ]
+        },
         error: null
       }
     ]
@@ -220,6 +250,13 @@ test("WaitSubagentsTool and ListSubagentsTool should pass through bridge options
 test("Subagent tools should fail clearly when bridge is unavailable", async () => {
   const tool = new SpawnSubagentTool();
   const result = await tool.execute({ task: "search auth flow" }, createContext());
+  assert.equal(result.ok, false);
+  assert.match(String(result.error), /subagent/i);
+});
+
+test("ResumeSubagentTool should fail clearly when bridge is unavailable", async () => {
+  const tool = new ResumeSubagentTool();
+  const result = await tool.execute({ snapshotId: "subagent-1", task: "resume search auth flow" }, createContext());
   assert.equal(result.ok, false);
   assert.match(String(result.error), /subagent/i);
 });

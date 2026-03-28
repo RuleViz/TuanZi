@@ -2,6 +2,7 @@ import { TuanZiAgent } from "./agents/tuanzi";
 import { OpenAICompatibleClient } from "./agents/openai-compatible-client";
 import { PlannerAgent } from "./agents/planner-agent";
 import { SubagentExplorerAgent } from "./agents/subagent-explorer";
+import { SubagentSessionStore } from "./agents/subagent-session-store";
 import { PlanToDoOrchestrator } from "./agents/orchestrator";
 import type { RuntimeConfig } from "./config";
 import { ConsoleApprovalGate } from "./core/approval-gate";
@@ -101,12 +102,14 @@ export function createSubagentBridge(
     client,
     runtimeConfig.model.searchModel,
     toolRuntime.registry,
-    toolRuntime.toolContext
+    toolRuntime.toolContext,
+    new SubagentSessionStore(runtimeConfig.workspaceRoot)
   );
   return new SubagentManager({
     maxConcurrent: 3,
     taskId: input?.taskId ?? null,
-    runExplorer: async ({ task, context, signal }) => explorer.run({ task, context, signal }),
+    runExplorer: async ({ id, task, context, signal, resumeFromSnapshotId }) =>
+      explorer.run({ agentId: id, task, context, signal, resumeFromSnapshotId }),
     onSnapshotsChange: (snapshots) => {
       input?.onTasksChange?.(snapshots.map(toWorkbenchTaskItem));
       input?.onSnapshotsChange?.(snapshots);
@@ -161,7 +164,7 @@ function buildTaskDetail(snapshot: SubagentSnapshot): string {
     return "Collecting evidence in a child context.";
   }
   if (snapshot.status === "completed") {
-    return snapshot.result?.summary || "Subagent completed.";
+    return snapshot.result?.data.summary || "Subagent completed.";
   }
   if (snapshot.status === "cancelled") {
     return snapshot.result?.error || "Cancelled.";

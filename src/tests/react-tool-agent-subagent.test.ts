@@ -5,6 +5,7 @@ import type { ChatCompletionClient, ChatCompletionResult, ChatMessage } from "..
 import { ToolRegistry } from "../core/tool-registry";
 import type { SubagentBridge, ToolExecutionContext } from "../core/types";
 import { ListSubagentsTool } from "../tools/list-subagents";
+import { ResumeSubagentTool } from "../tools/resume-subagent";
 import { SpawnSubagentTool } from "../tools/spawn-subagent";
 import { WaitSubagentsTool } from "../tools/wait-subagents";
 
@@ -61,6 +62,12 @@ test("ReactToolAgent should execute subagent tool calls and continue after wait"
         status: "queued"
       };
     },
+    async resume() {
+      return {
+        subagentId: "subagent-1",
+        status: "queued"
+      };
+    },
     async wait() {
       return {
         completed: [
@@ -76,12 +83,23 @@ test("ReactToolAgent should execute subagent tool calls and continue after wait"
             startedAt: new Date().toISOString(),
             completedAt: new Date().toISOString(),
             result: {
-              summary: "found auth files",
-              fullText: "full raw subagent output",
-              references: [],
-              webReferences: [],
-              toolCalls: [],
-              completedAt: new Date().toISOString()
+              data: {
+                summary: "found auth files",
+                references: [],
+                webReferences: [],
+                fullTextPreview: "full raw subagent output",
+                toolCallPreview: [],
+                metadata: {
+                  toolCalls: [],
+                  turnCount: 1,
+                  completedAt: new Date().toISOString()
+                }
+              },
+              exitReason: "completed",
+              context: {
+                messages: [],
+                toolCalls: []
+              }
             }
           }
         ],
@@ -141,7 +159,7 @@ test("ReactToolAgent should execute subagent tool calls and continue after wait"
   const agent = new ReactToolAgent(
     client,
     "test-model",
-    new ToolRegistry([new SpawnSubagentTool(), new WaitSubagentsTool(), new ListSubagentsTool()]),
+    new ToolRegistry([new SpawnSubagentTool(), new ResumeSubagentTool(), new WaitSubagentsTool(), new ListSubagentsTool()]),
     createContext(bridge)
   );
 

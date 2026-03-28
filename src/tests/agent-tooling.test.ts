@@ -25,6 +25,7 @@ test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable i
       "skill_load",
       "skill_read_resource",
       "spawn_subagent",
+      "resume_subagent",
       "wait_subagents",
       "list_subagents"
     ]
@@ -37,12 +38,13 @@ test("resolveActiveTools should keep order, dedupe duplicates, and auto-enable i
     "skill_list",
     "skill_read_resource",
     "spawn_subagent",
+    "resume_subagent",
     "wait_subagents",
     "list_subagents"
   ]);
   assert.equal(
     selection.activeTools.map((item) => item.name).join(","),
-    "ls,bash,skill_load,skill_list,skill_read_resource,spawn_subagent,wait_subagents,list_subagents"
+    "ls,bash,skill_load,skill_list,skill_read_resource,spawn_subagent,resume_subagent,wait_subagents,list_subagents"
   );
 });
 

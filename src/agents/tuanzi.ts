@@ -1,6 +1,7 @@
 ﻿import type { ToolRegistry } from "../core/tool-registry";
 import { parseJsonObject } from "../core/json-utils";
 import type {
+  AgentResult,
   CoderResult,
   McpAccessPolicy,
   McpBridge,
@@ -15,7 +16,7 @@ import type {
 import type { StoredAgent } from "../core/agent-store";
 import { resolveActiveTools } from "../core/agent-tooling";
 import type { SkillCatalogItem } from "../core/skill-types";
-import type { ChatCompletionClient, ChatInputImage } from "./model-types";
+import type { ChatCompletionClient, ChatInputImage, ChatMessage } from "./model-types";
 import { coderSystemPrompt } from "./prompts";
 import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
@@ -41,14 +42,18 @@ export class TuanZiAgent {
       userImages?: ChatInputImage[];
       signal?: AbortSignal;
     }
-  ): Promise<{
-    result: CoderResult;
-    toolCalls: ToolCallRecord[];
-  }> {
+  ): Promise<AgentResult<{ result: CoderResult; toolCalls: ToolCallRecord[] }, ChatMessage, ToolLoopToolCallSnapshot>> {
     if (!this.client || !this.model) {
       return {
-        result: fallbackCoderResult(),
-        toolCalls: []
+        data: {
+          result: fallbackCoderResult(),
+          toolCalls: []
+        },
+        exitReason: "completed",
+        context: {
+          messages: [],
+          toolCalls: []
+        }
       };
     }
 
@@ -136,22 +141,27 @@ export class TuanZiAgent {
         signal: hooks?.signal
       });
 
-      const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
+      const toolCalls: ToolCallRecord[] = output.context.toolCalls.map((call) => ({
         toolName: call.name,
         args: call.args,
         result: call.result,
         timestamp: new Date().toISOString()
       }));
-      const summary = extractUserFacingText(output.finalText);
+      const summary = extractUserFacingText(output.data.finalText);
 
       return {
-        result: {
-          summary,
-          changedFiles: collectChangedFiles(toolCalls),
-          executedCommands: collectExecutedCommands(toolCalls),
-          followUp: []
+        data: {
+          result: {
+            summary,
+            changedFiles: collectChangedFiles(toolCalls),
+            executedCommands: collectExecutedCommands(toolCalls),
+            followUp: []
+          },
+          toolCalls
         },
-        toolCalls
+        exitReason: output.exitReason,
+        ...(output.error ? { error: output.error } : {}),
+        context: output.context
       };
     } finally {
       this.toolContext.mcpBridge = previousMcpBridge;

@@ -12,6 +12,7 @@ import { SkillLoadTool } from "./skill-load";
 import { SkillListTool } from "./skill-list";
 import { SkillReadResourceTool } from "./skill-read-resource";
 import { SpawnSubagentTool } from "./spawn-subagent";
+import { ResumeSubagentTool } from "./resume-subagent";
 import { WaitSubagentsTool } from "./wait-subagents";
 import { WriteTool } from "./write";
 import { AskUserQuestionTool } from "./ask-user-question";
@@ -28,6 +29,7 @@ export function createDefaultTools(): Tool[] {
     new EditTool(),
     new BrowserActionTool(),
     new SpawnSubagentTool(),
+    new ResumeSubagentTool(),
     new WaitSubagentsTool(),
     new ListSubagentsTool(),
     new SkillListTool(),

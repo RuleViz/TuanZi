@@ -21,15 +21,29 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function buildSummary(summary: string): SubagentResultSummary {
+function buildSummary(
+  summary: string,
+  exitReason: SubagentResultSummary["exitReason"] = "completed"
+): SubagentResultSummary {
   return {
-    summary,
-    fullText: summary,
-    references: [],
-    webReferences: [],
-    toolCalls: [],
-    completedAt: new Date().toISOString()
-  } as any;
+    data: {
+      summary,
+      references: [],
+      webReferences: [],
+      fullTextPreview: summary,
+      toolCallPreview: [],
+      metadata: {
+        toolCalls: [],
+        turnCount: 1,
+        completedAt: new Date().toISOString()
+      }
+    },
+    exitReason,
+    context: {
+      messages: [],
+      toolCalls: []
+    }
+  };
 }
 
 test("SubagentManager should cap concurrency and promote queued tasks when slots free", async () => {
@@ -158,4 +172,36 @@ test("SubagentManager should cancel queued and running subagents when disposed",
     ["cancelled", "cancelled"]
   );
   assert.deepEqual(abortedTasks, ["running-task"]);
+});
+
+test("SubagentManager should mark max_turns and no_progress exits as failed", async () => {
+  let callIndex = 0;
+  const manager = new SubagentManager({
+    maxConcurrent: 2,
+    taskId: "parent-task",
+    runExplorer: async () => {
+      callIndex += 1;
+      return callIndex === 1
+        ? buildSummary("max turns reached", "max_turns")
+        : buildSummary("no progress reached", "no_progress");
+    }
+  });
+
+  const first = await manager.spawn({ task: "first task" });
+  const second = await manager.spawn({ task: "second task" });
+  const result = await manager.wait({
+    ids: [first.subagentId, second.subagentId],
+    waitMode: "all",
+    timeoutMs: 100
+  });
+
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(
+    result.completed.map((snapshot) => snapshot.status),
+    ["failed", "failed"]
+  );
+  assert.deepEqual(
+    result.completed.map((snapshot) => snapshot.result?.exitReason),
+    ["max_turns", "no_progress"]
+  );
 });

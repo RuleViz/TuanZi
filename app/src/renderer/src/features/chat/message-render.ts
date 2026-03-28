@@ -396,8 +396,9 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     titleEl.textContent = `Subagent: ${snapshot.task.substring(0, 80)}`;
     const bodyEl = modal.querySelector(".subagent-modal-body") as HTMLDivElement;
     const statusLabel = snapshot.status;
-    const toolCallsHtml = snapshot.toolCalls.length > 0
-      ? snapshot.toolCalls.map((tc) =>
+    const toolCallPreview = snapshot.result?.toolCallPreview ?? [];
+    const toolCallsHtml = toolCallPreview.length > 0
+      ? toolCallPreview.map((tc) =>
         `<div class="subagent-tc-row">
           <span class="subagent-tc-name">${input.escapeHtml(tc.name)}</span>
           <span class="subagent-tc-status ${tc.result.ok ? "status-ok" : "status-err"}">${tc.result.ok ? "done" : "failed"}</span>
@@ -408,11 +409,11 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
       <div class="subagent-detail-section">
         <div class="subagent-detail-row"><strong>Status:</strong> <span class="subagent-status-badge status-${statusLabel}">${statusLabel}</span></div>
         <div class="subagent-detail-row"><strong>Task:</strong> ${input.escapeHtml(snapshot.task)}</div>
-        ${snapshot.summary ? `<div class="subagent-detail-row"><strong>Summary:</strong> ${input.escapeHtml(snapshot.summary)}</div>` : ""}
+        ${snapshot.result?.summary ? `<div class="subagent-detail-row"><strong>Summary:</strong> ${input.escapeHtml(snapshot.result.summary)}</div>` : ""}
         ${snapshot.error ? `<div class="subagent-detail-row subagent-error"><strong>Error:</strong> ${input.escapeHtml(snapshot.error)}</div>` : ""}
       </div>
       <div class="subagent-detail-section">
-        <div class="subagent-detail-label">Tool Calls (${snapshot.toolCalls.length})</div>
+        <div class="subagent-detail-label">Tool Calls (${toolCallPreview.length})</div>
         ${toolCallsHtml}
       </div>
     `;
@@ -442,11 +443,12 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
         entry.onclick = () => showSubagentModal(snap);
       }
       const statusCls = snap.status === "completed" ? "status-ok" : snap.status === "running" ? "status-running" : snap.status === "failed" ? "status-err" : "";
+      const toolCallPreview = snap.result?.toolCallPreview ?? [];
       entry.innerHTML = `
         <span class="subagent-entry-icon">🤖</span>
         <span class="subagent-entry-task">${input.escapeHtml(snap.task.substring(0, 60))}</span>
         <span class="subagent-entry-status ${statusCls}">${snap.status}</span>
-        <span class="subagent-entry-tc-count">${snap.toolCalls.length} calls</span>
+        <span class="subagent-entry-tc-count">${toolCallPreview.length} calls</span>
       `;
     }
   };

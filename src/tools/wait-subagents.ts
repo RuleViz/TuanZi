@@ -78,20 +78,23 @@ function toModelFacingSnapshot(snapshot: SubagentSnapshot): {
   task: string;
   context: string;
   status: string;
+  exitReason: string | null;
   createdAt: string;
   updatedAt: string;
   startedAt: string | null;
   completedAt: string | null;
-  summary: string;
-  fullText: string;
-  references: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }>;
-  webReferences: Array<{ url: string; reason: string }>;
-  toolCalls: Array<{
-    id: string;
-    name: string;
-    args: JsonObject;
-    result: ToolExecutionResult;
-  }>;
+  result: {
+    summary: string;
+    references: Array<{ path: string; reason: string; confidence: "low" | "medium" | "high" }>;
+    webReferences: Array<{ url: string; reason: string }>;
+    fullTextPreview: string | null;
+    toolCallPreview: Array<{
+      id: string;
+      name: string;
+      args: JsonObject;
+      result: ToolExecutionResult;
+    }>;
+  } | null;
   error: string | null;
 } {
   return {
@@ -101,15 +104,20 @@ function toModelFacingSnapshot(snapshot: SubagentSnapshot): {
     task: snapshot.task,
     context: snapshot.context,
     status: snapshot.status,
+    exitReason: snapshot.result?.exitReason ?? null,
     createdAt: snapshot.createdAt,
     updatedAt: snapshot.updatedAt,
     startedAt: snapshot.startedAt,
     completedAt: snapshot.completedAt,
-    summary: snapshot.result?.summary ?? "",
-    fullText: snapshot.result?.fullText ?? "",
-    references: snapshot.result?.references ?? [],
-    webReferences: snapshot.result?.webReferences ?? [],
-    toolCalls: snapshot.result?.toolCalls ? cloneJson(snapshot.result.toolCalls) : [],
+    result: snapshot.result
+      ? {
+        summary: snapshot.result.data.summary,
+        references: snapshot.result.data.references,
+        webReferences: snapshot.result.data.webReferences,
+        fullTextPreview: snapshot.result.data.fullTextPreview ?? null,
+        toolCallPreview: snapshot.result.data.toolCallPreview ? cloneJson(snapshot.result.data.toolCallPreview) : []
+      }
+      : null,
     error: snapshot.result?.error ?? null
   };
 }

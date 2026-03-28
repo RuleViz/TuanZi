@@ -51,6 +51,16 @@ export interface ToolLoopOutput {
   finalText: string;
   toolCalls: ToolLoopToolCallSnapshot[];
   messages: ChatMessage[];
+  data: {
+    finalText: string;
+    resumeState: ToolLoopResumeState | null;
+  };
+  exitReason: "completed" | "interrupted" | "error" | "max_turns" | "no_progress";
+  error?: string;
+  context: {
+    messages: ChatMessage[];
+    toolCalls: ToolLoopToolCallSnapshot[];
+  };
 }
 
 interface SkillLoadResultTransform {
@@ -165,9 +175,21 @@ export class ReactToolAgent {
     emitState(null, { force: true });
 
     for (let turn = nextTurn; turn < maxTurns; turn += 1) {
-      if (this.toolContext.signal?.aborted) {
+      if (input.signal?.aborted || this.toolContext.signal?.aborted) {
         emitState(null, { force: true });
-        throw new Error("Interrupted by user");
+        return buildToolLoopOutput({
+          finalText: "Interrupted by user.",
+          exitReason: "interrupted",
+          error: "Interrupted by user",
+          messages,
+          toolCalls,
+          allowedTools: input.allowedTools,
+          temperature,
+          maxTurns,
+          nextTurn,
+          partialAssistantMessage: null,
+          resumeAnchor
+        });
       }
 
       applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
@@ -211,11 +233,37 @@ export class ReactToolAgent {
       } catch (error) {
         if (isInterruptedAssistantMessageError(error)) {
           emitState(error.partialMessage, { force: true });
-          throw error;
+          return buildToolLoopOutput({
+            finalText: assistantMessageContentToText(error.partialMessage.content) || "Interrupted by user.",
+            exitReason: "interrupted",
+            error: error.message,
+            messages,
+            toolCalls,
+            allowedTools: input.allowedTools,
+            temperature,
+            maxTurns,
+            nextTurn,
+            partialAssistantMessage: error.partialMessage,
+            resumeAnchor
+          });
         }
         if (isAbortError(error)) {
           emitState(partialAssistantMessage, { force: true });
-          throw error;
+          const partialText = extractPartialAssistantText(partialAssistantMessage);
+          const errorMessage = error instanceof Error ? error.message : "Interrupted by user";
+          return buildToolLoopOutput({
+            finalText: partialText || "Interrupted by user.",
+            exitReason: "interrupted",
+            error: errorMessage,
+            messages,
+            toolCalls,
+            allowedTools: input.allowedTools,
+            temperature,
+            maxTurns,
+            nextTurn,
+            partialAssistantMessage,
+            resumeAnchor
+          });
         }
         consecutiveApiErrors += 1;
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -223,11 +271,19 @@ export class ReactToolAgent {
         if (consecutiveApiErrors >= 3) {
           this.toolContext.logger.warn(`[agent] giving up after ${consecutiveApiErrors} consecutive API errors`);
           emitState(null, { force: true });
-          return {
+          return buildToolLoopOutput({
             finalText: `Tool loop stopped after ${consecutiveApiErrors} consecutive API errors. Last error: ${errorMessage}`,
+            exitReason: "error",
+            error: errorMessage,
+            messages,
             toolCalls,
-            messages
-          };
+            allowedTools: input.allowedTools,
+            temperature,
+            maxTurns,
+            nextTurn,
+            partialAssistantMessage: null,
+            resumeAnchor
+          });
         }
         messages.push({
           role: "user",
@@ -246,11 +302,18 @@ export class ReactToolAgent {
       const calls = assistantMessage.tool_calls ?? [];
       if (calls.length === 0) {
         this.toolContext.logger.info(`[agent] completed without tool calls at turn=${turn + 1}`);
-        return {
+        return buildToolLoopOutput({
           finalText: assistantMessageContentToText(assistantMessage.content),
+          exitReason: "completed",
+          messages,
           toolCalls,
-          messages
-        };
+          allowedTools: input.allowedTools,
+          temperature,
+          maxTurns,
+          nextTurn,
+          partialAssistantMessage: null,
+          resumeAnchor
+        });
       }
 
       const currentRequestedCalls = calls.map((call) => requestedCallSignature(call));
@@ -266,18 +329,37 @@ export class ReactToolAgent {
           `[agent] no-progress breaker triggered at turn=${turn + 1} repeatedTurns=${repeatedNoProgressTurns}`
         );
         emitState(null, { force: true });
-        return {
+        return buildToolLoopOutput({
           finalText: "Tool loop stopped due to repeated no-progress tool calls.",
+          exitReason: "no_progress",
+          messages,
           toolCalls,
-          messages
-        };
+          allowedTools: input.allowedTools,
+          temperature,
+          maxTurns,
+          nextTurn,
+          partialAssistantMessage: null,
+          resumeAnchor
+        });
       }
 
       this.toolContext.logger.info(`[agent] turn=${turn + 1} toolCalls=${calls.length}`);
       for (const call of calls) {
-        if (this.toolContext.signal?.aborted) {
+        if (input.signal?.aborted || this.toolContext.signal?.aborted) {
           emitState(null, { force: true });
-          throw new Error("Interrupted by user");
+          return buildToolLoopOutput({
+            finalText: "Interrupted by user.",
+            exitReason: "interrupted",
+            error: "Interrupted by user",
+            messages,
+            toolCalls,
+            allowedTools: input.allowedTools,
+            temperature,
+            maxTurns,
+            nextTurn,
+            partialAssistantMessage: null,
+            resumeAnchor
+          });
         }
         const toolResponse = await this.invokeTool(call, input.allowedTools);
         const transformedSkillLoad = transformSkillLoadResult(call.function.name, toolResponse.result);
@@ -312,11 +394,18 @@ export class ReactToolAgent {
     }
 
     emitState(null, { force: true });
-    return {
+    return buildToolLoopOutput({
       finalText: "Tool loop reached max turns without final assistant output.",
+      exitReason: "max_turns",
+      messages,
       toolCalls,
-      messages
-    };
+      allowedTools: input.allowedTools,
+      temperature,
+      maxTurns,
+      nextTurn,
+      partialAssistantMessage: null,
+      resumeAnchor
+    });
   }
 
   private async invokeTool(
@@ -393,6 +482,46 @@ export class ReactToolAgent {
   }
 }
 
+function buildToolLoopOutput(input: {
+  finalText: string;
+  exitReason: ToolLoopOutput["exitReason"];
+  error?: string;
+  messages: ChatMessage[];
+  toolCalls: ToolLoopToolCallSnapshot[];
+  allowedTools: string[];
+  temperature: number;
+  maxTurns: number;
+  nextTurn: number;
+  partialAssistantMessage: ChatMessage | null;
+  resumeAnchor?: ToolLoopResumeAnchor;
+}): ToolLoopOutput {
+  return {
+    finalText: input.finalText,
+    toolCalls: cloneToolCallSnapshots(input.toolCalls),
+    messages: cloneMessages(input.messages),
+    data: {
+      finalText: input.finalText,
+      resumeState: {
+        version: 1,
+        messages: cloneMessages(input.messages),
+        toolCalls: cloneToolCallSnapshots(input.toolCalls),
+        allowedTools: [...input.allowedTools],
+        temperature: input.temperature,
+        maxTurns: input.maxTurns,
+        nextTurn: input.nextTurn,
+        partialAssistantMessage: input.partialAssistantMessage ? cloneMessage(input.partialAssistantMessage) : null,
+        ...(input.resumeAnchor ? { resumeAnchor: input.resumeAnchor } : {})
+      }
+    },
+    exitReason: input.exitReason,
+    ...(input.error ? { error: input.error } : {}),
+    context: {
+      messages: cloneMessages(input.messages),
+      toolCalls: cloneToolCallSnapshots(input.toolCalls)
+    }
+  };
+}
+
 function appendAssistantText(message: ChatMessage | null, delta: string): ChatMessage {
   const currentContent = message ? assistantMessageContentToText(message.content) : "";
   if (message) {
@@ -420,6 +549,10 @@ function appendAssistantThinking(message: ChatMessage | null, delta: string): Ch
     content: "",
     reasoning_content: delta
   };
+}
+
+function extractPartialAssistantText(message: ChatMessage | null): string {
+  return message ? assistantMessageContentToText(message.content) : "";
 }
 
 function hasCarryForwardAssistantText(message: ChatMessage | null): boolean {

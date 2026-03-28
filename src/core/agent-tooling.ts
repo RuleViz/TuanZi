@@ -58,6 +58,11 @@ const SYSTEM_TOOL_REGISTRY: Record<string, SystemToolProfile> = {
     prompt:
       "Use spawn_subagent to offload broad repository search or lightweight web research when the result can come back as a short summary."
   },
+  resume_subagent: {
+    name: "resume_subagent",
+    prompt:
+      "Use resume_subagent when a previous subagent run already gathered context and you want that child to continue from its saved snapshot."
+  },
   wait_subagents: {
     name: "wait_subagents",
     prompt:
@@ -98,6 +103,7 @@ const ALWAYS_ENABLED_INTERNAL_TOOLS = [
   "skill_load",
   "skill_read_resource",
   "spawn_subagent",
+  "resume_subagent",
   "wait_subagents",
   "list_subagents",
   "ask_user_question"

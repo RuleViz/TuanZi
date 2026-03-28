@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
+  AgentResult,
   ExecutionPlan,
   RoutingSettings,
   ToolCallRecord,
@@ -9,7 +10,7 @@ import type {
   ToolLoopResumeState,
   ToolLoopToolCallSnapshot
 } from "./react-tool-agent";
-import type { ChatInputImage } from "./model-types";
+import type { ChatInputImage, ChatMessage } from "./model-types";
 import { PlannerAgent } from "./planner-agent";
 import { TuanZiAgent } from "./tuanzi";
 
@@ -65,7 +66,10 @@ export class PlanToDoOrchestrator {
     private readonly toolContext: ToolExecutionContext
   ) {}
 
-  async run(input: string | OrchestratorRunInput, hooks?: OrchestratorRunHooks): Promise<OrchestrationResult> {
+  async run(
+    input: string | OrchestratorRunInput,
+    hooks?: OrchestratorRunHooks
+  ): Promise<AgentResult<OrchestrationResult, ChatMessage, ToolLoopToolCallSnapshot>> {
     const {
       task,
       memoryTurns,
@@ -105,43 +109,94 @@ export class PlanToDoOrchestrator {
             id: "direct-execution",
             title: "Execute current request",
             kind: "execution",
-            status: "done",
-            detail: "Direct execution completed."
+            status: coderOutput.exitReason === "completed" ? "done" : "failed",
+            detail: coderOutput.error ?? coderOutput.data.result.summary
           }
         ]);
-        hooks?.onPhaseChange?.("done");
+        hooks?.onPhaseChange?.(coderOutput.exitReason === "completed" ? "done" : "aborted");
 
         return {
-          summary: coderOutput.result.summary,
-          changedFiles: coderOutput.result.changedFiles,
-          executedCommands: coderOutput.result.executedCommands,
-          followUp: coderOutput.result.followUp,
-          toolCalls: coderOutput.toolCalls
+          data: {
+            summary: coderOutput.data.result.summary,
+            changedFiles: coderOutput.data.result.changedFiles,
+            executedCommands: coderOutput.data.result.executedCommands,
+            followUp: coderOutput.data.result.followUp,
+            toolCalls: coderOutput.data.toolCalls
+          },
+          exitReason: coderOutput.exitReason,
+          ...(coderOutput.error ? { error: coderOutput.error } : {}),
+          context: coderOutput.context
         };
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const interrupted =
+          message === "Interrupted by user." ||
+          message === "Interrupted by user" ||
+          (error instanceof Error && error.name === "AbortError");
         hooks?.onTasksChange?.([
           {
             id: "direct-execution",
             title: "Execute current request",
             kind: "execution",
             status: "failed",
-            detail: error instanceof Error ? error.message : String(error)
+            detail: message
           }
         ]);
-        throw error;
+        hooks?.onPhaseChange?.("aborted");
+        if (interrupted) {
+          return interruptedOrchestrationResult();
+        }
+        return {
+          data: {
+            summary: `Execution failed: ${message}`,
+            changedFiles: [],
+            executedCommands: [],
+            followUp: ["You can retry after fixing the underlying error."],
+            toolCalls: []
+          },
+          exitReason: "error",
+          error: message,
+          context: {
+            messages: [],
+            toolCalls: []
+          }
+        };
       }
     }
 
-    throwIfAborted(hooks?.signal);
+    if (hooks?.signal?.aborted) {
+      return interruptedOrchestrationResult();
+    }
     hooks?.onPhaseChange?.("planning");
     const planResult = await this.planner.buildPlan(task, conversationContext, hooks?.signal, {
       onToolCallCompleted: hooks?.onToolCallCompleted
     });
-    const plan = planResult.plan;
-    throwIfAborted(hooks?.signal);
+    const plan = planResult.data.plan;
+    if (planResult.exitReason === "interrupted") {
+      hooks?.onPhaseChange?.("aborted");
+      return {
+        data: {
+          summary: "Planning was interrupted.",
+          changedFiles: [],
+          executedCommands: [],
+          followUp: ["You can resume from the latest saved state."],
+          toolCalls: planResult.data.toolCalls
+        },
+        exitReason: "interrupted",
+        ...(planResult.error ? { error: planResult.error } : {}),
+        context: planResult.context
+      };
+    }
+    if (hooks?.signal?.aborted) {
+      hooks?.onPhaseChange?.("aborted");
+      return interruptedOrchestrationResult(planResult.data.toolCalls, planResult.context);
+    }
     hooks?.onPlanPreview?.(formatPlanPreview(plan));
 
-    throwIfAborted(hooks?.signal);
+    if (hooks?.signal?.aborted) {
+      hooks?.onPhaseChange?.("aborted");
+      return interruptedOrchestrationResult(planResult.data.toolCalls, planResult.context);
+    }
     hooks?.onPhaseChange?.("approval");
     const approval = await this.toolContext.approvalGate.approve({
       requestType: "plan",
@@ -153,15 +208,22 @@ export class PlanToDoOrchestrator {
       hooks?.onPhaseChange?.("aborted");
       const reason = approval.reason ? `Reason: ${approval.reason}` : "Reason: user rejected the plan.";
       return {
-        summary: ["Plan mode is enabled, but the plan was not approved.", reason].join("\n"),
-        changedFiles: [],
-        executedCommands: [],
-        followUp: ["I can adjust the plan and retry when you're ready."],
-        toolCalls: planResult.toolCalls
+        data: {
+          summary: ["Plan mode is enabled, but the plan was not approved.", reason].join("\n"),
+          changedFiles: [],
+          executedCommands: [],
+          followUp: ["I can adjust the plan and retry when you're ready."],
+          toolCalls: planResult.data.toolCalls
+        },
+        exitReason: "interrupted",
+        context: planResult.context
       };
     }
 
-    throwIfAborted(hooks?.signal);
+    if (hooks?.signal?.aborted) {
+      hooks?.onPhaseChange?.("aborted");
+      return interruptedOrchestrationResult(planResult.data.toolCalls, planResult.context);
+    }
     hooks?.onPhaseChange?.("running");
     const planGroupId = `plan-group-${this.toolContext.taskId ?? randomUUID()}`;
     hooks?.onTasksChange?.(
@@ -176,12 +238,12 @@ export class PlanToDoOrchestrator {
       task,
       plan,
       planGroupId,
-      plannerToolCalls: planResult.toolCalls,
+      plannerToolCalls: planResult.data.toolCalls,
       resumeState,
       userImages,
       hooks
     });
-    hooks?.onPhaseChange?.("done");
+    hooks?.onPhaseChange?.(output.exitReason === "completed" ? "done" : "aborted");
     return output;
   }
 
@@ -193,7 +255,7 @@ export class PlanToDoOrchestrator {
     resumeState?: ToolLoopResumeState;
     userImages?: ChatInputImage[];
     hooks?: OrchestratorRunHooks;
-  }): Promise<OrchestrationResult> {
+  }): Promise<AgentResult<OrchestrationResult, ChatMessage, ToolLoopToolCallSnapshot>> {
     const completedStepIds = new Set<string>();
     const stepIds = new Set(input.plan.steps.map((s) => s.id));
     let pendingDeltaBuffer = "";
@@ -227,60 +289,67 @@ export class PlanToDoOrchestrator {
 
     const planTaskMessage = buildOneShotPlanTask(input.task, input.plan);
 
-    try {
-      const coderOutput = await this.coder.execute(planTaskMessage, "", {
-        onAssistantTextDelta: onTextDelta,
-        onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
-        onToolCallCompleted: input.hooks?.onToolCallCompleted,
-        onStateChange: input.hooks?.onStateChange,
-        resumeState: input.resumeState,
-        userImages: input.userImages,
-        signal: input.hooks?.signal
-      });
+    const coderOutput = await this.coder.execute(planTaskMessage, "", {
+      onAssistantTextDelta: onTextDelta,
+      onAssistantThinkingDelta: input.hooks?.onAssistantThinkingDelta,
+      onToolCallCompleted: input.hooks?.onToolCallCompleted,
+      onStateChange: input.hooks?.onStateChange,
+      resumeState: input.resumeState,
+      userImages: input.userImages,
+      signal: input.hooks?.signal
+    });
 
+    if (coderOutput.exitReason === "completed") {
       for (const step of input.plan.steps) {
         completedStepIds.add(step.id);
       }
-      input.hooks?.onTasksChange?.(
-        planToTaskGroup(input.plan, {
-          groupId: input.planGroupId,
-          completedStepIds,
-          failedStepId: null,
-          allRunning: false
-        })
-      );
+    }
+    input.hooks?.onTasksChange?.(
+      planToTaskGroup(input.plan, {
+        groupId: input.planGroupId,
+        completedStepIds,
+        failedStepId: coderOutput.exitReason === "completed" ? null : findFirstIncompleteStepId(input.plan, completedStepIds),
+        allRunning: false
+      })
+    );
 
-      return {
+    return {
+      data: {
         summary: [
-          "Executed in plan mode (one-shot).",
+          coderOutput.exitReason === "completed" ? "Executed in plan mode (one-shot)." : "Plan mode stopped before completion.",
           `Plan: ${input.plan.title || input.plan.goal}`,
           `Step count: ${input.plan.steps.length}`,
           "",
-          coderOutput.result.summary || "Plan steps completed."
+          coderOutput.data.result.summary || "Plan steps completed."
         ].join("\n"),
-        changedFiles: coderOutput.result.changedFiles,
-        executedCommands: coderOutput.result.executedCommands,
-        followUp: coderOutput.result.followUp,
-        toolCalls: [...input.plannerToolCalls, ...coderOutput.toolCalls]
-      };
-    } catch (error) {
-      input.hooks?.onTasksChange?.(
-        planToTaskGroup(input.plan, {
-          groupId: input.planGroupId,
-          completedStepIds,
-          failedStepId: findFirstIncompleteStepId(input.plan, completedStepIds),
-          allRunning: false
-        })
-      );
-      throw error;
-    }
+        changedFiles: coderOutput.data.result.changedFiles,
+        executedCommands: coderOutput.data.result.executedCommands,
+        followUp: coderOutput.data.result.followUp,
+        toolCalls: [...input.plannerToolCalls, ...coderOutput.data.toolCalls]
+      },
+      exitReason: coderOutput.exitReason,
+      ...(coderOutput.error ? { error: coderOutput.error } : {}),
+      context: coderOutput.context
+    };
   }
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new Error("Interrupted by user");
-  }
+function interruptedOrchestrationResult(
+  toolCalls: ToolCallRecord[] = [],
+  context: AgentResult<unknown, ChatMessage, ToolLoopToolCallSnapshot>["context"] = { messages: [], toolCalls: [] }
+): AgentResult<OrchestrationResult, ChatMessage, ToolLoopToolCallSnapshot> {
+  return {
+    data: {
+      summary: "Interrupted by user.",
+      changedFiles: [],
+      executedCommands: [],
+      followUp: ["You can resume from the latest saved state."],
+      toolCalls
+    },
+    exitReason: "interrupted",
+    error: "Interrupted by user",
+    context
+  };
 }
 
 function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRunInput {

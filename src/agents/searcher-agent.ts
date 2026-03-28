@@ -1,6 +1,7 @@
 import type { ToolRegistry } from "../core/tool-registry";
 import { parseJsonObject } from "../core/json-utils";
 import type {
+  AgentResult,
   ExecutionPlan,
   SearchReference,
   SearchResult,
@@ -9,6 +10,7 @@ import type {
   ToolExecutionResult
 } from "../core/types";
 import type { ChatCompletionClient } from "./model-types";
+import type { ChatMessage } from "./model-types";
 import { searcherSystemPrompt } from "./prompts";
 import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
@@ -41,12 +43,36 @@ export class SearcherAgent {
     hooks?: {
       onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
     }
-  ): Promise<SearcherOutput> {
-    throwIfAborted(signal);
+  ): Promise<AgentResult<SearcherOutput, ChatMessage, ToolLoopToolCallSnapshot>> {
+    if (signal?.aborted) {
+      return {
+        data: {
+          result: {
+            summary: "Interrupted by user.",
+            references: [],
+            webReferences: []
+          },
+          toolCalls: []
+        },
+        exitReason: "interrupted",
+        error: "Interrupted by user",
+        context: {
+          messages: [],
+          toolCalls: []
+        }
+      };
+    }
     if (!this.client || !this.model) {
       return {
-        result: await this.fallbackSearch(task, signal),
-        toolCalls: []
+        data: {
+          result: await this.fallbackSearch(task, signal),
+          toolCalls: []
+        },
+        exitReason: "completed",
+        context: {
+          messages: [],
+          toolCalls: []
+        }
       };
     }
 
@@ -86,18 +112,23 @@ export class SearcherAgent {
       signal
     });
 
-    const toolCalls: ToolCallRecord[] = output.toolCalls.map((call) => ({
+    const toolCalls: ToolCallRecord[] = output.context.toolCalls.map((call) => ({
       toolName: call.name,
       args: call.args,
       result: call.result,
       timestamp: new Date().toISOString()
     }));
 
-    const parsed = parseJsonObject(output.finalText);
+    const parsed = parseJsonObject(output.data.finalText);
     if (!parsed) {
       return {
-        result: fallbackSearchFromToolCalls(output.toolCalls, "Model output is not valid JSON; fallback to tool outputs."),
-        toolCalls
+        data: {
+          result: fallbackSearchFromToolCalls(output.context.toolCalls, "Model output is not valid JSON; fallback to tool outputs."),
+          toolCalls
+        },
+        exitReason: output.exitReason,
+        ...(output.error ? { error: output.error } : {}),
+        context: output.context
       };
     }
 
@@ -123,12 +154,17 @@ export class SearcherAgent {
       : [];
 
     return {
-      result: {
-        summary: typeof parsed.summary === "string" ? parsed.summary : "Searcher completed.",
-        references,
-        webReferences
+      data: {
+        result: {
+          summary: typeof parsed.summary === "string" ? parsed.summary : "Searcher completed.",
+          references,
+          webReferences
+        },
+        toolCalls
       },
-      toolCalls
+      exitReason: output.exitReason,
+      ...(output.error ? { error: output.error } : {}),
+      context: output.context
     };
   }
 

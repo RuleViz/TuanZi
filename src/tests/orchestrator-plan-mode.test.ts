@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PlanToDoOrchestrator, type OrchestratorTaskSnapshot } from "../agents/orchestrator";
+import type { ChatMessage } from "../agents/model-types";
 import type { ToolLoopResumeState } from "../agents/react-tool-agent";
-import type { ExecutionPlan, ToolExecutionContext } from "../core/types";
+import type { AgentResult, ExecutionPlan, ToolExecutionContext } from "../core/types";
 
 class StubCoder {
   calls: Array<{ task: string; resumeState?: ToolLoopResumeState }> = [];
@@ -15,18 +16,25 @@ class StubCoder {
       resumeState?: ToolLoopResumeState;
     }
   ): Promise<{
-    result: {
-      summary: string;
-      changedFiles: string[];
-      executedCommands: Array<{ command: string; exitCode: number | null }>;
-      followUp: string[];
+    data: {
+      result: {
+        summary: string;
+        changedFiles: string[];
+        executedCommands: Array<{ command: string; exitCode: number | null }>;
+        followUp: string[];
+      };
+      toolCalls: Array<{
+        toolName: string;
+        args: Record<string, unknown>;
+        result: { ok: boolean; data?: unknown; error?: string };
+        timestamp: string;
+      }>;
     };
-    toolCalls: Array<{
-      toolName: string;
-      args: Record<string, unknown>;
-      result: { ok: boolean; data?: unknown; error?: string };
-      timestamp: string;
-    }>;
+    exitReason: "completed";
+    context: {
+      messages: ChatMessage[];
+      toolCalls: [];
+    };
   }> {
     this.calls.push({
       task,
@@ -34,13 +42,20 @@ class StubCoder {
     });
     hooks?.onStateChange?.(createResumeState());
     return {
-      result: {
-        summary: `coder-run-${this.calls.length}`,
-        changedFiles: [],
-        executedCommands: [],
-        followUp: []
+      data: {
+        result: {
+          summary: `coder-run-${this.calls.length}`,
+          changedFiles: [],
+          executedCommands: [],
+          followUp: []
+        },
+        toolCalls: []
       },
-      toolCalls: []
+      exitReason: "completed",
+      context: {
+        messages: [],
+        toolCalls: []
+      }
     };
   }
 }
@@ -55,10 +70,17 @@ class StubPlanner {
     _task?: string,
     _conversationContext?: string,
     signal?: AbortSignal
-  ): Promise<{ plan: ExecutionPlan; toolCalls: Array<{ toolName: string; args: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string }; timestamp: string }> }> {
+  ): Promise<AgentResult<{ plan: ExecutionPlan; toolCalls: Array<{ toolName: string; args: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string }; timestamp: string }> }, ChatMessage, never>> {
     this.calls += 1;
     this.signals.push(signal);
-    return { plan: this.plan, toolCalls: [] };
+    return {
+      data: { plan: this.plan, toolCalls: [] },
+      exitReason: "completed",
+      context: {
+        messages: [],
+        toolCalls: []
+      }
+    };
   }
 }
 
@@ -158,8 +180,8 @@ test("plan mode should stop execution when plan approval is rejected", async () 
 
   const result = await orchestrator.run({ task: "please plan first", forcePlanMode: true });
 
-  assert.match(result.summary, /not approved/i);
-  assert.equal(result.toolCalls.length, 0);
+  assert.match(result.data.summary, /not approved/i);
+  assert.equal(result.data.toolCalls.length, 0);
 });
 
 test("forcePlanMode should emit plan preview without polluting text stream", async () => {
@@ -195,7 +217,7 @@ test("forcePlanMode should emit plan preview without polluting text stream", asy
   assert.equal(previews.length, 1);
   assert.equal(planner.signals[0], controller.signal);
   assert.match(previews[0], /Goal: task/);
-  assert.match(result.summary, /Executed in plan mode/);
+  assert.match(result.data.summary, /Executed in plan mode/);
 });
 
 test("plan mode one-shot should pass all steps to coder at once", async () => {
@@ -221,7 +243,7 @@ test("plan mode one-shot should pass all steps to coder at once", async () => {
   assert.equal(coder.calls.length, 1);
   assert.match(coder.calls[0].task, /S1/);
   assert.match(coder.calls[0].task, /S2/);
-  assert.match(result.summary, /Executed in plan mode/);
+  assert.match(result.data.summary, /Executed in plan mode/);
 });
 
 test("plan mode should emit unique task group ids to avoid cross-plan collisions", async () => {
@@ -275,18 +297,57 @@ test("plan mode should abort before planner when signal is already aborted", asy
   const controller = new AbortController();
   controller.abort();
 
-  await assert.rejects(
-    () =>
-      orchestrator.run(
-        {
-          task: "implement",
-          forcePlanMode: true
-        },
-        {
-          signal: controller.signal
-        }
-      ),
-    /Interrupted by user/
+  const result = await orchestrator.run(
+    {
+      task: "implement",
+      forcePlanMode: true
+    },
+    {
+      signal: controller.signal
+    }
   );
+  assert.equal(result.exitReason, "interrupted");
+  assert.equal(planner.calls, 0);
+});
+
+test("direct mode should convert unexpected coder throws into a failed result", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [{ id: "S1", title: "Code 1", owner: "code", acceptance: "done" }]
+  };
+  const planner = new StubPlanner(plan);
+  const orchestrator = new PlanToDoOrchestrator(
+    {
+      execute: async () => {
+        throw new Error("coder exploded");
+      }
+    } as unknown as any,
+    planner as unknown as any,
+    createToolContext(true)
+  );
+
+  const phases: string[] = [];
+  const taskSnapshots: OrchestratorTaskSnapshot[][] = [];
+  const result = await orchestrator.run(
+    {
+      task: "how should we fix this?",
+      forcePlanMode: false
+    },
+    {
+      onPhaseChange: (phase) => {
+        phases.push(phase);
+      },
+      onTasksChange: (tasks) => {
+        taskSnapshots.push(tasks);
+      }
+    }
+  );
+
+  assert.equal(result.exitReason, "error");
+  assert.equal(result.error, "coder exploded");
+  assert.match(result.data.summary, /coder exploded/);
+  assert.equal(taskSnapshots.at(-1)?.[0]?.status, "failed");
+  assert.equal(taskSnapshots.at(-1)?.[0]?.detail, "coder exploded");
+  assert.equal(phases.at(-1), "aborted");
   assert.equal(planner.calls, 0);
 });

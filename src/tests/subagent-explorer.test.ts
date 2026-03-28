@@ -47,6 +47,7 @@ test("SubagentExplorerAgent should isolate internal tool logs from parent tool s
 
   const context: ToolExecutionContext = {
     workspaceRoot: process.cwd(),
+    sessionId: "session-1",
     approvalGate: {
       async approve() {
         return { approved: true };
@@ -100,20 +101,15 @@ test("SubagentExplorerAgent should isolate internal tool logs from parent tool s
     task: "find readme usage",
     context: "focus on docs"
   });
-  const detailedResult = result as typeof result & {
-    fullText?: string;
-    toolCalls?: Array<{ name: string }>;
-  };
-
-  assert.equal(result.summary, "found candidate file");
-  assert.match(detailedResult.fullText ?? "", /"summary":"found candidate file"/);
-  assert.equal(detailedResult.toolCalls?.length, 1);
-  assert.equal(detailedResult.toolCalls?.[0]?.name, "read");
+  assert.equal(result.data.summary, "found candidate file");
+  assert.match(result.data.fullTextPreview ?? "", /"summary":"found candidate file"/);
+  assert.equal(result.data.toolCallPreview?.length, 1);
+  assert.equal(result.data.toolCallPreview?.[0]?.name, "read");
   assert.equal(logs.some((line) => line.startsWith("[tool] start ")), false);
   assert.equal(logs.some((line) => line.startsWith("[subagent:call-read-1] [tool] start read")), true);
 });
 
-test("SubagentExplorerAgent should fall back to collected tool evidence when tool loop hits max turns", async () => {
+test("SubagentExplorerAgent should return structured error metadata when tool loop hits max turns without JSON", async () => {
   const readTool: Tool = {
     definition: {
       name: "read",
@@ -143,6 +139,7 @@ test("SubagentExplorerAgent should fall back to collected tool evidence when too
 
   const context: ToolExecutionContext = {
     workspaceRoot: process.cwd(),
+    sessionId: "session-1",
     approvalGate: {
       async approve() {
         return { approved: true };
@@ -239,21 +236,10 @@ test("SubagentExplorerAgent should fall back to collected tool evidence when too
     task: "find implementation evidence",
     context: "look for a concrete code reference"
   });
-  const detailedResult = result as typeof result & {
-    fullText?: string;
-    toolCalls?: Array<{ name: string }>;
-  };
-
-  assert.doesNotMatch(result.summary, /max turns/i);
-  assert.match(result.summary, /gathered evidence/i);
-  assert.match(detailedResult.fullText ?? "", /max turns/i);
-  assert.equal(detailedResult.toolCalls?.length, 1);
-  assert.equal(detailedResult.toolCalls?.[0]?.name, "read");
-  assert.deepEqual(result.references, [
-    {
-      path: "E:/project/Nice/MyCoderAgent/src/example.ts",
-      reason: "Read during subagent exploration.",
-      confidence: "high"
-    }
-  ]);
+  assert.equal(result.exitReason, "error");
+  assert.match(result.error ?? "", /unstructured output/i);
+  assert.match(result.data.fullTextPreview ?? "", /max turns/i);
+  assert.equal(result.data.toolCallPreview?.length, 1);
+  assert.equal(result.data.toolCallPreview?.[0]?.name, "read");
+  assert.deepEqual(result.data.references, []);
 });

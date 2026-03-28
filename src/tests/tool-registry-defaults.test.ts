@@ -14,6 +14,7 @@ test("createDefaultTools should expose core workflow tools and exclude removed t
     "write",
     "bash",
     "spawn_subagent",
+    "resume_subagent",
     "wait_subagents",
     "list_subagents"
   ];
