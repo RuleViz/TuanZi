@@ -12,6 +12,7 @@ import {
   pruneToolOutputs,
   type ToolOutputPruningConfig
 } from "./context-pruner";
+import { CompactionAgent } from "./compaction-agent";
 import {
   isInterruptedAssistantMessageError,
   type ChatCompletionClient,
@@ -63,6 +64,12 @@ export interface ToolLoopOutput {
   };
 }
 
+interface CompactionConfig {
+  enabled: boolean;
+  threshold: number;
+  maxRetries: number;
+}
+
 interface SkillLoadResultTransform {
   visibleToolResult: ToolExecutionResult;
   commandMessage: string | null;
@@ -99,6 +106,7 @@ export class ReactToolAgent {
     );
     const noProgressRepeatTurns = this.toolContext.agentSettings?.toolLoop.noProgressRepeatTurns ?? 2;
     const toolOutputPruningConfig = resolveToolOutputPruningConfig(this.toolContext.agentSettings);
+    const compactionConfig = resolveCompactionConfig(this.toolContext.agentSettings);
     const messages = cloneMessages(
       input.resumeState?.messages ?? [
         { role: "system", content: input.systemPrompt },
@@ -193,6 +201,31 @@ export class ReactToolAgent {
       }
 
       applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
+      const compactionResult = await maybeCompactContextIfNeeded({
+        messages,
+        toolOutputPruningConfig,
+        compactionConfig,
+        modelTokenBudget: this.toolContext.modelTokenBudget,
+        client: this.client,
+        model: this.model,
+        logger: this.toolContext.logger
+      });
+      if (!compactionResult.ok) {
+        emitState(null, { force: true });
+        return buildToolLoopOutput({
+          finalText: compactionResult.error,
+          exitReason: "error",
+          error: compactionResult.error,
+          messages,
+          toolCalls,
+          allowedTools: input.allowedTools,
+          temperature,
+          maxTurns,
+          nextTurn,
+          partialAssistantMessage: null,
+          resumeAnchor
+        });
+      }
       updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
 
       let partialAssistantMessage: ChatMessage | null = null;
@@ -917,6 +950,28 @@ function resolveToolOutputPruningConfig(agentSettings?: AgentSettings): ToolOutp
   };
 }
 
+function resolveCompactionConfig(agentSettings?: AgentSettings): CompactionConfig {
+  const configured = agentSettings?.contextPruning?.compaction;
+  if (!configured) {
+    return {
+      enabled: true,
+      threshold: 0.85,
+      maxRetries: 5
+    };
+  }
+  return {
+    enabled: configured.enabled !== false,
+    threshold:
+      Number.isFinite(configured.threshold) && configured.threshold > 0
+        ? Math.max(0.1, Math.min(0.99, configured.threshold))
+        : 0.85,
+    maxRetries:
+      Number.isFinite(configured.maxRetries) && configured.maxRetries > 0
+        ? Math.min(10, Math.floor(configured.maxRetries))
+        : 5
+  };
+}
+
 function applyToolOutputPruningIfNeeded(
   messages: ChatMessage[],
   config: ToolOutputPruningConfig,
@@ -928,6 +983,105 @@ function applyToolOutputPruningIfNeeded(
       `[context-pruner] pruned tool outputs messages=${result.prunedMessageCount} tokens=${result.prunedTokenCount}`
     );
   }
+}
+
+async function maybeCompactContextIfNeeded(input: {
+  messages: ChatMessage[];
+  toolOutputPruningConfig: ToolOutputPruningConfig;
+  compactionConfig: CompactionConfig;
+  modelTokenBudget?: { total: number; reserve: number; limit: number };
+  client: ChatCompletionClient;
+  model: string;
+  logger: ToolExecutionContext["logger"];
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!input.compactionConfig.enabled) {
+    return { ok: true };
+  }
+  const limit =
+    typeof input.modelTokenBudget?.limit === "number" &&
+    Number.isFinite(input.modelTokenBudget.limit) &&
+    input.modelTokenBudget.limit > 0
+      ? Math.floor(input.modelTokenBudget.limit)
+      : null;
+  if (limit === null) {
+    return { ok: true };
+  }
+
+  const thresholdLimit = Math.max(1, Math.floor(limit * input.compactionConfig.threshold));
+  const usageBefore = estimateMessagesTokenUsage(input.messages);
+  if (usageBefore <= thresholdLimit) {
+    return { ok: true };
+  }
+  input.logger.warn(
+    `[compaction] threshold exceeded usage=${usageBefore} threshold=${thresholdLimit} limit=${limit}`
+  );
+
+  const pruneResult = pruneToolOutputs(input.messages, input.toolOutputPruningConfig);
+  if (pruneResult.prunedMessageCount > 0) {
+    input.logger.info(
+      `[compaction] prune-before-compact messages=${pruneResult.prunedMessageCount} tokens=${pruneResult.prunedTokenCount}`
+    );
+  }
+  const usageAfterPrune = estimateMessagesTokenUsage(input.messages);
+  if (usageAfterPrune <= thresholdLimit) {
+    return { ok: true };
+  }
+
+  const systemMessage = input.messages.find((message) => message.role === "system");
+  const lastUserMessage = findLastUserMessage(input.messages);
+  if (!systemMessage || !lastUserMessage) {
+    return {
+      ok: false,
+      error: "ContextOverflowError: compaction failed because system or last user message is missing."
+    };
+  }
+
+  const compactionAgent = new CompactionAgent(input.client, input.model, input.logger);
+  const compacted = await compactionAgent.compact({
+    messages: cloneMessages(input.messages),
+    maxRetries: input.compactionConfig.maxRetries
+  });
+  if (!compacted.ok || !compacted.summary) {
+    return {
+      ok: false,
+      error: `ContextOverflowError: compaction failed after ${compacted.attempts} attempts. Last error: ${compacted.error ?? "unknown error"}`
+    };
+  }
+
+  input.messages.splice(
+    0,
+    input.messages.length,
+    cloneMessage(systemMessage),
+    {
+      role: "assistant",
+      content: compacted.summary,
+      isMeta: true
+    },
+    cloneMessage(lastUserMessage)
+  );
+
+  const usageAfterCompaction = estimateMessagesTokenUsage(input.messages);
+  if (usageAfterCompaction > limit) {
+    return {
+      ok: false,
+      error: `ContextOverflowError: compacted context still exceeds limit (${usageAfterCompaction} > ${limit}).`
+    };
+  }
+
+  input.logger.info(
+    `[compaction] compacted successfully usage_before=${usageAfterPrune} usage_after=${usageAfterCompaction}`
+  );
+  return { ok: true };
+}
+
+function findLastUserMessage(messages: ChatMessage[]): ChatMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user") {
+      return message;
+    }
+  }
+  return null;
 }
 
 function transformSkillLoadResult(toolName: string, result: ToolExecutionResult): SkillLoadResultTransform | null {

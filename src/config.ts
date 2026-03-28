@@ -156,6 +156,11 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
       protectRecentTokens: 40000,
       pruneMinimumTokens: 20000,
       pruneStrategy: "truncate"
+    },
+    compaction: {
+      enabled: true,
+      threshold: 0.85,
+      maxRetries: 5
     }
   },
   mcp: {
@@ -320,6 +325,24 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
         base.contextPruning.toolOutput.pruneStrategy = pruneStrategy;
       }
     }
+
+    const compactionRaw = asObject(contextPruningRaw.compaction);
+    if (compactionRaw) {
+      const enabled = asBoolean(compactionRaw.enabled);
+      if (enabled !== null) {
+        base.contextPruning.compaction.enabled = enabled;
+      }
+
+      const threshold = asPositiveNumber(compactionRaw.threshold);
+      if (threshold !== null) {
+        base.contextPruning.compaction.threshold = clampFloat(threshold, 0.1, 0.99);
+      }
+
+      const maxRetries = asPositiveInt(compactionRaw.maxRetries);
+      if (maxRetries !== null) {
+        base.contextPruning.compaction.maxRetries = clamp(maxRetries, 1, 10);
+      }
+    }
   }
 
   const mcpRaw = asObject(input.mcp);
@@ -428,7 +451,21 @@ function asPositiveInt(value: unknown): number | null {
   return Math.max(1, Math.floor(value));
 }
 
+function asPositiveNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  if (value <= 0) {
+    return null;
+  }
+  return value;
+}
+
 function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampFloat(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 

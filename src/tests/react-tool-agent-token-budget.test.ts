@@ -22,6 +22,46 @@ class SequenceClient implements ChatCompletionClient {
   }
 }
 
+class RoutingClient implements ChatCompletionClient {
+  public readonly requests: ChatMessage[][] = [];
+  public regularCalls = 0;
+  public compactionCalls = 0;
+
+  constructor(
+    private readonly handlers: {
+      onRegularCall?: (attempt: number, input: { model: string; messages: ChatMessage[] }) => Promise<ChatCompletionResult>;
+      onCompactionCall?: (attempt: number, input: { model: string; messages: ChatMessage[] }) => Promise<ChatCompletionResult>;
+    }
+  ) {}
+
+  async complete(input: { model: string; messages: ChatMessage[] }): Promise<ChatCompletionResult> {
+    this.requests.push(JSON.parse(JSON.stringify(input.messages)) as ChatMessage[]);
+    if (isCompactionRequest(input.messages)) {
+      this.compactionCalls += 1;
+      if (this.handlers.onCompactionCall) {
+        return this.handlers.onCompactionCall(this.compactionCalls, input);
+      }
+      return {
+        message: {
+          role: "assistant",
+          content: "compaction summary"
+        }
+      };
+    }
+
+    this.regularCalls += 1;
+    if (this.handlers.onRegularCall) {
+      return this.handlers.onRegularCall(this.regularCalls, input);
+    }
+    return {
+      message: {
+        role: "assistant",
+        content: "done"
+      }
+    };
+  }
+}
+
 const minimalSettings: AgentSettings = {
   routing: {
     enableDirectMode: true,
@@ -54,6 +94,11 @@ const minimalSettings: AgentSettings = {
       protectRecentTokens: 40000,
       pruneMinimumTokens: 20000,
       pruneStrategy: "truncate"
+    },
+    compaction: {
+      enabled: true,
+      threshold: 0.85,
+      maxRetries: 5
     }
   },
   mcp: {
@@ -249,6 +294,11 @@ test("ReactToolAgent should prune old tool outputs before subsequent requests", 
         protectRecentTokens: 80,
         pruneMinimumTokens: 20,
         pruneStrategy: "truncate"
+      },
+      compaction: {
+        enabled: true,
+        threshold: 0.85,
+        maxRetries: 5
       }
     }
   } as AgentSettings;
@@ -350,3 +400,378 @@ test("ReactToolAgent should prune old tool outputs before subsequent requests", 
   assert.equal(finalRequestToolContents.some((content) => content.startsWith(placeholder)), true);
   assert.equal(finalRequestToolContents.some((content) => content.includes("\"payload\"")), true);
 });
+
+test("ReactToolAgent should not trigger compaction when usage is below threshold", async () => {
+  const client = new RoutingClient({});
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: minimalSettings,
+    modelTokenBudget: {
+      total: 2000,
+      reserve: 500,
+      limit: 1500
+    }
+  };
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "system prompt",
+    userPrompt: "short user prompt",
+    allowedTools: [],
+    maxTurns: 2
+  });
+
+  assert.equal(output.finalText, "done");
+  assert.equal(output.exitReason, "completed");
+  assert.equal(client.compactionCalls, 0);
+  assert.equal(client.regularCalls, 1);
+});
+
+test("ReactToolAgent should skip compaction when pruning reduces usage under threshold", async () => {
+  const client = new RoutingClient({});
+  const settingsWithAggressivePruning: AgentSettings = {
+    ...minimalSettings,
+    contextPruning: {
+      toolOutput: {
+        protectRecentTokens: 100,
+        pruneMinimumTokens: 1,
+        pruneStrategy: "truncate"
+      },
+      compaction: {
+        enabled: true,
+        threshold: 0.85,
+        maxRetries: 5
+      }
+    }
+  };
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: settingsWithAggressivePruning,
+    modelTokenBudget: {
+      total: 1800,
+      reserve: 800,
+      limit: 1000
+    }
+  };
+
+  const resumeState = buildResumeState([
+    { role: "system", content: "sys" },
+    { role: "user", content: "continue task" },
+    { role: "tool", tool_call_id: "call-1", name: "read", content: "x".repeat(4000) },
+    { role: "tool", tool_call_id: "call-2", name: "read", content: "y".repeat(600) }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "ignored on resume",
+    userPrompt: "ignored on resume",
+    allowedTools: [],
+    maxTurns: 2,
+    resumeState
+  });
+
+  assert.equal(output.exitReason, "completed");
+  assert.equal(client.compactionCalls, 0);
+  const placeholderSeen = client.requests[0].some(
+    (message) =>
+      message.role === "tool" &&
+      typeof message.content === "string" &&
+      message.content.startsWith("[Tool output pruned - ")
+  );
+  assert.equal(placeholderSeen, true);
+});
+
+test("ReactToolAgent should compact context into [system, meta summary, last user] and continue", async () => {
+  const client = new RoutingClient({
+    onCompactionCall: async () => ({
+      message: {
+        role: "assistant",
+        content: "Compacted summary text."
+      }
+    }),
+    onRegularCall: async (_attempt, input) => {
+      assert.equal(input.messages.length, 3);
+      assert.equal(input.messages[0].role, "system");
+      assert.equal(input.messages[1].role, "assistant");
+      assert.equal(input.messages[1].isMeta, true);
+      assert.equal(typeof input.messages[1].content, "string");
+      assert.equal(input.messages[2].role, "user");
+      return {
+        message: {
+          role: "assistant",
+          content: "done"
+        }
+      };
+    }
+  });
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: minimalSettings,
+    modelTokenBudget: {
+      total: 1800,
+      reserve: 800,
+      limit: 1000
+    }
+  };
+
+  const resumeState = buildResumeState([
+    { role: "system", content: "sys" },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "A".repeat(6000) },
+    { role: "user", content: "last user message for replay" }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "ignored on resume",
+    userPrompt: "ignored on resume",
+    allowedTools: [],
+    maxTurns: 2,
+    resumeState
+  });
+
+  assert.equal(output.exitReason, "completed");
+  assert.equal(output.finalText, "done");
+  assert.equal(client.compactionCalls, 1);
+  assert.equal(client.regularCalls, 1);
+});
+
+test("ReactToolAgent should retry compaction up to 5 times and succeed on 5th attempt", async () => {
+  const client = new RoutingClient({
+    onCompactionCall: async (attempt) => {
+      if (attempt < 5) {
+        throw new Error(`transient compaction failure ${attempt}`);
+      }
+      return {
+        message: {
+          role: "assistant",
+          content: "compacted summary after retries"
+        }
+      };
+    }
+  });
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: minimalSettings,
+    modelTokenBudget: {
+      total: 1800,
+      reserve: 800,
+      limit: 1000
+    }
+  };
+
+  const resumeState = buildResumeState([
+    { role: "system", content: "sys" },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "B".repeat(6000) },
+    { role: "user", content: "last user message" }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "ignored on resume",
+    userPrompt: "ignored on resume",
+    allowedTools: [],
+    maxTurns: 2,
+    resumeState
+  });
+
+  assert.equal(output.exitReason, "completed");
+  assert.equal(client.compactionCalls, 5);
+  assert.equal(client.regularCalls, 1);
+});
+
+test("ReactToolAgent should return error when compaction fails after 5 retries", async () => {
+  const client = new RoutingClient({
+    onCompactionCall: async (attempt) => {
+      throw new Error(`compaction failure ${attempt}`);
+    }
+  });
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: minimalSettings,
+    modelTokenBudget: {
+      total: 1800,
+      reserve: 800,
+      limit: 1000
+    }
+  };
+
+  const resumeState = buildResumeState([
+    { role: "system", content: "sys" },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "C".repeat(6000) },
+    { role: "user", content: "last user message" }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "ignored on resume",
+    userPrompt: "ignored on resume",
+    allowedTools: [],
+    maxTurns: 2,
+    resumeState
+  });
+
+  assert.equal(output.exitReason, "error");
+  assert.match(output.error ?? "", /ContextOverflowError/i);
+  assert.equal(client.compactionCalls, 5);
+  assert.equal(client.regularCalls, 0);
+});
+
+test("ReactToolAgent should return error when compacted context still exceeds hard limit", async () => {
+  const client = new RoutingClient({
+    onCompactionCall: async () => ({
+      message: {
+        role: "assistant",
+        content: "Z".repeat(7000)
+      }
+    })
+  });
+  const context: ToolExecutionContext = {
+    workspaceRoot: process.cwd(),
+    approvalGate: {
+      async approve() {
+        return { approved: true };
+      }
+    },
+    backupManager: {
+      async backupFile() {
+        return null;
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {}
+    },
+    agentSettings: minimalSettings,
+    modelTokenBudget: {
+      total: 1800,
+      reserve: 800,
+      limit: 1000
+    }
+  };
+
+  const resumeState = buildResumeState([
+    { role: "system", content: "sys" },
+    { role: "user", content: "first user" },
+    { role: "assistant", content: "D".repeat(6000) },
+    { role: "user", content: "last user message" }
+  ]);
+
+  const agent = new ReactToolAgent(client, "test-model", new ToolRegistry([]), context);
+  const output = await agent.run({
+    systemPrompt: "ignored on resume",
+    userPrompt: "ignored on resume",
+    allowedTools: [],
+    maxTurns: 2,
+    resumeState
+  });
+
+  assert.equal(output.exitReason, "error");
+  assert.match(output.error ?? "", /ContextOverflowError/i);
+  assert.match(output.error ?? "", /still exceeds limit/i);
+  assert.equal(client.compactionCalls, 1);
+  assert.equal(client.regularCalls, 0);
+});
+
+function isCompactionRequest(messages: ChatMessage[]): boolean {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return false;
+  }
+  const first = messages[0];
+  return (
+    first.role === "system" &&
+    typeof first.content === "string" &&
+    first.content.includes("high-fidelity context compaction summaries")
+  );
+}
+
+function buildResumeState(messages: ChatMessage[]) {
+  return {
+    version: 1 as const,
+    messages: JSON.parse(JSON.stringify(messages)) as ChatMessage[],
+    toolCalls: [],
+    allowedTools: [],
+    temperature: 0.2,
+    maxTurns: 4,
+    nextTurn: 0,
+    partialAssistantMessage: null
+  };
+}

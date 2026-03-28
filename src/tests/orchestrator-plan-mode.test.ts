@@ -144,6 +144,11 @@ function createToolContext(approved: boolean): ToolExecutionContext {
           protectRecentTokens: 40000,
           pruneMinimumTokens: 20000,
           pruneStrategy: "truncate"
+        },
+        compaction: {
+          enabled: true,
+          threshold: 0.85,
+          maxRetries: 5
         }
       },
       mcp: {

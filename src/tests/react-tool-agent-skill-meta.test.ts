@@ -54,6 +54,11 @@ const minimalSettings: AgentSettings = {
       protectRecentTokens: 40000,
       pruneMinimumTokens: 20000,
       pruneStrategy: "truncate"
+    },
+    compaction: {
+      enabled: true,
+      threshold: 0.85,
+      maxRetries: 5
     }
   },
   mcp: {

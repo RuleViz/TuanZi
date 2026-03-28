@@ -40,8 +40,15 @@ export interface ToolOutputPruningSettings {
   pruneStrategy: "truncate" | "summarize";
 }
 
+export interface ContextCompactionSettings {
+  enabled: boolean;
+  threshold: number;
+  maxRetries: number;
+}
+
 export interface ContextPruningSettings {
   toolOutput: ToolOutputPruningSettings;
+  compaction: ContextCompactionSettings;
 }
 
 export interface ModelRequestSettings {

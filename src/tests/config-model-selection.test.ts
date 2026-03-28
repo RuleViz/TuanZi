@@ -387,7 +387,7 @@ test("should map agent.config.json modelRequest into runtime model request optio
   }
 });
 
-test("should load contextPruning.toolOutput from agent.config.json", () => {
+test("should load contextPruning settings from agent.config.json", () => {
   const workspace = mkdtempSync(path.join(os.tmpdir(), "tuanzi-workspace-"));
   const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
   try {
@@ -400,6 +400,11 @@ test("should load contextPruning.toolOutput from agent.config.json", () => {
               protectRecentTokens: 12345,
               pruneMinimumTokens: 6789,
               pruneStrategy: "summarize"
+            },
+            compaction: {
+              enabled: false,
+              threshold: 0.9,
+              maxRetries: 4
             }
           }
         },
@@ -437,6 +442,70 @@ test("should load contextPruning.toolOutput from agent.config.json", () => {
           protectRecentTokens: 12345,
           pruneMinimumTokens: 6789,
           pruneStrategy: "summarize"
+        });
+        assert.deepEqual(config.agentSettings.contextPruning.compaction, {
+          enabled: false,
+          threshold: 0.9,
+          maxRetries: 4
+        });
+      }
+    );
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(agentHome, { recursive: true, force: true });
+  }
+});
+
+test("should use default contextPruning.compaction when not configured", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "tuanzi-workspace-"));
+  const agentHome = mkdtempSync(path.join(os.tmpdir(), "mycoderagent-home-"));
+  try {
+    writeFileSync(
+      path.join(workspace, "agent.config.json"),
+      JSON.stringify(
+        {
+          contextPruning: {
+            toolOutput: {
+              protectRecentTokens: 12345,
+              pruneMinimumTokens: 6789,
+              pruneStrategy: "truncate"
+            }
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    writeFileSync(
+      path.join(agentHome, "config.json"),
+      JSON.stringify(
+        {
+          provider: {
+            type: "openai",
+            apiKey: "sk-provider",
+            baseUrl: "https://api.openai.com/v1",
+            model: "gpt-4o"
+          }
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    withEnv(
+      {
+        TUANZI_MODELS_PATH: path.join(process.cwd(), ".tmp", "missing-models.json"),
+        MYCODERAGENT_HOME: agentHome
+      },
+      () => {
+        const config = loadRuntimeConfig({ workspaceRoot: workspace, approvalMode: "manual" });
+        assert.deepEqual(config.agentSettings.contextPruning.compaction, {
+          enabled: true,
+          threshold: 0.85,
+          maxRetries: 5
         });
       }
     );
