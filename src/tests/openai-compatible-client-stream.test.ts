@@ -334,3 +334,53 @@ test("OpenAICompatibleClient should send default reasoning and thinking options"
     globalThis.fetch = originalFetch;
   }
 });
+
+test("OpenAICompatibleClient should strip local isMeta field before sending messages", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody: Record<string, unknown> | null = null;
+  try {
+    globalThis.fetch = async (_input, init) => {
+      capturedBody =
+        init && typeof init.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "ok"
+              }
+            }
+          ]
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json"
+          }
+        }
+      );
+    };
+
+    const client = new OpenAICompatibleClient({
+      baseUrl: "https://example.com/v1",
+      apiKey: "demo-key"
+    });
+
+    await client.complete({
+      model: "demo-model",
+      messages: [
+        { role: "system", content: "sys", isMeta: true },
+        { role: "user", content: "hello" }
+      ]
+    });
+
+    const sentMessages = (capturedBody?.["messages"] ?? []) as Array<Record<string, unknown>>;
+    assert.equal(Array.isArray(sentMessages), true);
+    assert.equal(sentMessages.length, 2);
+    assert.equal(sentMessages[0].isMeta, undefined);
+    assert.equal(sentMessages[0].content, "sys");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -308,3 +308,27 @@ test("TuanZiAgent should return MCP authorization error context and restore orig
   assert.equal(originalBridgeCalls.length, 0);
   assert.equal(context.mcpBridge, originalBridge);
 });
+
+test("TuanZiAgent should remove command-message narration lines from final summary", async () => {
+  const context = createContext({
+    async callTool() {
+      return { content: [] };
+    }
+  });
+
+  const client = new SequenceClient([
+    {
+      role: "assistant",
+      content: [
+        "<command-message>Skill \"brainstorming\" is loading</command-message>",
+        "Real answer line."
+      ].join("\n")
+    }
+  ]);
+
+  const agent = new TuanZiAgent(client, "test-model", new ToolRegistry([]), context, createAgent([]));
+  const output = await agent.execute("Need summary sanitization");
+
+  assert.equal(output.result.summary.includes("<command-message>"), false);
+  assert.match(output.result.summary, /Real answer line\./);
+});

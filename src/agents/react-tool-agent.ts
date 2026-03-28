@@ -53,6 +53,12 @@ export interface ToolLoopOutput {
   messages: ChatMessage[];
 }
 
+interface SkillLoadResultTransform {
+  visibleToolResult: ToolExecutionResult;
+  commandMessage: string | null;
+  metaMessage: ChatMessage | null;
+}
+
 export class ReactToolAgent {
   constructor(
     private readonly client: ChatCompletionClient,
@@ -274,11 +280,19 @@ export class ReactToolAgent {
           throw new Error("Interrupted by user");
         }
         const toolResponse = await this.invokeTool(call, input.allowedTools);
+        const transformedSkillLoad = transformSkillLoadResult(call.function.name, toolResponse.result);
+        const toolResultForHistory = transformedSkillLoad?.visibleToolResult ?? toolResponse.result;
+        if (transformedSkillLoad?.commandMessage) {
+          messages.push({
+            role: "assistant",
+            content: transformedSkillLoad.commandMessage
+          });
+        }
         const toolCallSnapshot: ToolLoopToolCallSnapshot = {
           id: call.id,
           name: call.function.name,
           args: toolResponse.args,
-          result: toolResponse.result
+          result: toolResultForHistory
         };
         toolCalls.push(toolCallSnapshot);
         input.onToolCallCompleted?.(cloneToolCallSnapshot(toolCallSnapshot));
@@ -286,8 +300,11 @@ export class ReactToolAgent {
           role: "tool",
           tool_call_id: call.id,
           name: call.function.name,
-          content: JSON.stringify(toolResponse.result)
+          content: JSON.stringify(toolResultForHistory)
         });
+        if (transformedSkillLoad?.metaMessage) {
+          messages.push(transformedSkillLoad.metaMessage);
+        }
         applyToolOutputPruningIfNeeded(messages, toolOutputPruningConfig, this.toolContext.logger);
         updateSystemPromptTokenWarning(messages, this.toolContext.modelTokenBudget);
         emitState(null, { force: true });
@@ -494,6 +511,7 @@ function cloneMessage(message: ChatMessage): ChatMessage {
     name: message.name,
     tool_call_id: message.tool_call_id,
     reasoning_content: message.reasoning_content,
+    isMeta: message.isMeta,
     tool_calls: message.tool_calls?.map((call) => ({
       id: call.id,
       type: call.type,
@@ -777,6 +795,196 @@ function applyToolOutputPruningIfNeeded(
       `[context-pruner] pruned tool outputs messages=${result.prunedMessageCount} tokens=${result.prunedTokenCount}`
     );
   }
+}
+
+function transformSkillLoadResult(toolName: string, result: ToolExecutionResult): SkillLoadResultTransform | null {
+  if (toolName !== "skill_load") {
+    return null;
+  }
+
+  if (!result.ok) {
+    return {
+      visibleToolResult: cloneToolExecutionResult(result),
+      commandMessage: null,
+      metaMessage: null
+    };
+  }
+
+  const source = asRecord(result.data);
+  if (!source) {
+    return {
+      visibleToolResult: cloneToolExecutionResult(result),
+      commandMessage: null,
+      metaMessage: null
+    };
+  }
+
+  const skillItems: Array<{
+    name: string;
+    description: string;
+    body: string;
+    skillDir: string | null;
+    skillFile: string | null;
+  }> = [];
+  const skillsRaw = Array.isArray(source.skills) ? source.skills : [];
+  for (const raw of skillsRaw) {
+    const item = asRecord(raw);
+    if (!item) {
+      continue;
+    }
+    const name = asTrimmedString(item.name);
+    const description = asTrimmedString(item.description) ?? "";
+    const body = asTrimmedString(item.body);
+    if (!name || !body) {
+      continue;
+    }
+    skillItems.push({
+      name,
+      description,
+      body,
+      skillDir: asTrimmedString(item.skillDir),
+      skillFile: asTrimmedString(item.skillFile)
+    });
+  }
+
+  const loadedSkillsSummary = skillItems.map((item) => ({
+    name: item.name,
+    description: item.description,
+    skillDir: item.skillDir,
+    skillFile: item.skillFile
+  }));
+  const requested = asStringArray(source.requested);
+  const missing = asStringArray(source.missing);
+  const failed = normalizeSkillLoadFailed(source.failed);
+
+  const visibleData: Record<string, unknown> = {
+    requested,
+    loadedCount:
+      typeof source.loadedCount === "number" && Number.isFinite(source.loadedCount) && source.loadedCount >= 0
+        ? Math.floor(source.loadedCount)
+        : loadedSkillsSummary.length,
+    missing,
+    loadedSkills: loadedSkillsSummary
+  };
+  if (failed.length > 0) {
+    visibleData.failed = failed;
+  }
+  if (loadedSkillsSummary.length === 1) {
+    visibleData.name = loadedSkillsSummary[0].name;
+    visibleData.description = loadedSkillsSummary[0].description;
+  }
+
+  const visibleToolResult: ToolExecutionResult = {
+    ok: true,
+    data: visibleData
+  };
+
+  if (skillItems.length === 0) {
+    return {
+      visibleToolResult,
+      commandMessage: null,
+      metaMessage: null
+    };
+  }
+
+  const skillNames = skillItems.map((item) => item.name);
+  const commandMessage =
+    skillNames.length === 1
+      ? `<command-message>Skill "${skillNames[0]}" is loading</command-message>`
+      : `<command-message>Skills ${skillNames.map((name) => `"${name}"`).join(", ")} are loading</command-message>`;
+
+  return {
+    visibleToolResult,
+    commandMessage,
+    metaMessage: {
+      role: "assistant",
+      content: buildSkillMetaMessageContent(skillItems),
+      isMeta: true
+    }
+  };
+}
+
+function buildSkillMetaMessageContent(
+  skills: Array<{
+    name: string;
+    description: string;
+    body: string;
+  }>
+): string {
+  const lines: string[] = ["<meta_skill_context>"];
+  for (const skill of skills) {
+    lines.push(`<skill name="${escapeXmlAttribute(skill.name)}">`);
+    if (skill.description) {
+      lines.push(`<description>${escapeXmlText(skill.description)}</description>`);
+    }
+    lines.push("<instruction>");
+    lines.push(skill.body);
+    lines.push("</instruction>");
+    lines.push("</skill>");
+  }
+  lines.push("</meta_skill_context>");
+  return lines.join("\n");
+}
+
+function normalizeSkillLoadFailed(value: unknown): Array<{ name: string; error: string }> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const output: Array<{ name: string; error: string }> = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+    const name = asTrimmedString(record.name);
+    const error = asTrimmedString(record.error);
+    if (!name || !error) {
+      continue;
+    }
+    output.push({ name, error });
+  }
+  return output;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asTrimmedString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const output: string[] = [];
+  for (const item of value) {
+    const normalized = asTrimmedString(item);
+    if (!normalized) {
+      continue;
+    }
+    output.push(normalized);
+  }
+  return output;
+}
+
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function escapeXmlAttribute(value: string): string {
+  return escapeXmlText(value).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
 function updateSystemPromptTokenWarning(

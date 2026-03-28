@@ -31,6 +31,7 @@ export interface ChatMessage {
   tool_call_id?: string;
   tool_calls?: ToolCall[];
   reasoning_content?: string;
+  isMeta?: boolean;
 }
 
 export interface ToolCall {

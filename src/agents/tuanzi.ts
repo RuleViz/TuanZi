@@ -570,7 +570,10 @@ function extractUserFacingText(rawText: string): string {
   const maybeJsonSummary = tryExtractJsonSummary(trimmed);
   const source = maybeJsonSummary ?? trimmed;
   const lines = source.split(/\r?\n/);
-  const filtered = lines.filter((line) => !isMetaNarrationLine(line.trim()));
+  const filtered = lines.filter((line) => {
+    const normalized = line.trim();
+    return !isMetaNarrationLine(normalized) && !isCommandMessageLine(normalized);
+  });
   return (filtered.length > 0 ? filtered.join("\n") : source).trim();
 }
 
@@ -590,4 +593,8 @@ function isMetaNarrationLine(line: string): boolean {
     /^以下是(对话|聊天).*(记录|总结)/
   ];
   return patterns.some((pattern) => pattern.test(line));
+}
+
+function isCommandMessageLine(line: string): boolean {
+  return /^<command-message>[\s\S]*<\/command-message>$/i.test(line);
 }

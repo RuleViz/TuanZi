@@ -346,9 +346,10 @@ function buildChatCompletionsPayload(
   },
   stream: boolean
 ): Record<string, unknown> {
+  const requestMessages = stripLocalMessageFields(input.messages);
   const payload: Record<string, unknown> = {
     model: input.model,
-    messages: input.messages,
+    messages: requestMessages,
     tools: input.tools,
     temperature: input.temperature ?? 0.2
   };
@@ -366,7 +367,7 @@ function buildChatCompletionsPayload(
     Object.assign(payload, input.requestOptions.extraBody);
     // Keep core request keys stable even when using provider-specific extension fields.
     payload.model = input.model;
-    payload.messages = input.messages;
+    payload.messages = requestMessages;
     payload.tools = input.tools;
     payload.temperature = input.temperature ?? 0.2;
     if (stream) {
@@ -377,6 +378,13 @@ function buildChatCompletionsPayload(
   }
 
   return payload;
+}
+
+function stripLocalMessageFields(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => {
+    const { isMeta: _isMeta, ...rest } = message;
+    return rest;
+  });
 }
 
 function mergeRequestOptions(
