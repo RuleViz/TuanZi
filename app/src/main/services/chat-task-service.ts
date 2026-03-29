@@ -796,6 +796,43 @@ export function createRunChatTask(
                 taskId,
                 snapshots: mapped
               });
+            },
+            onStreamDelta: (delta: {
+              type: "thinking" | "text" | "tool_start" | "tool_end";
+              subagentId: string;
+              delta?: string;
+              toolCallId?: string;
+              toolName?: string;
+              args?: Record<string, unknown>;
+              result?: { ok: boolean; data?: unknown; error?: string };
+            }) => {
+              const mappedDelta = (() => {
+                switch (delta.type) {
+                  case "thinking":
+                    return { type: "thinking" as const, delta: delta.delta ?? "" };
+                  case "text":
+                    return { type: "text" as const, delta: delta.delta ?? "" };
+                  case "tool_start":
+                    return {
+                      type: "tool_start" as const,
+                      toolCallId: delta.toolCallId ?? "",
+                      toolName: delta.toolName ?? "",
+                      args: delta.args ?? {}
+                    };
+                  case "tool_end":
+                    return {
+                      type: "tool_end" as const,
+                      toolCallId: delta.toolCallId ?? "",
+                      toolName: delta.toolName ?? "",
+                      result: delta.result ?? { ok: false, error: "Unknown" }
+                    };
+                }
+              })();
+              webContents.send(IPC_CHANNELS.chatSubagentStreamDelta, {
+                taskId,
+                subagentId: delta.subagentId,
+                delta: mappedDelta
+              });
             }
           })
           : null;

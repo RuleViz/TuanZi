@@ -126,6 +126,7 @@ export function buildStreamingListeners(input: {
   getOrCreateToolCallsContainer: (parentEl: HTMLDivElement) => HTMLDivElement;
   addToolCallRow: (container: HTMLDivElement, toolName: string, status: "loading" | "done" | "failed", toolCallId?: string) => HTMLDivElement;
   updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: import("../../../../shared/ipc-contracts").SubagentSnapshotData[]) => void;
+  handleSubagentStreamDelta: (parentEl: HTMLDivElement, data: import("../../../../shared/ipc-contracts").SubagentStreamDeltaData) => void;
 }): StreamingListeners {
   let thinkingBlock = input.existingThinkingBlock ?? null;
   const allThinkingBlocks: ExecBlock[] = input.existingThinkingBlock ? [input.existingThinkingBlock] : [];
@@ -319,6 +320,14 @@ export function buildStreamingListeners(input: {
     input.smartScrollToBottom();
   });
 
+  const removeSubagentStreamDeltaListener = window.tuanzi.onSubagentStreamDelta((data) => {
+    if (!isCurrentTask(data.taskId)) {
+      return;
+    }
+    input.handleSubagentStreamDelta(input.contentEl, data);
+    input.smartScrollToBottom();
+  });
+
   const removeUserQuestionListener = window.tuanzi.onUserQuestion((data) => {
     if (!isCurrentTask(data.taskId)) {
       return;
@@ -339,6 +348,7 @@ export function buildStreamingListeners(input: {
       removeLogListener();
       removeToolCallCompletedListener();
       removeSubagentSnapshotListener();
+      removeSubagentStreamDeltaListener();
       removeUserQuestionListener();
     }
   };

@@ -30,8 +30,10 @@ export class SpawnSubagentTool implements Tool {
   async execute(input: JsonObject, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const bridge = context.subagentBridge;
     if (!bridge) {
+      context.logger.warn("[spawn_subagent] subagentBridge is not available in toolContext");
       return { ok: false, error: "Subagent bridge is not available in the current runtime." };
     }
+    context.logger.info("[spawn_subagent] subagentBridge is available, spawning subagent");
 
     const task = asString(input.task)?.trim();
     if (!task) {

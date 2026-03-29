@@ -1,6 +1,7 @@
 import type { ConversationToolCall, PendingChatImage } from "../../app/state";
-import type { SubagentSnapshotData } from "../../../../shared/ipc-contracts";
+import type { SubagentSnapshotData, SubagentStreamDeltaData } from "../../../../shared/ipc-contracts";
 import { THINKING_SEGMENT_SEPARATOR } from "./stream-listeners";
+import { SubagentStreamWindowManager } from "./subagent-stream-window";
 
 interface ExecBlockOptions {
   type: "tool" | "command" | "thinking";
@@ -38,6 +39,8 @@ export interface MessageRenderer {
   updateToolCallRow: (row: HTMLDivElement, status: "done" | "failed", detail?: string) => void;
   showSubagentModal: (snapshot: SubagentSnapshotData) => void;
   updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: SubagentSnapshotData[]) => void;
+  handleSubagentStreamDelta: (parentEl: HTMLDivElement, data: SubagentStreamDeltaData) => void;
+  getSubagentWindowManager: () => SubagentStreamWindowManager;
 }
 
 export function formatToolArgsText(args: Record<string, unknown>): string {
@@ -420,38 +423,46 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     modal.classList.add("visible");
   };
 
+  const subagentWindowManager = new SubagentStreamWindowManager({
+    escapeHtml: input.escapeHtml,
+    renderMarkdownHtml: input.renderMarkdownHtml,
+    scrollToBottom: input.scrollToBottom
+  });
+
   const updateSubagentSnapshots = (parentEl: HTMLDivElement, snapshots: SubagentSnapshotData[]): void => {
-    let subagentArea = parentEl.querySelector<HTMLDivElement>(".subagent-entries");
+    let subagentArea = parentEl.querySelector<HTMLDivElement>(".subagent-stream-area");
     if (!subagentArea) {
       subagentArea = document.createElement("div");
-      subagentArea.className = "subagent-entries";
+      subagentArea.className = "subagent-stream-area";
       parentEl.appendChild(subagentArea);
     }
     for (const snap of snapshots) {
-      let entry = subagentArea.querySelector<HTMLDivElement>(`.subagent-entry[data-subagent-id="${snap.id}"]`);
-      if (!entry) {
-        entry = document.createElement("div");
-        entry.className = "subagent-entry";
-        entry.dataset.subagentId = snap.id;
-        entry.addEventListener("click", () => showSubagentModal(snap));
-        subagentArea.appendChild(entry);
-      } else {
-        const oldClickHandler = entry.onclick;
-        if (oldClickHandler) {
-          entry.removeEventListener("click", oldClickHandler as EventListener);
-        }
-        entry.onclick = () => showSubagentModal(snap);
+      const existingWindow = subagentWindowManager.getWindowElement(snap.id);
+      if (!existingWindow) {
+        subagentWindowManager.createWindowElement(subagentArea, snap.id, snap.task);
       }
-      const statusCls = snap.status === "completed" ? "status-ok" : snap.status === "running" ? "status-running" : snap.status === "failed" ? "status-err" : "";
-      const toolCallPreview = snap.result?.toolCallPreview ?? [];
-      entry.innerHTML = `
-        <span class="subagent-entry-icon">🤖</span>
-        <span class="subagent-entry-task">${input.escapeHtml(snap.task.substring(0, 60))}</span>
-        <span class="subagent-entry-status ${statusCls}">${snap.status}</span>
-        <span class="subagent-entry-tc-count">${toolCallPreview.length} calls</span>
-      `;
+      subagentWindowManager.updateFromSnapshot(snap);
     }
   };
+
+  const handleSubagentStreamDelta = (parentEl: HTMLDivElement, data: SubagentStreamDeltaData): void => {
+    let subagentArea = parentEl.querySelector<HTMLDivElement>(".subagent-stream-area");
+    if (!subagentArea) {
+      subagentArea = document.createElement("div");
+      subagentArea.className = "subagent-stream-area";
+      parentEl.appendChild(subagentArea);
+    }
+    const existingWindow = subagentWindowManager.getWindowElement(data.subagentId);
+    if (!existingWindow) {
+      subagentWindowManager.createWindowElement(subagentArea, data.subagentId, "SubAgent Task");
+    }
+    subagentWindowManager.handleStreamDelta({
+      subagentId: data.subagentId,
+      ...data.delta
+    });
+  };
+
+  const getSubagentWindowManager = (): SubagentStreamWindowManager => subagentWindowManager;
 
   const createAssistantSurface = (): {
     contentEl: HTMLDivElement;
@@ -516,7 +527,9 @@ export function createMessageRenderer(input: MessageRendererDeps): MessageRender
     addToolCallRow,
     updateToolCallRow,
     showSubagentModal,
-    updateSubagentSnapshots
+    updateSubagentSnapshots,
+    handleSubagentStreamDelta,
+    getSubagentWindowManager
   };
 }
 

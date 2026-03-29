@@ -21,6 +21,7 @@ import type {
   ToolExecutionContext,
   UserInteractionBridge
 } from "./core/types";
+import type { SubagentStreamDelta } from "./core/subagent-manager";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
 
@@ -95,6 +96,7 @@ export function createSubagentBridge(
       detail?: string;
     }>) => void;
     onSnapshotsChange?: (snapshots: SubagentSnapshot[]) => void;
+    onStreamDelta?: (delta: SubagentStreamDelta) => void;
   }
 ): SubagentBridge {
   const client = createModelClient(runtimeConfig);
@@ -108,12 +110,13 @@ export function createSubagentBridge(
   return new SubagentManager({
     maxConcurrent: 3,
     taskId: input?.taskId ?? null,
-    runExplorer: async ({ id, task, context, signal, resumeFromSnapshotId }) =>
-      explorer.run({ agentId: id, task, context, signal, resumeFromSnapshotId }),
+    runExplorer: async ({ id, task, context, signal, resumeFromSnapshotId, streamCallbacks }) =>
+      explorer.run({ agentId: id, task, context, signal, resumeFromSnapshotId, streamCallbacks }),
     onSnapshotsChange: (snapshots) => {
       input?.onTasksChange?.(snapshots.map(toWorkbenchTaskItem));
       input?.onSnapshotsChange?.(snapshots);
-    }
+    },
+    onStreamDelta: input?.onStreamDelta
   });
 }
 

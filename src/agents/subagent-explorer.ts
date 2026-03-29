@@ -14,6 +14,13 @@ import type { ChatCompletionClient, ChatMessage } from "./model-types";
 import { subagentExplorerSystemPrompt } from "./prompts";
 import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
+
+export interface SubagentStreamCallbacks {
+  onThinkingDelta?: (delta: string) => void;
+  onTextDelta?: (delta: string) => void;
+  onToolStart?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void;
+  onToolEnd?: (toolCallId: string, toolName: string, result: { ok: boolean; data?: unknown; error?: string }) => void;
+}
 import type { ToolRegistry } from "../core/tool-registry";
 import { SubagentSessionStore } from "./subagent-session-store";
 
@@ -38,6 +45,7 @@ export class SubagentExplorerAgent {
     context?: string;
     resumeFromSnapshotId?: string;
     signal?: AbortSignal;
+    streamCallbacks?: SubagentStreamCallbacks;
   }): Promise<SubagentResultSummary> {
     if (input.signal?.aborted) {
       return buildSubagentResult({
@@ -111,6 +119,12 @@ export class SubagentExplorerAgent {
         onStateChange: (state) => {
           latestResumeState = state;
         },
+        onAssistantThinkingDelta: input.streamCallbacks?.onThinkingDelta,
+        onAssistantTextDelta: input.streamCallbacks?.onTextDelta,
+        onToolCallStart: input.streamCallbacks?.onToolStart,
+        onToolCallCompleted: input.streamCallbacks ? (call) => {
+          input.streamCallbacks?.onToolEnd?.(call.id, call.name, call.result);
+        } : undefined,
         signal: input.signal
       });
 

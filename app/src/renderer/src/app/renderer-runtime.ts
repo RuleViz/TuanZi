@@ -175,7 +175,8 @@ export function createRendererRuntime() {
     appendCompletedToolCall,
     getOrCreateToolCallsContainer,
     addToolCallRow,
-    updateSubagentSnapshots
+    updateSubagentSnapshots,
+    handleSubagentStreamDelta
   } = createMessageRenderer({
     chatArea,
     welcomeState,
@@ -498,6 +499,7 @@ export function createRendererRuntime() {
     getOrCreateToolCallsContainer,
     addToolCallRow,
     updateSubagentSnapshots,
+    handleSubagentStreamDelta,
     resetSessionWorkbench: (sessionId: string) => workbenchFeature.resetSessionWorkbench(sessionId)
   })
 

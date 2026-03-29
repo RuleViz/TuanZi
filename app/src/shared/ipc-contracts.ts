@@ -206,6 +206,44 @@ export interface SubagentSnapshotData {
   error: string | null;
 }
 
+export type SubagentStreamDeltaType = "thinking" | "text" | "tool_start" | "tool_end";
+
+export interface SubagentStreamDeltaThinking {
+  type: "thinking";
+  delta: string;
+}
+
+export interface SubagentStreamDeltaText {
+  type: "text";
+  delta: string;
+}
+
+export interface SubagentStreamDeltaToolStart {
+  type: "tool_start";
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}
+
+export interface SubagentStreamDeltaToolEnd {
+  type: "tool_end";
+  toolCallId: string;
+  toolName: string;
+  result: { ok: boolean; data?: unknown; error?: string };
+}
+
+export type SubagentStreamDelta =
+  | SubagentStreamDeltaThinking
+  | SubagentStreamDeltaText
+  | SubagentStreamDeltaToolStart
+  | SubagentStreamDeltaToolEnd;
+
+export interface SubagentStreamDeltaData {
+  taskId: string;
+  subagentId: string;
+  delta: SubagentStreamDelta;
+}
+
 export interface UserQuestionOptionData {
   label: string;
   description?: string;
@@ -412,6 +450,9 @@ export interface TuanziAPI {
   onWindowMaximizedChanged: (callback: (data: { maximized: boolean }) => void) => () => void;
   onSubagentSnapshot: (
     callback: (data: { taskId: string; snapshots: SubagentSnapshotData[] }) => void
+  ) => () => void;
+  onSubagentStreamDelta: (
+    callback: (data: SubagentStreamDeltaData) => void
   ) => () => void;
   onUserQuestion: (
     callback: (data: UserQuestionRequestData) => void

@@ -94,6 +94,7 @@ export class ReactToolAgent {
     maxTurns?: number;
     onAssistantTextDelta?: (delta: string) => void;
     onAssistantThinkingDelta?: (delta: string) => void;
+    onToolCallStart?: (toolCallId: string, toolName: string, args: JsonObject) => void;
     onToolCallCompleted?: (call: ToolLoopToolCallSnapshot) => void;
     onStateChange?: (state: ToolLoopResumeState) => void;
     resumeState?: ToolLoopResumeState | null;
@@ -394,6 +395,8 @@ export class ReactToolAgent {
             resumeAnchor
           });
         }
+        const parsedArgs = safeParseToolArgs(call.function.arguments);
+        input.onToolCallStart?.(call.id, call.function.name, parsedArgs);
         const toolResponse = await this.invokeTool(call, input.allowedTools);
         const transformedSkillLoad = transformSkillLoadResult(call.function.name, toolResponse.result);
         const toolResultForHistory = transformedSkillLoad?.visibleToolResult ?? toolResponse.result;
@@ -816,6 +819,14 @@ function parseToolArgs(rawArguments: string): JsonObject {
     `Tool argument parsing failed. Expected JSON object or XML-like tags. Raw arguments: ${safeInlineText(rawArguments)}`,
     rawArguments
   );
+}
+
+function safeParseToolArgs(rawArguments: string): JsonObject {
+  try {
+    return parseToolArgs(rawArguments);
+  } catch {
+    return {};
+  }
 }
 
 function tryParseObject(text: string): JsonObject | null {

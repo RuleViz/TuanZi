@@ -86,6 +86,7 @@ interface ChatRuntimeDeps {
   getOrCreateToolCallsContainer: (parentEl: HTMLDivElement) => HTMLDivElement;
   addToolCallRow: (container: HTMLDivElement, toolName: string, status: "loading" | "done" | "failed", toolCallId?: string) => HTMLDivElement;
   updateSubagentSnapshots: (parentEl: HTMLDivElement, snapshots: import("../../../../shared/ipc-contracts").SubagentSnapshotData[]) => void;
+  handleSubagentStreamDelta: (parentEl: HTMLDivElement, data: import("../../../../shared/ipc-contracts").SubagentStreamDeltaData) => void;
   resetSessionWorkbench: (sessionId: string) => void;
 }
 
@@ -138,7 +139,8 @@ export function createChatRuntime(input: ChatRuntimeDeps): ChatRuntime {
       appendCompletedToolCall: input.appendCompletedToolCall,
       getOrCreateToolCallsContainer: input.getOrCreateToolCallsContainer,
       addToolCallRow: input.addToolCallRow,
-      updateSubagentSnapshots: input.updateSubagentSnapshots
+      updateSubagentSnapshots: input.updateSubagentSnapshots,
+      handleSubagentStreamDelta: input.handleSubagentStreamDelta
     });
   };
 

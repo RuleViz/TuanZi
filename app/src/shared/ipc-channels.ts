@@ -47,6 +47,7 @@ export const IPC_CHANNELS = {
   terminalExit: "terminal:exit",
   terminalClosed: "terminal:closed",
   chatSubagentSnapshot: "chat:subagentSnapshot",
+  chatSubagentStreamDelta: "chat:subagentStreamDelta",
   chatUserQuestion: "chat:userQuestion",
   chatUserQuestionAnswer: "chat:userQuestionAnswer"
 } as const;

@@ -6,6 +6,23 @@ import type {
   SubagentTaskKind
 } from "./types";
 
+export interface SubagentStreamDelta {
+  type: "thinking" | "text" | "tool_start" | "tool_end";
+  subagentId: string;
+  delta?: string;
+  toolCallId?: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
+  result?: { ok: boolean; data?: unknown; error?: string };
+}
+
+export interface SubagentStreamCallbacks {
+  onThinkingDelta?: (delta: string) => void;
+  onTextDelta?: (delta: string) => void;
+  onToolStart?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void;
+  onToolEnd?: (toolCallId: string, toolName: string, result: { ok: boolean; data?: unknown; error?: string }) => void;
+}
+
 interface SubagentManagerOptions {
   maxConcurrent: number;
   taskId?: string | null;
@@ -15,8 +32,10 @@ interface SubagentManagerOptions {
     context: string;
     signal: AbortSignal;
     resumeFromSnapshotId?: string;
+    streamCallbacks?: SubagentStreamCallbacks;
   }) => Promise<SubagentResultSummary>;
   onSnapshotsChange?: (snapshots: SubagentSnapshot[]) => void;
+  onStreamDelta?: (delta: SubagentStreamDelta) => void;
 }
 
 interface SubagentEntry {
@@ -210,13 +229,30 @@ export class SubagentManager implements SubagentBridge {
     entry.snapshot.updatedAt = startedAt;
     this.emitSnapshots();
 
+    const subagentId = entry.snapshot.id;
+    const streamCallbacks: SubagentStreamCallbacks | undefined = this.options.onStreamDelta ? {
+      onThinkingDelta: (delta) => {
+        this.options.onStreamDelta?.({ type: "thinking", subagentId, delta });
+      },
+      onTextDelta: (delta) => {
+        this.options.onStreamDelta?.({ type: "text", subagentId, delta });
+      },
+      onToolStart: (toolCallId, toolName, args) => {
+        this.options.onStreamDelta?.({ type: "tool_start", subagentId, toolCallId, toolName, args });
+      },
+      onToolEnd: (toolCallId, toolName, result) => {
+        this.options.onStreamDelta?.({ type: "tool_end", subagentId, toolCallId, toolName, result });
+      }
+    } : undefined;
+
     void this.options
       .runExplorer({
         id: entry.snapshot.id,
         task: entry.snapshot.task,
         context: entry.snapshot.context,
         signal: entry.controller.signal,
-        ...(entry.resumeFromSnapshotId ? { resumeFromSnapshotId: entry.resumeFromSnapshotId } : {})
+        ...(entry.resumeFromSnapshotId ? { resumeFromSnapshotId: entry.resumeFromSnapshotId } : {}),
+        streamCallbacks
       })
       .then((result) => {
         const completedAt = result.data.metadata.completedAt;
