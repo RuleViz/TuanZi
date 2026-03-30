@@ -7,7 +7,7 @@ import type {
   ProviderModelProtocolType,
   ProviderModelTokenEstimatorType
 } from "../../shared/domain-types";
-import type { SendMessagePayload } from "../../shared/ipc-contracts";
+import type { SendMessagePayload, WorkbenchTaskItem } from "../../shared/ipc-contracts";
 import {
   type AppChatResumeSnapshot,
   ChatResumeStore,
@@ -647,8 +647,8 @@ export function createRunChatTask(
         approve: async (): Promise<{ approved: boolean }> => ({ approved: true })
       };
 
-      let primaryTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }> = [];
-      let subagentTasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }> = [];
+      let primaryTasks: WorkbenchTaskItem[] = [];
+      let subagentTasks: WorkbenchTaskItem[] = [];
 
       const emitCombinedTasks = (): void => {
         webContents.send(IPC_CHANNELS.chatTasks, {
@@ -658,16 +658,12 @@ export function createRunChatTask(
         });
       };
 
-      const updatePrimaryTasks = (
-        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }>
-      ): void => {
+      const updatePrimaryTasks = (tasks: WorkbenchTaskItem[]): void => {
         primaryTasks = tasks;
         emitCombinedTasks();
       };
 
-      const updateSubagentTasks = (
-        tasks: Array<{ id: string; title: string; kind: string; status: string; detail?: string; parentGroupId?: string }>
-      ): void => {
+      const updateSubagentTasks = (tasks: WorkbenchTaskItem[]): void => {
         subagentTasks = tasks;
         emitCombinedTasks();
       };
@@ -962,6 +958,7 @@ export function createRunChatTask(
           task: effectiveMessage,
           conversationContext: assembledContext.contextText,
           forcePlanMode: payload.planMode === true,
+          originCheckpointId: currentCheckpointId ?? undefined,
           userImages: images.map((item) => ({
             dataUrl: item.dataUrl,
             mimeType: item.mimeType

@@ -356,3 +356,55 @@ test("direct mode should convert unexpected coder throws into a failed result", 
   assert.equal(phases.at(-1), "aborted");
   assert.equal(planner.calls, 0);
 });
+
+test("forcePlanMode=false should bypass auto plan even with plan-intent text", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [{ id: "S1", title: "Code 1", owner: "code", acceptance: "done" }]
+  };
+  const planner = new StubPlanner(plan);
+  const coder = new StubCoder();
+  const orchestrator = new PlanToDoOrchestrator(
+    coder as unknown as any,
+    planner as unknown as any,
+    createToolContext(true)
+  );
+
+  await orchestrator.run({
+    task: "please use plan mode for this",
+    forcePlanMode: false
+  });
+
+  assert.equal(planner.calls, 0);
+  assert.equal(coder.calls.length, 1);
+});
+
+test("plan mode task snapshot should include originCheckpointId on plan group header", async () => {
+  const plan: ExecutionPlan = {
+    goal: "task",
+    steps: [{ id: "S1", title: "Code 1", owner: "code", acceptance: "done" }]
+  };
+  const orchestrator = new PlanToDoOrchestrator(
+    new StubCoder() as unknown as any,
+    new StubPlanner(plan) as unknown as any,
+    createToolContext(true)
+  );
+  const snapshots: OrchestratorTaskSnapshot[][] = [];
+
+  await orchestrator.run(
+    {
+      task: "implement",
+      forcePlanMode: true,
+      originCheckpointId: "cp-1"
+    },
+    {
+      onTasksChange: (tasks) => {
+        snapshots.push(tasks);
+      }
+    }
+  );
+
+  const planHeader = snapshots.flat().find((item) => item.kind === "plan");
+  assert.ok(planHeader);
+  assert.equal(planHeader?.originCheckpointId, "cp-1");
+});

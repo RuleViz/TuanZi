@@ -106,6 +106,7 @@ export interface WorkbenchTaskItem {
   status: "pending" | "running" | "done" | "failed";
   detail?: string;
   parentGroupId?: string;
+  originCheckpointId?: string;
 }
 
 export type WorkbenchTaskEntry = WorkbenchTaskItem;

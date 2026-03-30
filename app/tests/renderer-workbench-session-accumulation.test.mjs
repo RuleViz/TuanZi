@@ -455,3 +455,66 @@ test("sendMessage does not reset session workbench before starting a new request
   assert.equal(resetCalls, 0);
   assert.equal(syncedTurn.user, "hello");
 });
+
+test("workbench removes plan groups by checkpoint origin with taskId fallback", async () => {
+  const { storage } = installWorkbenchGlobals();
+  const api = createWorkbenchApi();
+  const state = {
+    activeSessionId: "session-1",
+    sessions: [
+      { id: "session-1", workspace: "E:/project" },
+      { id: "session-2", workspace: "E:/other" }
+    ],
+    tasksExpanded: false,
+    filesExpanded: false,
+    sessionWorkbench: {}
+  };
+
+  const feature = createWorkbenchFeature(createWorkbenchDeps(state, api));
+  feature.bind();
+
+  api.emitTasks({
+    taskId: "task-1",
+    sessionId: "session-1",
+    tasks: [
+      { id: "plan-1", title: "Task one", kind: "plan", status: "done", originCheckpointId: "cp-1" },
+      { id: "child-1", title: "Do one", kind: "coding", status: "done", parentGroupId: "plan-1" }
+    ]
+  });
+  api.emitTasks({
+    taskId: "task-2",
+    sessionId: "session-1",
+    tasks: [
+      { id: "plan-2", title: "Task two", kind: "plan", status: "done", originCheckpointId: "cp-2" },
+      { id: "child-2", title: "Do two", kind: "coding", status: "done", parentGroupId: "plan-2" }
+    ]
+  });
+  api.emitTasks({
+    taskId: "cp-legacy",
+    sessionId: "session-1",
+    tasks: [
+      { id: "plan-legacy", title: "Legacy task", kind: "plan", status: "done" },
+      { id: "child-legacy", title: "Legacy child", kind: "coding", status: "done", parentGroupId: "plan-legacy" }
+    ]
+  });
+
+  assert.equal(state.sessionWorkbench["session-1"].taskGroups.length, 3);
+
+  feature.removeTaskGroupsByOrigin("session-1", "cp-2");
+  assert.equal(state.sessionWorkbench["session-1"].taskGroups.length, 2);
+  assert.equal(
+    state.sessionWorkbench["session-1"].taskGroups.some((group) => group.taskId === "task-2"),
+    false
+  );
+
+  feature.removeTaskGroupsByOrigin("session-1", "cp-legacy");
+  assert.equal(state.sessionWorkbench["session-1"].taskGroups.length, 1);
+  assert.equal(
+    state.sessionWorkbench["session-1"].taskGroups.some((group) => group.taskId === "cp-legacy"),
+    false
+  );
+
+  await waitForPersist();
+  const persisted = JSON.parse(storage.getItem(WORKBENCH_STORAGE_KEY));
+  assert.equal(persisted.sessions["session-1"].taskGroups.length, 1);
+});

@@ -35,6 +35,7 @@ export interface OrchestratorRunInput {
   resumeState?: ToolLoopResumeState;
   userImages?: ChatInputImage[];
   forcePlanMode?: boolean;
+  originCheckpointId?: string;
 }
 
 export type OrchestratorPhase = "planning" | "approval" | "running" | "done" | "aborted";
@@ -46,6 +47,7 @@ export interface OrchestratorTaskSnapshot {
   status: "pending" | "running" | "done" | "failed";
   detail?: string;
   parentGroupId?: string;
+  originCheckpointId?: string;
 }
 
 export interface OrchestratorRunHooks {
@@ -76,13 +78,17 @@ export class PlanToDoOrchestrator {
       conversationContext: explicitConversationContext,
       resumeState,
       userImages,
-      forcePlanMode
+      forcePlanMode,
+      originCheckpointId
     } = normalizeRunInput(input);
     const conversationContext = explicitConversationContext ?? buildConversationContext(memoryTurns);
     this.toolContext.taskId = randomUUID();
     this.toolContext.signal = hooks?.signal;
 
-    const usePlanMode = forcePlanMode === true ? true : shouldUsePlanMode(task, this.toolContext.agentSettings?.routing);
+    const usePlanMode =
+      typeof forcePlanMode === "boolean"
+        ? forcePlanMode
+        : shouldUsePlanMode(task, this.toolContext.agentSettings?.routing);
     if (!usePlanMode) {
       hooks?.onTasksChange?.([
         {
@@ -172,6 +178,13 @@ export class PlanToDoOrchestrator {
       onToolCallCompleted: hooks?.onToolCallCompleted
     });
     const plan = planResult.data.plan;
+    if (originCheckpointId || this.toolContext.sessionId) {
+      plan.origin = {
+        ...plan.origin,
+        checkpointId: originCheckpointId,
+        sessionId: this.toolContext.sessionId
+      };
+    }
     if (planResult.exitReason === "interrupted") {
       hooks?.onPhaseChange?.("aborted");
       return {
@@ -362,7 +375,8 @@ function normalizeRunInput(input: string | OrchestratorRunInput): OrchestratorRu
     conversationContext: input.conversationContext,
     resumeState: input.resumeState,
     userImages: input.userImages,
-    forcePlanMode: input.forcePlanMode
+    forcePlanMode: input.forcePlanMode,
+    originCheckpointId: input.originCheckpointId
   };
 }
 
@@ -391,7 +405,10 @@ function planToTaskGroup(
     title: groupTitle,
     kind: "plan",
     status: groupStatus,
-    detail: plan.goal
+    detail: plan.goal,
+    ...(typeof plan.origin?.checkpointId === "string"
+      ? { originCheckpointId: plan.origin.checkpointId }
+      : {})
   };
 
   const stepItems: OrchestratorTaskSnapshot[] = plan.steps.map((step) => {

@@ -290,8 +290,18 @@ export function createRendererRuntime() {
         showError(result.error || "撤回失败")
         return
       }
+      const removedTurns = active.history.slice(turnIndex)
+      const removedCheckpointIds = new Set<string>()
+      for (const removedTurn of removedTurns) {
+        if (removedTurn?.checkpointId) {
+          removedCheckpointIds.add(removedTurn.checkpointId)
+        }
+      }
       // Remove turns from turnIndex onward
       active.history.splice(turnIndex)
+      for (const removedCheckpointId of removedCheckpointIds) {
+        workbenchFeature.removeTaskGroupsByOrigin(active.id, removedCheckpointId)
+      }
       touchActiveSession()
       persistSessions()
       renderActiveConversation()

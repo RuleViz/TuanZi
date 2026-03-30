@@ -30,6 +30,7 @@ export interface WorkbenchFeature {
   bind: () => void;
   renderCurrentSessionWorkbench: () => void;
   resetSessionWorkbench: (sessionId: string) => void;
+  removeTaskGroupsByOrigin: (sessionId: string, checkpointId: string) => void;
 }
 
 const WORKBENCH_STORAGE_KEY = "tuanzi.desktop.workbench.v1";
@@ -115,7 +116,8 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
       kind: value.kind,
       status: value.status,
       ...(typeof value.detail === "string" ? { detail: value.detail } : {}),
-      ...(typeof value.parentGroupId === "string" ? { parentGroupId: value.parentGroupId } : {})
+      ...(typeof value.parentGroupId === "string" ? { parentGroupId: value.parentGroupId } : {}),
+      ...(typeof value.originCheckpointId === "string" ? { originCheckpointId: value.originCheckpointId } : {})
     };
   }
 
@@ -285,6 +287,14 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
   function upsertTaskGroup(sessionState: SessionWorkbenchState, taskId: string, tasks: WorkbenchTaskItem[]): void {
     if (tasks.length === 0) {
       return;
+    }
+    const planHeader = tasks.find((task) => task.kind === "plan" && !task.parentGroupId);
+    if (planHeader && !planHeader.originCheckpointId) {
+      const hasPlanChildren = tasks.some((task) => task.parentGroupId === planHeader.id);
+      // Only drop clearly-invalid empty plan headers.
+      if (!hasPlanChildren) {
+        return;
+      }
     }
     const now = new Date().toISOString();
     const existingIndex = sessionState.taskGroups.findIndex((group) => group.taskId === taskId);
@@ -588,10 +598,50 @@ export function createWorkbenchFeature(input: WorkbenchFeatureDeps): WorkbenchFe
     renderCurrentSessionWorkbench();
   }
 
+  function removeTaskGroupsByOrigin(sessionId: string, checkpointId: string): void {
+    if (!checkpointId) {
+      return;
+    }
+    const sessionState = ensureSessionState(sessionId);
+    const removedTaskGroupIds = new Set<string>();
+    const removedPlanHeaderIds = new Set<string>();
+    const nextGroups: SessionWorkbenchTaskGroup[] = [];
+
+    for (const group of sessionState.taskGroups) {
+      const planHeader = group.tasks.find((task) => task.kind === "plan" && !task.parentGroupId);
+      const matchesOrigin =
+        planHeader?.originCheckpointId === checkpointId ||
+        group.taskId === checkpointId;
+      if (matchesOrigin) {
+        removedTaskGroupIds.add(group.taskId);
+        if (planHeader) {
+          removedPlanHeaderIds.add(planHeader.id);
+        }
+        continue;
+      }
+      nextGroups.push(group);
+    }
+
+    if (removedTaskGroupIds.size === 0) {
+      return;
+    }
+
+    sessionState.taskGroups = nextGroups;
+    for (const taskGroupId of removedTaskGroupIds) {
+      collapsedTaskGroups.delete(taskGroupId);
+    }
+    for (const planHeaderId of removedPlanHeaderIds) {
+      collapsedPlanGroups.delete(planHeaderId);
+    }
+    schedulePersistSessionWorkbench();
+    renderCurrentSessionWorkbench();
+  }
+
   return {
     bind,
     renderCurrentSessionWorkbench,
-    resetSessionWorkbench
+    resetSessionWorkbench,
+    removeTaskGroupsByOrigin
   };
 }
 

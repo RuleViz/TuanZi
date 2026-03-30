@@ -481,3 +481,132 @@ test("createRunChatTask returns checkpointId for interrupted tasks", async () =>
   assert.equal(result.resumeSnapshot?.checkpointId, "checkpoint-1");
   assert.deepEqual(appendedTurns, [{ checkpointId: "checkpoint-1", interrupted: true }]);
 });
+
+test("createRunChatTask passes explicit forcePlanMode and originCheckpointId to orchestrator", async () => {
+  const capturedInputs: Array<Record<string, unknown>> = [];
+  const sessionState = {
+    version: 1 as const,
+    workspace: "E:/project",
+    workspaceHash: "workspace-hash",
+    sessionId: "session-1",
+    nextSeq: 1,
+    lastCompactedSeq: 0,
+    modelSnapshot: null,
+    createdAt: "2026-03-20T00:00:00.000Z",
+    updatedAt: "2026-03-20T00:00:00.000Z"
+  };
+
+  const runChatTask = createRunChatTask({
+    activeTasks: new Map(),
+    chatResumeStore: {
+      save: async () => 1,
+      load: () => null,
+      clear: async () => {
+        return;
+      }
+    } as any,
+    conversationMemoryStore: {
+      getSessionState: async () => sessionState,
+      saveSessionState: async () => {
+        return;
+      },
+      appendTurn: async () => {
+        return;
+      },
+      resolveWorkspaceHash: () => "workspace-hash",
+      getSummary: async () => null,
+      listTurns: async () => []
+    } as any,
+    loadCoreModules: () => ({
+      loadRuntimeConfig: () => ({
+        agentBackend: {
+          config: {
+            activeProviderId: "",
+            providers: []
+          }
+        },
+        agentSettings: {
+          modelRequest: {
+            thinking: {}
+          }
+        }
+      }),
+      createToolRuntime: () => ({
+        registry: {
+          getToolDefinitions: () => []
+        },
+        toolContext: {},
+        dispose: async () => {
+          return;
+        }
+      }),
+      createOrchestrator: () => ({
+        run: async (input: Record<string, unknown>) => {
+          capturedInputs.push(input);
+          return {
+            summary: "done",
+            toolCalls: [],
+            changedFiles: [],
+            executedCommands: []
+          };
+        }
+      }),
+      createSubagentBridge: () => null
+    }),
+    normalizeOptionalString: (input: unknown) => {
+      if (typeof input !== "string") {
+        return null;
+      }
+      const trimmed = input.trim();
+      return trimmed ? trimmed : null;
+    },
+    toErrorMessage: (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    closePerfLog: () => {
+      return;
+    },
+    isShutdownDrainInProgress: () => false,
+    isShutdownDrainCompleted: () => false,
+    snapshotFlushIntervalMs: 1,
+    snapshotMaxStreamChars: 24000,
+    snapshotMaxToolCalls: 80,
+    maxChatImageCount: 1,
+    maxChatImageBytes: 8 * 1024 * 1024,
+    terminalManager: {
+      executeCommand: async () => ({
+        ok: true,
+        exitCode: 0,
+        stdout: "",
+        stderr: ""
+      })
+    } as any,
+    createTurnCheckpoint: async () => "checkpoint-bind"
+  });
+
+  const webContents = {
+    send: () => true
+  } as any;
+
+  await runChatTask(webContents, {
+    taskId: "task-direct",
+    sessionId: "session-1",
+    message: "hello",
+    workspace: "E:/project",
+    thinking: false,
+    planMode: false
+  });
+
+  await runChatTask(webContents, {
+    taskId: "task-plan",
+    sessionId: "session-1",
+    message: "hello plan",
+    workspace: "E:/project",
+    thinking: false,
+    planMode: true
+  });
+
+  assert.equal(capturedInputs.length, 2);
+  assert.equal(capturedInputs[0].forcePlanMode, false);
+  assert.equal(capturedInputs[1].forcePlanMode, true);
+  assert.equal(capturedInputs[0].originCheckpointId, "checkpoint-bind");
+  assert.equal(capturedInputs[1].originCheckpointId, "checkpoint-bind");
+});

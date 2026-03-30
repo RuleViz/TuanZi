@@ -384,6 +384,11 @@ export interface ExecutionPlan {
   steps: PlanStep[];
   suggestedTestCommand?: string;
   instruction?: string;
+  origin?: {
+    checkpointId?: string;
+    sessionId?: string;
+    turnId?: string;
+  };
 }
 
 export interface SearchReference {
