@@ -55,3 +55,28 @@ temp/
 
 prototypes/
 output/
+# Native (Rust) build artifacts and local configs
+# Ignore Cargo target directories and build outputs
+native/**/target/
+native/target/
+# Ignore Cargo lockfiles inside native workspace
+native/**/Cargo.lock
+native/Cargo.lock
+# Native binary and object artifacts
+native/**/*.rlib
+native/**/*.so
+native/**/*.dylib
+native/**/*.dll
+native/**/*.dll.*
+native/**/*.lib
+native/**/*.a
+native/**/*.exp
+native/**/*.pdb
+native/**/*.dSYM
+native/**/*.o
+native/**/*.obj
+# Build artifacts and caches
+native/**/.fingerprint/
+native/**/build/
+# Rust toolchain metadata
+native/.rustc_info.json

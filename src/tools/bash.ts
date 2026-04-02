@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
 import { asNumber, asString } from "../core/json-utils";
 import { assertInsideWorkspace, resolveSafePath } from "../core/path-utils";
+import { shouldUseRust, executeViaNative } from "../core/rust-tool-bridge";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const FORCE_KILL_GRACE_MS = 2_500;
@@ -112,7 +113,9 @@ export class BashTool implements Tool {
           },
           context
         )
-      : await executeShellCommand(
+      : shouldUseRust("bash_exec")
+        ? await executeViaNativeShell(command, cwd, timeoutMs, maxOutputChars, envOverrides.value, context.workspaceRoot)
+        : await executeShellCommand(
           command,
           cwd,
           timeoutMs,
@@ -156,6 +159,53 @@ export class BashTool implements Tool {
       data: payload
     };
   }
+}
+
+/**
+ * Execute a shell command via the Rust native backend.
+ * Falls back to TS executeShellCommand on bridge errors.
+ */
+async function executeViaNativeShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  maxOutputChars: number | null,
+  env: Record<string, string>,
+  workspaceRoot: string
+): Promise<{
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
+  interrupted: boolean;
+  forceKilled: boolean;
+  terminalId?: string;
+  stdout: string;
+  stderr: string;
+}> {
+  const result = await executeViaNative("bash_exec", {
+    command,
+    cwd,
+    timeout_ms: timeoutMs,
+    max_output_chars: maxOutputChars ?? undefined,
+    env: Object.keys(env).length > 0 ? env : undefined
+  }, workspaceRoot);
+
+  if (result.error?.startsWith("Native execution error:")) {
+    // Bridge/FFI error — fall back to TS
+    return executeShellCommand(command, cwd, timeoutMs, maxOutputChars, env);
+  }
+
+  // Use the Rust result
+  const data = result.data as Record<string, unknown> | undefined;
+  return {
+    exitCode: (data?.exitCode as number | null) ?? null,
+    signal: (data?.signal as NodeJS.Signals | null) ?? null,
+    timedOut: (data?.timedOut as boolean) ?? false,
+    interrupted: (data?.interrupted as boolean) ?? false,
+    forceKilled: (data?.forceKilled as boolean) ?? false,
+    stdout: (data?.stdout as string) ?? "",
+    stderr: (data?.stderr as string) ?? ""
+  };
 }
 
 function clampInt(value: number, min: number, max: number): number {
