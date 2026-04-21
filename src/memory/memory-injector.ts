@@ -1,4 +1,4 @@
-import type { DeclarativeStore } from "./declarative-store";
+import type { DeclarativeMemoryService } from "../core/types";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ export interface DeclarativeBlockOptions {
  * Phase 3 will add episodic recall via buildEpisodicBlock().
  */
 export class MemoryInjector {
-  constructor(private readonly store: DeclarativeStore) {}
+  constructor(private readonly store: DeclarativeMemoryService) {}
 
   /**
    * Builds the declarative memory block to inject into the system prompt.

@@ -60,6 +60,21 @@ export interface ModelRequestSettings {
   extraBody: JsonObject;
 }
 
+export interface MemorySettings {
+  /** Enable episodic (SQLite) and declarative (Markdown) memory. */
+  enabled: boolean;
+  /** Override the global memory directory (defaults to ~/.tuanzi/). */
+  globalDir?: string;
+  /** Half-life in days for the Ebbinghaus decay formula. Default: 30. */
+  halfLifeDays: number;
+  /** GC threshold: sessions scoring below this are deleted. Default: 0.05. */
+  gcThreshold: number;
+  /** Always keep at least this many recent sessions from GC. Default: 10. */
+  keepRecentCount: number;
+  /** Max chars of declarative memory injected into the system prompt. Default: 2000. */
+  maxDeclarativeChars: number;
+}
+
 export interface AgentSettings {
   routing: RoutingSettings;
   policy: PolicySettings;
@@ -68,6 +83,7 @@ export interface AgentSettings {
   contextPruning: ContextPruningSettings;
   mcp: McpSettings;
   modelRequest: ModelRequestSettings;
+  memory?: MemorySettings;
 }
 
 export interface PolicyEvaluation {
@@ -311,6 +327,32 @@ export interface UserInteractionBridge {
   askQuestion(request: UserQuestionRequest): Promise<UserQuestionAnswer>;
 }
 
+/** Minimal interface for declarative memory (MEMORY.md / SOUL.md) access. */
+export interface DeclarativeMemoryService {
+  getGlobalMemory(): string;
+  getProjectMemory(workspaceRoot: string): string;
+  getSoul(): string;
+  appendToMemory(content: string, scope: "global" | "project", workspaceRoot?: string): void;
+  overwriteMemory(content: string, scope: "global" | "project", workspaceRoot?: string): void;
+  writeSoul(content: string): void;
+  getMemorySize(scope: "global" | "project", workspaceRoot?: string): number;
+}
+
+/** Minimal interface for episodic memory (SQLite) operations. */
+export interface EpisodicMemoryService {
+  beginSession(sessionId: string, workspaceRoot?: string): void;
+  endSession(sessionId: string, summary?: string, importance?: "high" | "medium" | "low"): void;
+  appendMessage(sessionId: string, role: "user" | "assistant", content: string): void;
+  search(query: string, options?: { workspace?: string; limit?: number; beforeSession?: string }): Array<{
+    sessionId: string;
+    role: "user" | "assistant";
+    content: string;
+    createdAt: number;
+    rank: number;
+  }>;
+  close(): void;
+}
+
 export interface ToolExecutionContext {
   workspaceRoot: string;
   approvalGate: ApprovalGate;
@@ -332,6 +374,10 @@ export interface ToolExecutionContext {
   terminalBridge?: TerminalBridge;
   userInteractionBridge?: UserInteractionBridge;
   signal?: AbortSignal;
+  /** Declarative memory (MEMORY.md / SOUL.md). Available when memory is enabled. */
+  declarativeMemory?: DeclarativeMemoryService;
+  /** Episodic memory (SQLite + FTS5). Available when memory is enabled. */
+  episodicMemory?: EpisodicMemoryService;
 }
 
 export interface TerminalCommandResult {

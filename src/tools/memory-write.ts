@@ -1,6 +1,6 @@
-import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult } from "../core/types";
+import type { JsonObject, Tool, ToolExecutionContext, ToolExecutionResult, DeclarativeMemoryService } from "../core/types";
 import { asString } from "../core/json-utils";
-import type { DeclarativeStore, MemoryScope } from "../memory/declarative-store";
+import type { MemoryScope } from "../memory/declarative-store";
 
 const VALID_SCOPES: MemoryScope[] = ["global", "project"];
 const VALID_IMPORTANCE = ["high", "medium", "low"];
@@ -45,7 +45,7 @@ export class MemoryWriteTool implements Tool {
     }
   } as const;
 
-  constructor(private readonly store: DeclarativeStore) {}
+  constructor(private readonly store: DeclarativeMemoryService) {}
 
   async execute(input: JsonObject, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const content = asString(input.content);

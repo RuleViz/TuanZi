@@ -24,6 +24,10 @@ import type {
 import type { SubagentStreamDelta } from "./core/subagent-manager";
 import { McpManager } from "./mcp/manager";
 import { createDefaultTools } from "./tools";
+import { getAgentHomePath } from "./core/agent-store";
+import { DeclarativeStore } from "./memory/declarative-store";
+import { EpisodicStore } from "./memory/episodic-store";
+import path from "node:path";
 
 export interface ToolRuntime {
   registry: ToolRegistry;
@@ -43,6 +47,26 @@ export function createToolRuntime(
   const mcpBridge = new McpManager(runtimeConfig.agentSettings.mcp, logger);
   const skillRuntime = createSkillRuntime(runtimeConfig.workspaceRoot, logger);
   const registry = new ToolRegistry(createDefaultTools());
+
+  // ── Memory stores ─────────────────────────────────────────────────────────
+  const memoryCfg = runtimeConfig.agentSettings.memory;
+  const globalDir = memoryCfg?.globalDir ?? getAgentHomePath();
+  const declarativeStore = new DeclarativeStore({ globalDir });
+  let episodicStore: EpisodicStore | undefined;
+
+  if (memoryCfg?.enabled !== false) {
+    try {
+      episodicStore = new EpisodicStore({ dbPath: path.join(globalDir, "episodes.db") });
+      if (overrides?.sessionId) {
+        episodicStore.beginSession(overrides.sessionId, runtimeConfig.workspaceRoot);
+      }
+    } catch (err) {
+      logger.warn?.(`[memory] Failed to initialize episodic store: ${err instanceof Error ? err.message : String(err)}`);
+      episodicStore = undefined;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const toolContext: ToolExecutionContext = {
     workspaceRoot: runtimeConfig.workspaceRoot,
     approvalGate,
@@ -55,14 +79,30 @@ export function createToolRuntime(
     skillRuntime,
     terminalBridge: overrides?.terminalBridge,
     userInteractionBridge: overrides?.userInteractionBridge,
-    sessionId: overrides?.sessionId
+    sessionId: overrides?.sessionId,
+    declarativeMemory: declarativeStore,
+    episodicMemory: episodicStore,
   };
+
+  const sessionId = overrides?.sessionId;
 
   const dispose = async (): Promise<void> => {
     try {
       await mcpBridge.stopAll();
     } catch {
       // Ignore errors during disposal.
+    }
+    if (episodicStore && sessionId) {
+      try {
+        episodicStore.endSession(sessionId);
+      } catch {
+        // Best-effort
+      }
+    }
+    try {
+      episodicStore?.close();
+    } catch {
+      // Best-effort
     }
   };
 

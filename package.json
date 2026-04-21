@@ -27,10 +27,12 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.1",
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "better-sqlite3": "^12.9.0",
     "docx": "^9.6.1",
     "fontkit": "^2.0.4",
     "linebreak": "^1.1.0",

@@ -20,6 +20,7 @@ import type { ChatCompletionClient, ChatInputImage, ChatMessage } from "./model-
 import { coderSystemPrompt } from "./prompts";
 import { buildInitialPromptTokenBudget, loadProjectContextFromWorkspace } from "./project-context";
 import { ReactToolAgent, type ToolLoopResumeState, type ToolLoopToolCallSnapshot } from "./react-tool-agent";
+import { MemoryInjector } from "../memory/memory-injector";
 
 export class TuanZiAgent {
   constructor(
@@ -125,8 +126,22 @@ export class TuanZiAgent {
         toolInstructions: dedupeToolInstructions([...localToolInstructions, ...mcpToolInstructions])
       });
 
+      // Inject declarative memory block into system prompt when available
+      const memoryBlock = this.buildMemoryBlock();
+      const effectiveSystemPrompt = memoryBlock ? `${systemPrompt}\n\n${memoryBlock}` : systemPrompt;
+
+      // Record the user message in episodic store (best-effort)
+      const sessionId = this.toolContext.sessionId;
+      if (sessionId && this.toolContext.episodicMemory) {
+        try {
+          this.toolContext.episodicMemory.appendMessage(sessionId, "user", task);
+        } catch {
+          // Non-fatal
+        }
+      }
+
       const output = await agent.run({
-        systemPrompt,
+        systemPrompt: effectiveSystemPrompt,
         userPrompt,
         userImages: hooks?.userImages,
         allowedTools: hooks?.resumeState?.allowedTools ?? mergedAllowedTools,
@@ -149,6 +164,15 @@ export class TuanZiAgent {
       }));
       const summary = extractUserFacingText(output.data.finalText);
 
+      // Record the assistant response in episodic store (best-effort)
+      if (sessionId && this.toolContext.episodicMemory && summary) {
+        try {
+          this.toolContext.episodicMemory.appendMessage(sessionId, "assistant", summary);
+        } catch {
+          // Non-fatal
+        }
+      }
+
       return {
         data: {
           result: {
@@ -166,6 +190,18 @@ export class TuanZiAgent {
     } finally {
       this.toolContext.mcpBridge = previousMcpBridge;
       this.toolContext.mcpAccessPolicy = previousMcpAccessPolicy;
+    }
+  }
+
+  private buildMemoryBlock(): string {
+    const declarativeMemory = this.toolContext.declarativeMemory;
+    if (!declarativeMemory) return "";
+    try {
+      const injector = new MemoryInjector(declarativeMemory);
+      const maxChars = this.toolContext.agentSettings?.memory?.maxDeclarativeChars ?? 2000;
+      return injector.buildDeclarativeBlock(this.toolContext.workspaceRoot, { maxChars });
+    } catch {
+      return "";
     }
   }
 }

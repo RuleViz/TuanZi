@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import type { DeclarativeMemoryService } from "../core/types";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -28,7 +29,7 @@ export interface DeclarativeStoreOptions {
  *
  * All I/O is synchronous to match the rest of the codebase.
  */
-export class DeclarativeStore {
+export class DeclarativeStore implements DeclarativeMemoryService {
   private readonly globalDir: string;
 
   constructor(options: DeclarativeStoreOptions) {

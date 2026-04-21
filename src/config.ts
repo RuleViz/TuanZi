@@ -178,6 +178,13 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
       budgetTokens: null
     },
     extraBody: {}
+  },
+  memory: {
+    enabled: true,
+    halfLifeDays: 30,
+    gcThreshold: 0.05,
+    keepRecentCount: 10,
+    maxDeclarativeChars: 2000
   }
 };
 
@@ -403,6 +410,37 @@ function mergeAgentSettings(base: AgentSettings, input: JsonObject): AgentSettin
     }
   }
 
+  const memoryRaw = asObject(input.memory);
+  if (memoryRaw) {
+    if (!base.memory) {
+      base.memory = { enabled: true, halfLifeDays: 30, gcThreshold: 0.05, keepRecentCount: 10, maxDeclarativeChars: 2000 };
+    }
+    const enabled = asBoolean(memoryRaw.enabled);
+    if (enabled !== null) {
+      base.memory.enabled = enabled;
+    }
+    const globalDir = asString(memoryRaw.globalDir);
+    if (globalDir !== null) {
+      base.memory.globalDir = globalDir;
+    }
+    const halfLifeDays = asPositiveInt(memoryRaw.halfLifeDays);
+    if (halfLifeDays !== null) {
+      base.memory.halfLifeDays = clamp(halfLifeDays, 1, 3650);
+    }
+    const gcThreshold = asNumber(memoryRaw.gcThreshold);
+    if (gcThreshold !== null) {
+      base.memory.gcThreshold = Math.max(0, Math.min(1, gcThreshold));
+    }
+    const keepRecentCount = asPositiveInt(memoryRaw.keepRecentCount);
+    if (keepRecentCount !== null) {
+      base.memory.keepRecentCount = clamp(keepRecentCount, 1, 1000);
+    }
+    const maxDeclarativeChars = asPositiveInt(memoryRaw.maxDeclarativeChars);
+    if (maxDeclarativeChars !== null) {
+      base.memory.maxDeclarativeChars = clamp(maxDeclarativeChars, 200, 50000);
+    }
+  }
+
   return base;
 }
 
@@ -429,6 +467,13 @@ function asString(value: unknown): string | null {
     return null;
   }
   return value.trim();
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !isFinite(value)) {
+    return null;
+  }
+  return value;
 }
 
 function asRecordOfStrings(value: unknown): Record<string, string> | null {
